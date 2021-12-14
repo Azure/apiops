@@ -1,0 +1,42 @@
+{
+  "name": "applicationinsights",
+  "properties": {
+    "alwaysLog": "allErrors",
+    "httpCorrelationProtocol": "Legacy",
+    "logClientIp": true,
+    "loggerId": "/subscriptions/***/resourceGroups/rg-apim-demo/providers/Microsoft.ApiManagement/service/apim-demo/loggers/tst",
+    "verbosity": "information",
+    "backend": {
+      "request": {
+        "body": {
+          "bytes": 0
+        },
+        "headers": []
+      },
+      "response": {
+        "body": {
+          "bytes": 0
+        },
+        "headers": []
+      }
+    },
+    "frontend": {
+      "request": {
+        "body": {
+          "bytes": 3
+        },
+        "headers": []
+      },
+      "response": {
+        "body": {
+          "bytes": 0
+        },
+        "headers": []
+      }
+    },
+    "sampling": {
+      "percentage": 100.0,
+      "samplingType": "fixed"
+    }
+  }
+}

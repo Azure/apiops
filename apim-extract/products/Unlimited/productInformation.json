@@ -1,0 +1,10 @@
+{
+  "name": "unlimited",
+  "properties": {
+    "displayName": "Unlimited",
+    "approvalRequired": false,
+    "state": "notPublished",
+    "subscriptionRequired": true
+  },
+  "apis": []
+}

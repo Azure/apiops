@@ -1,0 +1,11 @@
+{
+  "name": "tst",
+  "properties": {
+    "credentials": {
+      "instrumentationKey": "{{Logger-Credentials--60f992db95edba407c3847ff}}"
+    },
+    "isBuffered": true,
+    "loggerType": "applicationInsights",
+    "resourceId": "/subscriptions/***/resourceGroups/test/providers/microsoft.insights/components/tst"
+  }
+}

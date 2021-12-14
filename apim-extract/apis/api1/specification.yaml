@@ -1,0 +1,44 @@
+openapi: 3.0.1
+info:
+  title: api1
+  version: '1.0'
+servers:
+  - url: https://apim-demo.azure-api.net/apis/api1
+paths:
+  /order/v1/posupdate:
+    post:
+      summary: operation1
+      description: operation1
+      operationId: operation1
+      responses:
+        '200':
+          description: 'null'
+  /order/v1/fetchorder/pos:
+    post:
+      summary: operation2
+      description: operation2
+      operationId: operation2
+      responses:
+        '200':
+          description: 'null'
+  /order/v1/deleteorder/pos:
+    delete:
+      summary: operation3displayname
+      description: operation3
+      operationId: operation3
+      responses:
+        '204':
+          description: 'null'
+components:
+  securitySchemes:
+    apiKeyHeader:
+      type: apiKey
+      name: Ocp-Apim-Subscription-Key
+      in: header
+    apiKeyQuery:
+      type: apiKey
+      name: subscription-key
+      in: query
+security:
+  - apiKeyHeader: [ ]
+  - apiKeyQuery: [ ]

@@ -1,0 +1,41 @@
+trigger:
+  paths:
+    include:
+      - code/common
+      - code/creator
+
+variables:
+  - group: apim-automation
+  - name: System.Debug
+    value: true
+
+stages:
+  - stage: publish_creator
+    displayName: Publish creator
+    jobs:
+      - job: publish_creator
+        displayName: Publish creator
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UseDotNet@2
+            displayName: Install .NET Core SDK
+            inputs:
+              version: 6.x
+              includePreviewVersions: true
+          - task: DotNetCoreCLI@2
+            displayName: Publish .NET Core application
+            inputs:
+              command: publish
+              publishWebProjects: false
+              projects: '$(Build.SourcesDirectory)/code/creator/creator.csproj'
+              arguments: '--output $(Build.ArtifactStagingDirectory) --runtime linux-x64 -p:PublishSingleFile=true'
+              modifyOutputPath: false
+              zipAfterPublish: false
+          - task: UniversalPackages@0
+            displayName: Publish creator artifact
+            inputs:
+              command: publish
+              vstsFeedPublish: $(System.TeamProject)/apim-tools
+              vstsFeedPackagePublish: creator
+              packagePublishDescription: 'APIM creator tool'

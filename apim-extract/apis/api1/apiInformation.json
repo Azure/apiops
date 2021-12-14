@@ -1,0 +1,19 @@
+{
+  "name": "api1",
+  "properties": {
+    "apiRevision": "1",
+    "authenticationSettings": {},
+    "displayName": "api1",
+    "isCurrent": true,
+    "path": "apis/api1",
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://us-prod-apigw-01.wg.com:8443/gateway",
+    "subscriptionKeyParameterNames": {
+      "header": "Ocp-Apim-Subscription-Key",
+      "query": "subscription-key"
+    },
+    "subscriptionRequired": true
+  }
+}
