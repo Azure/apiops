@@ -544,20 +544,22 @@ public class Creator : ConsoleService
     {
         Logger.LogInformation($"File {file} was deleted; deleting authorization server...");
 
-        var authorizationServerName = AuthorizationServerName.From(file.GetDirectoryName());
-        var authorizationServerUri = AuthorizationServer.GetUri(serviceUri, authorizationServerName);
-
-        return deleteResource(authorizationServerUri, cancellationToken);
+        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
+                  .Map(fileContents => fileContents.ToJsonObject())
+                  .Map(jsonObject => AuthorizationServer.GetNameFromInformationFile(jsonObject))
+                  .Map(name => AuthorizationServer.GetUri(serviceUri, name))
+                  .Bind(uri => deleteResource(uri, cancellationToken));
     }
 
     private Task<Unit> DeleteGatewayInformation(FileInfo file, CancellationToken cancellationToken)
     {
         Logger.LogInformation($"File {file} was deleted; deleting gateway...");
 
-        var gatewayName = GatewayName.From(file.GetDirectoryName());
-        var gatewayUri = Gateway.GetUri(serviceUri, gatewayName);
-
-        return deleteResource(gatewayUri, cancellationToken);
+        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
+                  .Map(fileContents => fileContents.ToJsonObject())
+                  .Map(jsonObject => Gateway.GetNameFromInformationFile(jsonObject))
+                  .Map(name => Gateway.GetUri(serviceUri, name))
+                  .Bind(uri => deleteResource(uri, cancellationToken));
     }
 
     private Task<Unit> DeleteServicePolicy(FileInfo file, CancellationToken cancellationToken)
@@ -573,28 +575,22 @@ public class Creator : ConsoleService
     {
         Logger.LogInformation($"File {file} was deleted; deleting service diagnostic...");
 
-        var diagnosticName = DiagnosticName.From(file.GetDirectoryName());
-        var diagnosticUri = Diagnostic.GetUri(serviceUri, diagnosticName);
-
-        return deleteResource(diagnosticUri, cancellationToken);
+        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
+                  .Map(fileContents => fileContents.ToJsonObject())
+                  .Map(jsonObject => Diagnostic.GetNameFromInformationFile(jsonObject))
+                  .Map(name => Diagnostic.GetUri(serviceUri, name))
+                  .Bind(uri => deleteResource(uri, cancellationToken));
     }
 
-    private async Task<Unit> DeleteProductInformation(FileInfo file, CancellationToken cancellationToken)
+    private Task<Unit> DeleteProductInformation(FileInfo file, CancellationToken cancellationToken)
     {
         Logger.LogInformation($"File {file} was deleted; deleting service product...");
 
-        var productDisplayName = file.GetDirectoryName();
-        var productListUri = Product.GetListByServiceUri(serviceUri);
-
-        var productName = await getResources(productListUri, cancellationToken).Where(productJson => productDisplayName == GetDisplayNameFromResourceJson(productJson))
-                                                                               .Select(productJson => productJson.GetNonEmptyStringPropertyValue("name"))
-                                                                               .Select(ProductName.From)
-                                                                               .FirstOrDefaultAsync(cancellationToken)
-                            ?? throw new InvalidOperationException($"Could not find product with display name {productDisplayName}.");
-
-        var productUri = Product.GetUri(serviceUri, productName);
-
-        return await deleteResource(productUri, cancellationToken);
+        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
+                  .Map(fileContents => fileContents.ToJsonObject())
+                  .Map(jsonObject => Product.GetNameFromInformationFile(jsonObject))
+                  .Map(name => Product.GetUri(serviceUri, name))
+                  .Bind(uri => deleteResource(uri, cancellationToken));
     }
 
     private static string GetDisplayNameFromResourceJson(JsonObject json)
@@ -628,21 +624,22 @@ public class Creator : ConsoleService
     {
         Logger.LogInformation($"File {file} was deleted; deleting service logger...");
 
-        var loggerName = LoggerName.From(file.GetDirectoryName());
-        var loggerUri = common.Logger.GetUri(serviceUri, loggerName);
-
-        return deleteResource(loggerUri, cancellationToken);
+        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
+                  .Map(fileContents => fileContents.ToJsonObject())
+                  .Map(jsonObject => common.Logger.GetNameFromInformationFile(jsonObject))
+                  .Map(name => common.Logger.GetUri(serviceUri, name))
+                  .Bind(uri => deleteResource(uri, cancellationToken));
     }
 
-    private async Task<Unit> DeleteApiInformation(FileInfo file, CancellationToken cancellationToken)
+    private Task<Unit> DeleteApiInformation(FileInfo file, CancellationToken cancellationToken)
     {
         Logger.LogInformation($"File {file} was deleted; deleting API...");
 
-        var apiDisplayName = file.GetDirectoryName();
-        var apiName = await GetApiNameFromServiceUri(apiDisplayName, cancellationToken);
-        var apiUri = Api.GetUri(serviceUri, apiName);
-
-        return await deleteResource(apiUri, cancellationToken);
+        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
+                  .Map(fileContents => fileContents.ToJsonObject())
+                  .Map(jsonObject => Api.GetNameFromInformationFile(jsonObject))
+                  .Map(name => Api.GetUri(serviceUri, name))
+                  .Bind(uri => deleteResource(uri, cancellationToken));
     }
 
     private async Task<Unit> DeleteApiPolicy(FileInfo apiPolicyFile, CancellationToken cancellationToken)
@@ -691,12 +688,7 @@ public class Creator : ConsoleService
     private async Task<Unit> DeleteOperationPolicy(FileInfo operationPolicyFile, CancellationToken cancellationToken)
     {
         var apiInformationFile = Operation.GetApiInformationFileFromPolicyFile(operationPolicyFile);
-        if (apiInformationFile.Exists is false)
-        {
-            Logger.LogInformation($"File {operationPolicyFile} was deleted, but information file {apiInformationFile} is missing; skipping operation policy deletion...");
-            return Unit.Default;
-        }
-        else
+        if (apiInformationFile.Exists)
         {
             Logger.LogInformation($"File {operationPolicyFile} was deleted; deleting operation policy...");
 
@@ -707,6 +699,11 @@ public class Creator : ConsoleService
             var policyUri = Policy.GetOperationPolicyUri(operationUri);
 
             return await deleteResource(policyUri, cancellationToken);
+        }
+        else
+        {
+            Logger.LogInformation($"File {operationPolicyFile} was deleted, but information file {apiInformationFile} is missing; skipping operation policy deletion...");
+            return Unit.Default;
         }
     }
 }

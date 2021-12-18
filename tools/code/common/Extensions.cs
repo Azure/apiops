@@ -740,3 +740,15 @@ public static class UriExtensions
                                         .ToUri();
     }
 }
+
+public static class StringExtensions
+{
+    public static JsonObject ToJsonObject([NotNull] this string? text)
+    {
+        return text.IfNullThrow("Cannot convert a null string to a JSON object.")
+                   .Bind(input => JsonNode.Parse(input))
+                   .IfNullThrow("Cannot parse input as a JSON node")
+                   .Map(node => node.AsObject())
+                   .IfNullThrow("JSON object cannot be null.");
+    }
+}

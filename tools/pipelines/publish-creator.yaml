@@ -36,6 +36,6 @@ stages:
             displayName: Publish creator artifact
             inputs:
               command: publish
-              vstsFeedPublish: $(System.TeamProject)/apim-tools
+              vstsFeedPublish: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
               vstsFeedPackagePublish: creator
               packagePublishDescription: 'APIM creator tool'

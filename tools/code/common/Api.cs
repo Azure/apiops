@@ -7,13 +7,13 @@ public static class Api
         return serviceUri.ToUri()
                          .AppendPath("apis");
     }
-    
+
     public static Uri GetListByProductUri(ProductUri productUri)
     {
         return productUri.ToUri()
                          .AppendPath("apis");
     }
-    
+
     public static Uri GetListByGatewayUri(GatewayUri gatewayUri)
     {
         return gatewayUri.ToUri()
@@ -40,17 +40,23 @@ public static class Api
     public static Task<ApiName> GetNameFromInformationFile(FileInfo apiInformationFile, CancellationToken cancellationToken)
     {
         return apiInformationFile.ReadAsJsonObject(cancellationToken)
-                                 .Map(json => json.GetNonEmptyStringPropertyValue("name"))
-                                 .Map(ApiName.From);
+                                 .Map(GetNameFromInformationFile);
     }
-    
+
+    public static ApiName GetNameFromInformationFile(JsonObject apiInformationFileJson)
+    {
+        return apiInformationFileJson.GetNonEmptyStringPropertyValue("name")
+                                     .Map(ApiName.From)
+                                     .IfNullThrow("API name cannot be null.");
+    }
+
     public static Task<ApiName> GetNameFromPolicyFile(FileInfo apiPolicyFile, CancellationToken cancellationToken)
     {
         var apiInformationFile = GetInformationFileFromPolicyFile(apiPolicyFile);
 
         return GetNameFromInformationFile(apiInformationFile, cancellationToken);
     }
-    
+
     public static Task<ApiName> GetNameFromDiagnosticInformationFile(FileInfo apiDiagnosticInformationFile, CancellationToken cancellationToken)
     {
         var apiInformationFile = GetInformationFileFromDiagnosticFile(apiDiagnosticInformationFile);

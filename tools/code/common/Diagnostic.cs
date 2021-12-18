@@ -31,7 +31,13 @@ public static class Diagnostic
     public static Task<DiagnosticName> GetNameFromInformationFile(FileInfo file, CancellationToken cancellationToken)
     {
         return file.ReadAsJsonObject(cancellationToken)
-                   .Map(json => json.GetNonEmptyStringPropertyValue("name"))
-                   .Map(DiagnosticName.From);
+                   .Map(GetNameFromInformationFile);
+    }
+
+    public static DiagnosticName GetNameFromInformationFile(JsonObject fileJson)
+    {
+        return fileJson.GetNonEmptyStringPropertyValue("name")
+                       .Map(DiagnosticName.From)
+                       .IfNullThrow("Diagnostic name cannot be null.");
     }
 }

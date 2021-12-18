@@ -26,13 +26,14 @@ stages:
     jobs:
       - job: create_artifact_from_portal
         displayName: Create artifact from portal
-        pool: $(AGENT_POOL_NAME)
+        pool:
+          vmImage: ubuntu-latest
         steps:
           - task: UniversalPackages@0
             displayName: Download extractor
             inputs:
               downloadDirectory: '$(Pipeline.Workspace)/extractor'
-              vstsFeed: $(System.TeamProject)/apim-tools
+              vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
               vstsFeedPackage: 'extractor'
               vstsPackageVersion: '*'
           - task: AzureCLI@2
@@ -85,6 +86,8 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
+          - checkout: git://$(System.TeamProject)/${{ parameters.APIM_REPOSITORY_NAME }}
+          - checkout: self
           - task: DownloadPipelineArtifact@2
             displayName: Download pipeline artifact
             inputs:
@@ -97,7 +100,7 @@ stages:
               azureSubscription: "$(SERVICE_CONNECTION_NAME)"
               scriptType: bash
               scriptLocation: scriptPath
-              scriptPath: $(Build.SourcesDirectory)/utils/create_pull_request.sh
-              arguments: --repository-name "${{ parameters.APIM_REPOSITORY_NAME }}" --pull-request-title "Merging artifacts from portal (Build $(Build.BuildId))" --branch-name "${{ parameters.TARGET_BRANCH_NAME }}" --source-folder-path "$(Pipeline.Workspace)/artifacts-from-portal" --temporary-branch-name "artifacts-from-portal-build-$(Build.BuildId)" --temporary-folder-path "$(Agent.TempDirectory)/artifacts-from-portal"
+              scriptPath: $(Build.SourcesDirectory)/$(Build.Repository.Name)/utils/create_pull_request.sh
+              arguments: --organization-url "$(System.TeamFoundationCollectionUri)" --project-name "$(System.TeamProject)" --repository-name "${{ parameters.APIM_REPOSITORY_NAME }}" --pull-request-title "Merging artifacts from portal (Build $(Build.BuildId))" --branch-name "${{ parameters.TARGET_BRANCH_NAME }}" --source-folder-path "$(Pipeline.Workspace)/artifacts-from-portal" --temporary-branch-name "artifacts-from-portal-build-$(Build.BuildId)" --temporary-folder-path "$(Agent.TempDirectory)/artifacts-from-portal"
             env:
               AZURE_DEVOPS_EXT_PAT: "$(System.AccessToken)"

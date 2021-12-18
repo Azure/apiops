@@ -15,11 +15,17 @@ public static class Product
         return ProductUri.From(productUri);
     }
 
-    public static Task<ProductName> GetNameFromInformationFile(FileInfo productInformationFile, CancellationToken cancellationToken)
+    public static Task<ProductName> GetNameFromInformationFile(FileInfo file, CancellationToken cancellationToken)
     {
-        return productInformationFile.ReadAsJsonObject(cancellationToken)
-                                     .Map(json => json.GetNonEmptyStringPropertyValue("name"))
-                                     .Map(ProductName.From);
+        return file.ReadAsJsonObject(cancellationToken)
+                   .Map(GetNameFromInformationFile);
+    }
+
+    public static ProductName GetNameFromInformationFile(JsonObject fileJson)
+    {
+        return fileJson.GetNonEmptyStringPropertyValue("name")
+                       .Map(ProductName.From)
+                       .IfNullThrow("Product name cannot be null.");
     }
 
     public static Task<ProductName> GetNameFromPolicyFile(FileInfo productPolicyFile, CancellationToken cancellationToken)

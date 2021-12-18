@@ -15,10 +15,16 @@ public static class Logger
         return LoggerUri.From(loggerUri);
     }
 
-    public static Task<LoggerName> GetNameFromInformationFile(FileInfo loggerInformationFile, CancellationToken cancellationToken)
+    public static Task<LoggerName> GetNameFromInformationFile(FileInfo file, CancellationToken cancellationToken)
     {
-        return loggerInformationFile.ReadAsJsonObject(cancellationToken)
-                                    .Map(json => json.GetNonEmptyStringPropertyValue("name"))
-                                    .Map(LoggerName.From);
+        return file.ReadAsJsonObject(cancellationToken)
+                   .Map(GetNameFromInformationFile);
+    }
+
+    public static LoggerName GetNameFromInformationFile(JsonObject fileJson)
+    {
+        return fileJson.GetNonEmptyStringPropertyValue("name")
+                       .Map(LoggerName.From)
+                       .IfNullThrow("Logger name cannot be null.");
     }
 }

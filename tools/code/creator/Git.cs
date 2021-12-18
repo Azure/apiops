@@ -29,19 +29,30 @@ internal enum CommitStatus
 
 internal static class Git
 {
-    public static Task<ILookup<CommitStatus, FileInfo>> GetFilesFromCommit(CommitId commitId, DirectoryInfo baseDirectory)
+    public static async Task<string> GetPreviousCommitContents(CommitId commitId, FileInfo file, DirectoryInfo baseDirectory)
     {
-        return GetDiffTreeOutput(commitId).Map(output => ParseDiffTreeOutput(output, baseDirectory));
-    }
-
-    private static async Task<string> GetDiffTreeOutput(CommitId commitId)
-    {
-        var command = Command.Run("git", "diff-tree", "--no-commit-id", "--name-status", "-r", $"{commitId}");
+        var relativePath = Path.GetRelativePath(baseDirectory.FullName, file.FullName);
+        var command = Command.Run("git", "-C", baseDirectory.FullName, "show", $"{commitId}^1:{relativePath}");
         var commandResult = await command.Task;
 
         return commandResult.Success
             ? commandResult.StandardOutput
-            : throw new InvalidOperationException($"Failed to get commit files from Git. Error message is '{commandResult.StandardError}'.");
+            : throw new InvalidOperationException($"Failed to get contents for file {file} in Git commit {commitId}. Error message is '{commandResult.StandardError}'.");
+    }
+
+    public static Task<ILookup<CommitStatus, FileInfo>> GetFilesFromCommit(CommitId commitId, DirectoryInfo baseDirectory)
+    {
+        return GetDiffTreeOutput(commitId, baseDirectory).Map(output => ParseDiffTreeOutput(output, baseDirectory));
+    }
+
+    private static async Task<string> GetDiffTreeOutput(CommitId commitId, DirectoryInfo baseDirectory)
+    {
+        var command = Command.Run("git", "-C", baseDirectory.FullName, "diff-tree", "--no-commit-id", "--name-status", "-r", $"{commitId}");
+        var commandResult = await command.Task;
+
+        return commandResult.Success
+            ? commandResult.StandardOutput
+            : throw new InvalidOperationException($"Failed to get files for commit {commitId} in directory {baseDirectory}. Error message is '{commandResult.StandardError}'.");
     }
 
     private static ILookup<CommitStatus, FileInfo> ParseDiffTreeOutput(string output, DirectoryInfo baseDirectory)

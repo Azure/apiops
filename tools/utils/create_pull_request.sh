@@ -5,6 +5,24 @@ PARAMS=""
 while (("$#")); do
     [[ $1 == --*=* ]] && set -- "${1%%=*}" "${1#*=}" "${@:2}"
     case "$1" in
+    --organization-url)
+        if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+            organization_url=$2
+            shift 2
+        else
+            echo "Error: Argument for $1 is missing" >&2
+            exit 1
+        fi
+        ;;
+    --project-name)
+        if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+            project_name=$2
+            shift 2
+        else
+            echo "Error: Argument for $1 is missing" >&2
+            exit 1
+        fi
+        ;;
     --repository-name)
         if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
             repository_name=$2
@@ -74,6 +92,7 @@ set -eu -o pipefail
 
 echo "Installing Azure DevOps extension..."
 az extension add --name "azure-devops"
+az devops configure --defaults organization="${organization_url}" project="${project_name}"
 
 echo "Creating folder ${temporary_folder_path}..."
 mkdir -p "${temporary_folder_path}"
