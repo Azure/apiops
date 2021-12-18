@@ -1,33 +1,42 @@
-parameters:
-  - name: RESOURCE_GROUP_NAME
-    displayName: APIM instance resource group name
-    type: string
-  - name: AGENT_POOL_NAME
-    displayName: Agent pool name
-    type: string
-  - name: SERVICE_CONNECTION_NAME
-    displayName: Service connection name
-    type: string
+trigger: none
+
+resources:
+  repositories:
+    - repository: apim-artifacts
+      type: git
+      name: apim-artifacts
+      trigger:
+        branches:
+          include:
+            - main
+
+variables:
+  - group: apim-automation
+  - name: System.Debug
+    value: true
 
 stages:
-  - stage: create_artifact_from_portal
-    displayName: Create artifact from portal
+  - stage: push_changes_to_azure
+    displayName: Push changes to Azure
     jobs:
-      - job: create_artifact_from_portal
-        displayName: Create artifact from portal
-        pool: ${{ parameters.AGENT_POOL_NAME }}
+      - job: push_changes_to_azure
+        displayName: Push changes to Azure
+        pool:
+          vmImage: ubuntu-latest
         steps:
+          - checkout: self
+          - checkout: apim-artifacts
           - task: UniversalPackages@0
             displayName: Download creator
             inputs:
               downloadDirectory: '$(Pipeline.Workspace)/creator'
-              vstsFeed: $(System.TeamProject)/apim-tools
+              vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
               vstsFeedPackage: 'creator'
               vstsPackageVersion: '*'
           - task: AzureCLI@2
             displayName: Set creation variables
             inputs:
-              azureSubscription: ${{ parameters.SERVICE_CONNECTION_NAME }}
+              azureSubscription: "$(SERVICE_CONNECTION_NAME)"
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -41,7 +50,7 @@ stages:
           - task: AzureCLI@2
             displayName: Run creator
             inputs:
-              azureSubscription: ${{ parameters.SERVICE_CONNECTION_NAME }}
+              azureSubscription: "$(SERVICE_CONNECTION_NAME)"
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
@@ -57,6 +66,6 @@ stages:
               AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
               AZURE_TENANT_ID: $(AZURE_TENANT_ID)
               AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
-              AZURE_RESOURCE_GROUP_NAME: ${{ parameters.RESOURCE_GROUP_NAME }}
-              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: $(Build.SourcesDirectory)
+              AZURE_RESOURCE_GROUP_NAME: $(RESOURCE_GROUP_NAME)
+              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: $(Build.SourcesDirectory)/$(Build.Repository.Name)
               COMMIT_ID: $(Build.SourceVersion)

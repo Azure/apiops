@@ -15,10 +15,16 @@ public static class Gateway
         return GatewayUri.From(gatewayUri);
     }
 
-    public static Task<GatewayName> GetNameFromInformationFile(FileInfo gatewayInformationFile, CancellationToken cancellationToken)
+    public static Task<GatewayName> GetNameFromInformationFile(FileInfo file, CancellationToken cancellationToken)
     {
-        return gatewayInformationFile.ReadAsJsonObject(cancellationToken)
-                                     .Map(json => json.GetNonEmptyStringPropertyValue("name"))
-                                     .Map(GatewayName.From);
+        return file.ReadAsJsonObject(cancellationToken)
+                   .Map(GetNameFromInformationFile);
+    }
+
+    public static GatewayName GetNameFromInformationFile(JsonObject fileJson)
+    {
+        return fileJson.GetNonEmptyStringPropertyValue("name")
+                       .Map(GatewayName.From)
+                       .IfNullThrow("Gateway name cannot be null.");
     }
 }
