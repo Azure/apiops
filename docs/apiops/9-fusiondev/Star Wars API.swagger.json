@@ -1,0 +1,55 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "title": "Star Wars API",
+        "version": "1.0"
+    },
+    "host": "apim-sk12212021.azure-api.net",
+    "basePath": "/sw",
+    "schemes": [
+        "https"
+    ],
+    "paths": {
+        "/people/": {
+            "get": {
+                "description": "Get characters from the Star Wars Universe",
+                "operationId": "getpeople",
+                "summary": "GetPeople",
+                "parameters": [
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/people/{id}": {
+            "get": {
+                "description": "Get individual characters from the Star Wars Universe",
+                "operationId": "getpeoplebyid",
+                "summary": "GetPeopleById",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {},
+    "tags": []
+}
