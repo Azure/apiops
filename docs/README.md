@@ -5,10 +5,12 @@
 #  About this workshop
 
 
-This hands-on lab will guide you through the different concepts around Azure API Management, from the creation to the DevOps, including good practices in terms of versioning, security, and so on. It is designed to bring customers and partners to a 200-level understanding of Azure Api Management. This is meant to be a hands-on lab experience, all instructions are provided, but a basic level of understanding of apis is expected(http operations, networking basics, openapi, rest, soap, oauth2, and other concepts).
+This hands-on lab will guide you through the concept of APIOps. It applies the concepts of GitOps and DevOps to API deployment. By using practices from these two methodologies, APIOps can enable everyone involved in the lifecycle of API design, development, and deployment with self-service and automated tools to ensure the quality of the specifications and APIs that they're building.
+
+APIOps places the Azure API Management infrastructure under version control to achieve these goals. Rather than making changes directly in API Management, most operations happen through code changes that can be reviewed and audited. This workshop is designed to bring customers and partners to a 400-level understanding of automating API deployments in Azure Api Management. This is meant to be a hands-on lab experience, all instructions are provided, but a basic level of understanding of apis, devops and gitops is expected.
 
 
-[This workshop is delivered using Github Pages and Just-The-Docs theme at https://azure.github.io/apim-lab/.](https://azure.github.io/apim-lab/)
+[This workshop is delivered using Github Pages and Just-The-Docs theme at https://azure.github.io/apiops/.](https://azure.github.io/apiops/)
 
 ## Contributing
 
