@@ -1,0 +1,289 @@
+<html>
+<title>Diagrams for GitHub</title>
+<head>
+	<style type="text/css">
+		iframe {
+			border:0;
+			background-color:#fff;
+			position:fixed;
+			top:0;
+			left:0;
+			right:0;
+			bottom:0;
+			width:100%;
+			height:100%
+		}
+	</style>
+	<script type="text/javascript">
+		var editor = 'https://embed.diagrams.net/?embed=1&ui=atlas&spin=1&proto=json';
+
+		var urlParams = (function()
+		{
+			var result = new Object();
+			var params = window.location.search.slice(1).split('&');
+
+			for (var i = 0; i < params.length; i++)
+			{
+				idx = params[i].indexOf('=');
+
+				if (idx > 0)
+				{
+					result[params[i].substring(0, idx)] = params[i].substring(idx + 1);
+				}
+			}
+
+			return result;
+		})();
+
+		function edit(path, content, callback)
+		{
+			var iframe = document.createElement('iframe');
+			iframe.setAttribute('frameborder', '0');
+
+			var close = function()
+			{
+				window.removeEventListener('message', receive);
+				document.body.removeChild(iframe);
+			};
+
+			var save = function(data)
+			{
+				iframe.contentWindow.postMessage(JSON.stringify(
+				{
+					action: 'spinner',
+					message: 'Saving',
+					show: 1
+				}), '*');
+
+				callback(data, function(success)
+				{
+					iframe.contentWindow.postMessage(JSON.stringify(
+					{
+						action: 'spinner',
+						show: 0
+					}), '*');
+
+					if (success)
+					{
+						close();
+					}
+				}, iframe);
+			};
+
+			var receive = function(evt)
+			{
+				if (evt.data.length > 0)
+				{
+					var msg = JSON.parse(evt.data);
+
+					if (msg.event == 'init')
+					{
+						if (content == null)
+						{
+							iframe.contentWindow.postMessage(JSON.stringify(
+							{
+								action: 'load',
+								autosave: 0,
+								xml: ''
+							}), '*');
+						}
+						else if (/(\.png)$/i.test(path))
+						{
+							iframe.contentWindow.postMessage(JSON.stringify(
+							{
+								action: 'load',
+								autosave: 0,
+								xmlpng: 'data:image/png;base64,' + content
+							}), '*');
+						}
+						else
+						{
+							iframe.contentWindow.postMessage(JSON.stringify(
+							{
+								action: 'load',
+								autosave: 0,
+								xml: atob(content)
+							}), '*');
+						}
+					}
+					else if (msg.event == 'export')
+					{
+						var data = (msg.data.substring(0, 5) == 'data:') ?
+							msg.data.substring(msg.data.indexOf(',') + 1) :
+							btoa(msg.data);
+						save(data);
+					}
+					else if (msg.event == 'save')
+					{
+						if ((/\.(png|svg|html)$/i).test(path))
+						{
+							var ext = path.substring(path.lastIndexOf('.') + 1);
+
+							// Additional export step required for PNG, SVG and HTML
+							iframe.contentWindow.postMessage(JSON.stringify(
+							{
+								spin: 'Saving',
+								action: 'export',
+								format: (/(\.html)$/i.test(path)) ? 'html' : 'xml' + ext,
+								xml: msg.xml
+							}), '*');
+						}
+						else
+						{
+							save(btoa(msg.xml));
+						}
+					}
+					else if (msg.event == 'exit')
+					{
+						close();
+					}
+				}
+			};
+
+			window.addEventListener('message', receive);
+			iframe.setAttribute('src', editor);
+			document.body.appendChild(iframe);
+		};
+
+		function xhr(verb, url, data, callback)
+		{
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function()
+			{
+				if (req.readyState == 4)
+				{
+					callback(req);
+				}
+			};
+
+			req.open(verb, url, true);
+
+			var username = document.getElementById('username').value;
+			var pass = document.getElementById('password').value;
+			req.setRequestHeader('Authorization', 'Basic ' +
+				btoa(username + ':' + pass));
+
+			req.send(data);
+		}
+
+		function readFile()
+		{
+			var button = document.getElementById('button');
+			var prev = button.innerHTML;
+
+			button.setAttribute('disabled', 'disabled');
+			button.innerHTML = 'Loading...';
+
+			var org = document.getElementById('org').value;
+			var repo = document.getElementById('repo').value;
+			var path = document.getElementById('path').value;
+			var ref = document.getElementById('ref').value;
+			var url = 'https://api.github.com/repos/' + org + '/' + repo +
+				'/contents/' + path + '?ref=' + encodeURIComponent(ref);
+
+			xhr('GET', url, null, function(req)
+			{
+				button.removeAttribute('disabled');
+				button.innerHTML = prev;
+
+				var obj = JSON.parse(req.responseText);
+				var filename = path;
+				var slash = filename.lastIndexOf('/');
+
+				if (slash >= 0)
+				{
+					filename = filename.substring(slash + 1);
+				}
+
+				if (req.status == 200 || req.status == 404)
+				{
+					edit(path, obj.content, function(data, fn, iframe)
+					{
+						var msg = prompt('Commit Message', 'Update ' + filename);
+
+						writeFile(url, path, obj.sha, msg || '', data, fn);
+					});
+				}
+				else
+				{
+					alert(obj.message);
+				}
+			});
+		};
+
+		function writeFile(url, path, sha, msg, content, fn)
+		{
+			var entity =
+			{
+				path: path,
+				message: msg,
+				content: content
+			};
+
+			if (sha != null)
+			{
+				entity.sha = sha;
+			}
+
+			xhr('PUT', url, JSON.stringify(entity), function(req)
+			{
+				if (req.readyState == 4)
+				{
+					var success = req.status == 200 || req.status == 201;
+					fn(success);
+
+					if (!success)
+					{
+						var obj = JSON.parse(req.responseText);
+						alert(obj.message);
+					}
+				}
+			});
+		};
+
+		function onload()
+		{
+			document.getElementById('username').value = urlParams['user'] || '';
+			document.getElementById('password').value = urlParams['pass'] || '';
+			document.getElementById('org').value = urlParams['org'] || '';
+			document.getElementById('repo').value = urlParams['repo'] || '';
+			document.getElementById('path').value = urlParams['path'] || '';
+			document.getElementById('ref').value = urlParams['ref'] || 'master';
+
+			document.getElementById((urlParams['username'] == null) ?
+				'username' : ((urlParams['password'] == null) ?
+				'password' : 'button')).focus();
+
+			document.addEventListener('keydown', function(evt)
+			{
+				if (evt.keyCode == 13)
+				{
+					document.getElementById('button').click();
+				}
+			});
+
+			if (urlParams['action'] == 'open')
+			{
+				document.getElementById('button').click();
+			}
+		};
+	</script>
+</head>
+<body onload="onload();">
+<h2>Diagrams for GitHub</h2>
+<table>
+<tr><td>Username:</td><td><input id="username" type="text"/></td></tr>
+<tr><td>Password:</td><td><input id="password" type="password"/></td></tr>
+<tr><td>Organization:</td><td><input id="org" type="org"/></td></tr>
+<tr><td>Repository:</td><td><input id="repo" type="text"/></td></tr>
+<tr><td>Path:</td><td><input id="path" type="text"/></td></tr>
+<tr><td>Ref:</td><td><input id="ref" type="text"/></td></tr>
+<tr><td colspan="2" align="right">
+<br>
+<button id="button" onclick="readFile();">Edit/Create</button>
+</td></tr>
+</table>
+<br>
+Powered by <a href="https://www.diagrams.net" target="_blank">diagrams.net</a>
+</body>
+</html>

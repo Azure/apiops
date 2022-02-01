@@ -100,7 +100,7 @@ stages:
               azureSubscription: "$(SERVICE_CONNECTION_NAME)"
               scriptType: bash
               scriptLocation: scriptPath
-              scriptPath: $(Build.SourcesDirectory)/$(Build.Repository.Name)/utils/create_pull_request.sh
+              scriptPath: $(Build.SourcesDirectory)/$(Build.Repository.Name)/tools/utils/create_pull_request.sh
               arguments: --organization-url "$(System.TeamFoundationCollectionUri)" --project-name "$(System.TeamProject)" --repository-name "${{ parameters.APIM_REPOSITORY_NAME }}" --pull-request-title "Merging artifacts from portal (Build $(Build.BuildId))" --branch-name "${{ parameters.TARGET_BRANCH_NAME }}" --source-folder-path "$(Pipeline.Workspace)/artifacts-from-portal" --temporary-branch-name "artifacts-from-portal-build-$(Build.BuildId)" --temporary-folder-path "$(Agent.TempDirectory)/artifacts-from-portal"
             env:
               AZURE_DEVOPS_EXT_PAT: "$(System.AccessToken)"

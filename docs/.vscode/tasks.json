@@ -1,0 +1,29 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build and run codespace",
+            "type": "shell",
+            "command": "bundle install && bundle exec jekyll build && find _site/ -type f -exec sed -i 's,http://localhost:4000/,http://,g' {} + && cd _site && ruby -run -e httpd . -p4000",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "build and run local",
+            "type": "shell",
+            "command": "bundle install && bundle exec jekyll build ",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            }
+        }
+    ]
+}
+
+
