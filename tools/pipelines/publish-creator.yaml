@@ -28,7 +28,7 @@ stages:
             inputs:
               command: publish
               publishWebProjects: false
-              projects: '$(Build.SourcesDirectory)/code/creator/creator.csproj'
+              projects: '$(Build.SourcesDirectory)/tools/code/creator/creator.csproj'
               arguments: '--output $(Build.ArtifactStagingDirectory) --runtime linux-x64 -p:PublishSingleFile=true'
               modifyOutputPath: false
               zipAfterPublish: false
