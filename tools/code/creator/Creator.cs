@@ -179,13 +179,13 @@ public class Creator : ConsoleService
         return Unit.Default;
     }
 
-    private Task<Unit> PutServiceInformation(FileInfo file, CancellationToken cancellationToken)
+    private async Task<Unit> PutServiceInformation(FileInfo file, CancellationToken cancellationToken)
     {
         Logger.LogInformation($"Updating Azure service information with file {file}...");
 
         using var stream = file.OpenRead();
 
-        return putResource(serviceUri, stream, cancellationToken);
+        return await putResource(serviceUri, stream, cancellationToken);
     }
 
     private async Task<Unit> PutAuthorizationServerInformation(FileInfo file, CancellationToken cancellationToken)
