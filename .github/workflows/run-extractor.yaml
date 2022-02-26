@@ -29,7 +29,6 @@ jobs:
           github_token: ${{secrets.GITHUB_TOKEN}}
           workflow: publish-extractor.yml
           name: extractor
-          repo: YourGithubOrg/yourGithubApiToolsRepo
           
       - name: Run extractor
         env:
@@ -39,16 +38,16 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           AZURE_RESOURCE_GROUP_NAME: ${{ env.AZURE_RESOURCE_GROUP_NAME }}
           API_MANAGEMENT_SERVICE_NAME: ${{ env.API_MANAGEMENT_SERVICE_NAME }}
-          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: /tmp/apiops-extractor
+          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/artifacts
         run: |
           chmod +x ./extractor
           ./extractor
-          ls -la /tmp/apiops-extractor
+          ls -la ${{ env.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
       - name: publish artifact
         uses: actions/upload-artifact@v2
         with:
           name: artifacts-from-portal
-          path: /tmp/apiops-extractor     
+          path: ${{ GITHUB.WORKSPACE }}/artifacts     
           
   create-pull-request:
     needs: extract
