@@ -59,7 +59,7 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           name: artifacts-from-portal
-          path: "."
+          path: "${{ GITHUB.WORKSPACE }}/artifacts"
 
       - name: Create artifacts pull request
         uses: peter-evans/create-pull-request@v3
