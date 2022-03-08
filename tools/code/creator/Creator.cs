@@ -483,6 +483,7 @@ public class Creator : ConsoleService
 
     private async Task<Unit> PutApiPolicy(FileInfo file, CancellationToken cancellationToken)
     {
+        Logger.LogInformation($"Updating Azure API policy with file {file}...");
         var apiName = await Api.GetNameFromPolicyFile(file, cancellationToken);
         var apiUri = Api.GetUri(serviceUri, apiName);
         var policyUri = Policy.GetApiPolicyUri(apiUri);
