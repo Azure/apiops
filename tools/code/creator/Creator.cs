@@ -1,9 +1,10 @@
-﻿namespace creator;
+namespace creator;
 
 public class Creator : ConsoleService
 {
     private readonly ServiceUri serviceUri;
     private readonly DirectoryInfo serviceDirectory;
+    private readonly DirectoryInfo? overlayDirectory;
     private readonly CommitId? commitId;
     private readonly Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources;
     private readonly Func<Uri, Stream, CancellationToken, Task<Unit>> putResource;
@@ -12,6 +13,7 @@ public class Creator : ConsoleService
     public Creator(IHostApplicationLifetime applicationLifetime, ILogger<Creator> logger, IConfiguration configuration, ArmClient armClient) : base(applicationLifetime, logger)
     {
         this.serviceDirectory = GetServiceDirectory(configuration);
+        this.overlayDirectory = GetOverlayDirectory(configuration);
         this.serviceUri = GetServiceUri(configuration, armClient, serviceDirectory);
         this.commitId = TryGetCommitId(configuration);
         this.getResources = armClient.GetResources;
@@ -19,11 +21,21 @@ public class Creator : ConsoleService
         this.deleteResource = armClient.DeleteResource;
     }
 
+
     private static DirectoryInfo GetServiceDirectory(IConfiguration configuration)
     {
         var path = configuration["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"];
 
         return new DirectoryInfo(path);
+    }
+
+    private static DirectoryInfo? GetOverlayDirectory(IConfiguration configuration)
+    { 
+        var path = configuration["OVERLAY_PATH"];
+        if ( !string.IsNullOrEmpty(path) )
+            return new DirectoryInfo(path);
+        return null;
+        
     }
 
     private static ServiceUri GetServiceUri(IConfiguration configuration, ArmClient armClient, DirectoryInfo serviceDirectory)
@@ -162,7 +174,7 @@ public class Creator : ConsoleService
         var putOperationPolicies = () => fileLookup.Lookup(FileType.OperationPolicy)
                                                    .ExecuteInParallel(PutOperationPolicy, cancellationToken);
 
-        await putServiceInformationFile();
+        //await putServiceInformationFile();
 
         await Task.WhenAll(putAuthorizationServers(),
                            putGateways(),
@@ -179,13 +191,13 @@ public class Creator : ConsoleService
         return Unit.Default;
     }
 
-    private async Task<Unit> PutServiceInformation(FileInfo file, CancellationToken cancellationToken)
+    private Task<Unit> PutServiceInformation(FileInfo file, CancellationToken cancellationToken)
     {
         Logger.LogInformation($"Updating Azure service information with file {file}...");
 
         using var stream = file.OpenRead();
 
-        return await putResource(serviceUri, stream, cancellationToken);
+        return putResource(serviceUri, stream, cancellationToken);
     }
 
     private async Task<Unit> PutAuthorizationServerInformation(FileInfo file, CancellationToken cancellationToken)
@@ -291,7 +303,10 @@ public class Creator : ConsoleService
 
     private async Task<Unit> PutPolicy(Uri policyUri, FileInfo file, CancellationToken cancellationToken)
     {
-        var policyText = await file.ReadAsText(cancellationToken);
+        // Check if custom policy exists
+        var fileToProcess= CheckIfCustomFileExists(file);
+
+        var policyText = await fileToProcess.ReadAsText(cancellationToken);
 
         using var stream = new MemoryStream();
 
@@ -303,12 +318,39 @@ public class Creator : ConsoleService
         return await putResource(policyUri, stream, cancellationToken);
     }
 
+    private FileInfo CheckIfCustomFileExists(FileInfo file)
+    {
+        if (this.overlayDirectory != null)
+        {
+            if (!string.IsNullOrEmpty(file.DirectoryName))
+            {
+                string customDirectory = this.overlayDirectory.FullName;
+
+                // check if an overlay is provided
+                var filePathExcludingCurrentDirectory = file.FullName.Remove(0, this.serviceDirectory.FullName.Length);
+                string pathToCustomFile = string.Concat(customDirectory, filePathExcludingCurrentDirectory);
+
+                if (File.Exists(pathToCustomFile))
+                {
+                    FileInfo customfile = new FileInfo(pathToCustomFile);
+                    return customfile;
+                }
+
+            }
+
+        }
+        return file;
+    }
+
     private async Task<Unit> PutServiceDiagnosticInformation(FileInfo file, CancellationToken cancellationToken)
     {
         var diagnosticName = await Diagnostic.GetNameFromInformationFile(file, cancellationToken);
         var diagnosticUri = Diagnostic.GetUri(serviceUri, diagnosticName);
-        using var fileStream = file.OpenRead();
 
+        // Check if custom diagnostic file exists
+        var fileToProcess = CheckIfCustomFileExists(file);
+
+        using var fileStream = fileToProcess.OpenRead();
         return await putResource(diagnosticUri, fileStream, cancellationToken);
     }
 
@@ -441,12 +483,9 @@ public class Creator : ConsoleService
 
     private async Task<Unit> PutApiPolicy(FileInfo file, CancellationToken cancellationToken)
     {
-        Logger.LogInformation($"Updating Azure API policy with file {file}...");
-
         var apiName = await Api.GetNameFromPolicyFile(file, cancellationToken);
         var apiUri = Api.GetUri(serviceUri, apiName);
         var policyUri = Policy.GetApiPolicyUri(apiUri);
-
         return await PutPolicy(policyUri, file, cancellationToken);
     }
 
