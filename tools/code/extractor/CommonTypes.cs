@@ -1,5 +1,14 @@
-﻿namespace extractor;
+﻿using System;
+using System.IO;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 
+namespace extractor;
+
+/// <summary>
+/// Certain HTTP calls require an HTTP client that is not authenticated. For instance, calls to download a blob with a SAS token.
+/// </summary>
 internal class NonAuthenticatedHttpClient
 {
     private readonly HttpClient client;

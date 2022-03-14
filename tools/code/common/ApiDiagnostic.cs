@@ -6,69 +6,64 @@ using System.Text.Json.Serialization;
 
 namespace common;
 
-public sealed record DiagnosticName : NonEmptyString
+public sealed record ApiDiagnosticName : NonEmptyString
 {
-    private DiagnosticName(string value) : base(value)
+    private ApiDiagnosticName(string value) : base(value)
     {
     }
 
-    public static DiagnosticName From(string value) => new(value);
+    public static ApiDiagnosticName From(string value) => new(value);
+}
 
-    public static DiagnosticName From(DiagnosticInformationFile file)
+public sealed record ApiDiagnosticsFile : FileRecord
+{
+    private static readonly string name = "diagnostics.json";
+    private readonly ApisDirectory apisDirectory;
+    private readonly ApiDisplayName apiDisplayName;
+
+    private ApiDiagnosticsFile(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName)
+        : base(apisDirectory.Path.Append(apiDisplayName).Append(name))
     {
-        var jsonObject = file.ReadAsJsonObject();
-        var diagnostic = Diagnostic.FromJsonObject(jsonObject);
+        this.apisDirectory = apisDirectory;
+        this.apiDisplayName = apiDisplayName;
+    }
 
-        return new DiagnosticName(diagnostic.Name);
+    public ApiInformationFile GetApiInformationFile() => ApiInformationFile.From(apisDirectory, apiDisplayName);
+
+    public static ApiDiagnosticsFile From(ApisDirectory apisDirectory, ApiDisplayName displayName)
+        => new(apisDirectory, displayName);
+
+    public static ApiDiagnosticsFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
+    {
+        if (name.Equals(file.Name) is false)
+        {
+            return null;
+        }
+
+        var directory = file.Directory;
+        if (directory is null)
+        {
+            return null;
+        }
+
+        var apisDirectory = ApisDirectory.TryFrom(serviceDirectory, directory.Parent);
+        return apisDirectory is null
+            ? null
+            : new(apisDirectory, ApiDisplayName.From(directory.Name));
     }
 }
 
-public sealed record DiagnosticUri : UriRecord
+public sealed record ApiDiagnosticUri : UriRecord
 {
-    public DiagnosticUri(Uri value) : base(value)
+    public ApiDiagnosticUri(Uri value) : base(value)
     {
     }
 
-    public static DiagnosticUri From(ServiceUri serviceUri, DiagnosticName diagnosticName) =>
-        new(UriExtensions.AppendPath(serviceUri, "diagnostics").AppendPath(diagnosticName));
+    public static ApiDiagnosticUri From(ApiUri apiUri, ApiDiagnosticName apiDiagnosticName) =>
+        new(UriExtensions.AppendPath(apiUri, "diagnostics").AppendPath(apiDiagnosticName));
 }
 
-public sealed record DiagnosticsDirectory : DirectoryRecord
-{
-    private static readonly string name = "diagnostics";
-
-    private DiagnosticsDirectory(RecordPath path) : base(path)
-    {
-    }
-
-    public static DiagnosticsDirectory From(ServiceDirectory serviceDirectory) =>
-        new(serviceDirectory.Path.Append(name));
-
-    public static DiagnosticsDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.Path.PathEquals(directory.Parent?.FullName)
-        ? new(RecordPath.From(directory.FullName))
-        : null;
-}
-
-public sealed record DiagnosticInformationFile : FileRecord
-{
-    private static readonly string name = "diagnosticInformation.json";
-
-    public DiagnosticInformationFile(RecordPath path) : base(path)
-    {
-    }
-
-    public static DiagnosticInformationFile From(DiagnosticsDirectory diagnosticsDirectory, DiagnosticName diagnosticName)
-        => new(diagnosticsDirectory.Path.Append(diagnosticName)
-                                     .Append(name));
-
-    public static DiagnosticInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        name.Equals(file.Name) && DiagnosticsDirectory.TryFrom(serviceDirectory, file.Directory?.Parent) is not null
-        ? new(RecordPath.From(file.FullName))
-        : null;
-}
-
-public sealed record Diagnostic([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Diagnostic.DiagnosticContractProperties Properties)
+public sealed record ApiDiagnostic([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] ApiDiagnostic.DiagnosticContractProperties Properties)
 {
     public record DiagnosticContractProperties([property: JsonPropertyName("loggerId")] string LoggerId)
     {
@@ -154,8 +149,8 @@ public sealed record Diagnostic([property: JsonPropertyName("name")] string Name
     public JsonObject ToJsonObject() =>
         JsonSerializer.SerializeToNode(this)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
 
-    public static Diagnostic FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Diagnostic>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
+    public static ApiDiagnostic FromJsonObject(JsonObject jsonObject) =>
+        JsonSerializer.Deserialize<ApiDiagnostic>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
 
-    public static Uri GetListByServiceUri(ServiceUri serviceUri) => UriExtensions.AppendPath(serviceUri, "diagnostics");
+    public static Uri GetListByApiUri(ApiUri apiUri) => UriExtensions.AppendPath(apiUri, "diagnostics");
 }

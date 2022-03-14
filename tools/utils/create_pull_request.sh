@@ -77,6 +77,15 @@ while (("$#")); do
             exit 1
         fi
         ;;
+    --overwrite-subfolder)
+        if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
+            overwrite_subfolder=$2
+            shift 2
+        else
+            overwrite_subfolder=""
+            exit 1
+        fi
+        ;;
     -*) # unsupported flags
         echo "Error: Unsupported flag $1" >&2
         exit 1
@@ -105,9 +114,12 @@ git clone --branch "${branch_name}" --depth 1 "${authenticated_clone_url}" "${te
 echo "Creating temporary branch ${temporary_branch_name} from ${branch_name}..."
 git -C "${temporary_folder_path}" checkout -b "${temporary_branch_name}" "${branch_name}"
 
+if [ -n "$overwrite_subfolder" ] && [ -d "${temporary_folder_path:?}/${overwrite_subfolder:?}" ]; then
+    echo "Overwrite folder set to $overwrite_subfolder; deleting its contents..."
+    rm -rfv "${temporary_folder_path:?}/${overwrite_subfolder:?}"/*
+fi
+
 echo "Copying source folder ${source_folder_path} contents to temporary folder ${temporary_folder_path}..."
-[ -f "${temporary_folder_path}"/pipelines.yaml ] && cp "${temporary_folder_path}"/pipelines.yaml "${source_folder_path}"/pipelines.yaml # Preserve pipelines.yaml file
-rm -rfv "${temporary_folder_path}"/*
 cp -r "${source_folder_path}"/* "${temporary_folder_path}"/
 
 echo "Validating that changes exist to be published..."
