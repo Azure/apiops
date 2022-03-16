@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -56,68 +57,132 @@ public sealed record ApisDirectory : DirectoryRecord
 {
     private static readonly string name = "apis";
 
-    private ApisDirectory(RecordPath path) : base(path)
+    public ServiceDirectory ServiceDirectory { get; }
+
+    private ApisDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
     {
+        ServiceDirectory = serviceDirectory;
     }
 
-    public static ApisDirectory From(ServiceDirectory serviceDirectory) =>
-        new(serviceDirectory.Path.Append(name));
+    public static ApisDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
 
     public static ApisDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.Path.PathEquals(directory.Parent?.FullName)
-        ? new(RecordPath.From(directory.FullName))
+        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
+        ? new(serviceDirectory)
         : null;
+}
+
+public sealed record ApiDirectory : DirectoryRecord
+{
+    public ApisDirectory ApisDirectory { get; }
+    public ApiDisplayName ApiDisplayName { get; }
+
+    private ApiDirectory(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName) : base(apisDirectory.Path.Append(apiDisplayName))
+    {
+        ApisDirectory = apisDirectory;
+        ApiDisplayName = apiDisplayName;
+    }
+
+    public static ApiDirectory From(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName) => new(apisDirectory, apiDisplayName);
+
+    public static ApiDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
+    {
+        var parentDirectory = directory?.Parent;
+        if (parentDirectory is not null)
+        {
+            var apisDirectory = ApisDirectory.TryFrom(serviceDirectory, parentDirectory);
+
+            return apisDirectory is null ? null : From(apisDirectory, ApiDisplayName.From(directory!.Name));
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record ApiInformationFile : FileRecord
 {
     private static readonly string name = "apiInformation.json";
 
-    public ApiInformationFile(RecordPath path) : base(path)
+    public ApiDirectory ApiDirectory { get; }
+
+    private ApiInformationFile(ApiDirectory apiDirectory) : base(apiDirectory.Path.Append(name))
     {
+        ApiDirectory = apiDirectory;
     }
 
-    public static ApiInformationFile From(ServiceDirectory serviceDirectory, ApiDisplayName displayName)
+    public static ApiInformationFile From(ApiDirectory apiDirectory) => new(apiDirectory);
+
+    public static ApiInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        var apisDirectory = ApisDirectory.From(serviceDirectory);
+        if (name.Equals(file.Name))
+        {
+            var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
 
-        return From(apisDirectory, displayName);
+            return apiDirectory is null ? null : new(apiDirectory);
+        }
+        else
+        {
+            return null;
+        }
     }
-
-    public static ApiInformationFile From(ApisDirectory apiDirectory, ApiDisplayName displayName) =>
-        new(apiDirectory.Path.Append(displayName).Append(name));
-
-    public static ApiInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        name.Equals(file.Name) && ApisDirectory.TryFrom(serviceDirectory, file.Directory?.Parent) is not null
-        ? new(RecordPath.From(file.FullName))
-        : null;
 }
 
 public sealed record ApiSpecificationFile : FileRecord
 {
     private readonly Format format;
 
-    private ApiSpecificationFile(RecordPath path, Format format = Format.Yaml) : base(path)
+    public ApiDirectory ApiDirectory { get; }
+
+    private ApiSpecificationFile(ApiDirectory apiDirectory, Format format = Format.Yaml)
+        : base(apiDirectory.Path.Append(GetNameFromFormat(format)))
     {
         this.format = format;
+
+        ApiDirectory = apiDirectory;
     }
 
-    public static ApiSpecificationFile From(ServiceDirectory serviceDirectory, ApiDisplayName displayName, Format format = Format.Yaml)
+    public static ApiSpecificationFile From(ApiDirectory apiDirectory, Format format = Format.Yaml) => new(apiDirectory, format);
+
+    public static ApiSpecificationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        var apisDirectory = ApisDirectory.From(serviceDirectory);
+        if (Enum.TryParse<Format>(string.Concat(file.Extension.Skip(1)), ignoreCase: true, out var format))
+        {
+            if (GetNameFromFormat(format).Equals(file?.Name))
+            {
+                var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
 
-        return From(apisDirectory, displayName, format);
+                return apiDirectory is null ? null : new(apiDirectory);
+            }
+            else
+            {
+                return null;
+            }
+        }
+        else
+        {
+            return null;
+        }
     }
 
-    public static ApiSpecificationFile From(ApisDirectory apiDirectory, ApiDisplayName displayName, Format format = Format.Yaml) =>
-        new(apiDirectory.Path.Append(displayName).Append(GetNameFromFormat(format)));
+    public static ApiSpecificationFile? TryFindFirstIn(ApiDirectory apiDirectory)
+    {
+        var directoryFileNames =
+            apiDirectory.Exists()
+            ? new DirectoryInfo(apiDirectory.Path).EnumerateFiles().Select(file => file.Name).ToList()
+            : new List<string>();
 
-    public static ApiSpecificationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        Enum.TryParse<Format>(string.Concat(file.Extension.Skip(1)), ignoreCase: true, out var format)
-            ? GetNameFromFormat(format).Equals(file.Name) && ApisDirectory.TryFrom(serviceDirectory, file.Directory?.Parent) is not null
-                ? new(RecordPath.From(file.FullName), format)
-                : null
-            : null;
+        return
+            Enum.GetValues<Format>()
+                .Where(format =>
+                {
+                    var formatFileName = TryGetNameFromFormat(format);
+                    return formatFileName is not null && directoryFileNames.Contains(formatFileName);
+                })
+                .Select(format => new ApiSpecificationFile(apiDirectory, format))
+                .FirstOrDefault();
+    }
 
     public static async Task<Uri> GetDownloadUri(ApiUri apiUri, Func<Uri, Task<JsonObject>> getJsonObjectFromUri, Format format = Format.Yaml)
     {
@@ -139,11 +204,14 @@ public sealed record ApiSpecificationFile : FileRecord
     }
 
     private static string GetNameFromFormat(Format format) =>
+        TryGetNameFromFormat(format) ?? throw new InvalidOperationException($"File format {format} is invalid.");
+
+    private static string? TryGetNameFromFormat(Format format) =>
         format switch
         {
             Format.Json => "specification.json",
             Format.Yaml => "specification.yaml",
-            _ => throw new InvalidOperationException($"File format {format} is invalid.")
+            _ => null
         };
 
     public enum Format

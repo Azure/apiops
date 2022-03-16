@@ -38,17 +38,58 @@ public sealed record ApiOperationsDirectory : DirectoryRecord
 {
     private static readonly string name = "operations";
 
-    private ApiOperationsDirectory(RecordPath path) : base(path)
+    public ApiDirectory ApiDirectory { get; }
+
+    private ApiOperationsDirectory(ApiDirectory apiDirectory) : base(apiDirectory.Path.Append(name))
     {
+        ApiDirectory = apiDirectory;
     }
 
-    public static ApiOperationsDirectory From(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName) =>
-        new(apisDirectory.Path.Append(apiDisplayName));
+    public static ApiOperationsDirectory From(ApiDirectory apiDirectory) => new(apiDirectory);
 
-    public static ApiOperationsDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.Path.PathEquals(directory.Parent?.Parent?.Parent?.FullName)
-        ? new(RecordPath.From(directory.FullName))
-        : null;
+    public static ApiOperationsDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
+    {
+        var parentDirectory = directory?.Parent;
+        if (parentDirectory is not null)
+        {
+            var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, parentDirectory);
+
+            return apiDirectory is null ? null : From(apiDirectory);
+        }
+        else
+        {
+            return null;
+        }
+    }
+}
+
+public sealed record ApiOperationDirectory : DirectoryRecord
+{
+    public ApiOperationsDirectory ApiOperationsDirectory { get; }
+    public ApiOperationDisplayName ApiOperationDisplayName { get; }
+
+    private ApiOperationDirectory(ApiOperationsDirectory apiOperationsDirectory, ApiOperationDisplayName apiOperationDisplayName) : base(apiOperationsDirectory.Path.Append(apiOperationDisplayName))
+    {
+        ApiOperationsDirectory = apiOperationsDirectory;
+        ApiOperationDisplayName = apiOperationDisplayName;
+    }
+
+    public static ApiOperationDirectory From(ApiOperationsDirectory apiOperationsDirectory, ApiOperationDisplayName apiOperationDisplayName) => new(apiOperationsDirectory, apiOperationDisplayName);
+
+    public static ApiOperationDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
+    {
+        var parentDirectory = directory?.Parent;
+        if (parentDirectory is not null)
+        {
+            var apiOperationsDirectory = ApiOperationsDirectory.TryFrom(serviceDirectory, parentDirectory);
+
+            return apiOperationsDirectory is null ? null : From(apiOperationsDirectory, ApiOperationDisplayName.From(directory!.Name));
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record ApiOperation([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] ApiOperation.OperationContractProperties Properties)

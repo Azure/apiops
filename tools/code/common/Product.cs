@@ -54,35 +54,76 @@ public sealed record ProductsDirectory : DirectoryRecord
 {
     private static readonly string name = "products";
 
-    private ProductsDirectory(RecordPath path) : base(path)
+    public ServiceDirectory ServiceDirectory { get; }
+
+    private ProductsDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
     {
+        ServiceDirectory = serviceDirectory;
     }
 
-    public static ProductsDirectory From(ServiceDirectory serviceDirectory) =>
-        new(serviceDirectory.Path.Append(name));
+    public static ProductsDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
 
     public static ProductsDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.Path.PathEquals(directory.Parent?.FullName)
-        ? new(RecordPath.From(directory.FullName))
+        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
+        ? new(serviceDirectory)
         : null;
+}
+
+public sealed record ProductDirectory : DirectoryRecord
+{
+    public ProductsDirectory ProductsDirectory { get; }
+    public ProductDisplayName ProductDisplayName { get; }
+
+    private ProductDirectory(ProductsDirectory productsDirectory, ProductDisplayName productDisplayName) : base(productsDirectory.Path.Append(productDisplayName))
+    {
+        ProductsDirectory = productsDirectory;
+        ProductDisplayName = productDisplayName;
+    }
+
+    public static ProductDirectory From(ProductsDirectory productsDirectory, ProductDisplayName productDisplayName) => new(productsDirectory, productDisplayName);
+
+    public static ProductDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
+    {
+        var parentDirectory = directory?.Parent;
+        if (parentDirectory is not null)
+        {
+            var productsDirectory = ProductsDirectory.TryFrom(serviceDirectory, parentDirectory);
+
+            return productsDirectory is null ? null : From(productsDirectory, ProductDisplayName.From(directory!.Name));
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record ProductInformationFile : FileRecord
 {
     private static readonly string name = "productInformation.json";
 
-    public ProductInformationFile(RecordPath path) : base(path)
+    public ProductDirectory ProductDirectory { get; }
+
+    private ProductInformationFile(ProductDirectory productDirectory) : base(productDirectory.Path.Append(name))
     {
+        ProductDirectory = productDirectory;
     }
 
-    public static ProductInformationFile From(ProductsDirectory productsDirectory, ProductDisplayName displayName)
-        => new(productsDirectory.Path.Append(displayName)
-                                        .Append(name));
+    public static ProductInformationFile From(ProductDirectory productDirectory) => new(productDirectory);
 
-    public static ProductInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        name.Equals(file.Name) && ProductsDirectory.TryFrom(serviceDirectory, file.Directory?.Parent) is not null
-        ? new(RecordPath.From(file.FullName))
-        : null;
+    public static ProductInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
+    {
+        if (name.Equals(file.Name))
+        {
+            var productDirectory = ProductDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return productDirectory is null ? null : new(productDirectory);
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record Product([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Product.ProductContractProperties Properties)

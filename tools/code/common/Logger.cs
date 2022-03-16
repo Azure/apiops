@@ -37,35 +37,76 @@ public sealed record LoggersDirectory : DirectoryRecord
 {
     private static readonly string name = "loggers";
 
-    private LoggersDirectory(RecordPath path) : base(path)
+    public ServiceDirectory ServiceDirectory { get; }
+
+    private LoggersDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
     {
+        ServiceDirectory = serviceDirectory;
     }
 
-    public static LoggersDirectory From(ServiceDirectory serviceDirectory) =>
-        new(serviceDirectory.Path.Append(name));
+    public static LoggersDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
 
     public static LoggersDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.Path.PathEquals(directory.Parent?.FullName)
-        ? new(RecordPath.From(directory.FullName))
+        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
+        ? new(serviceDirectory)
         : null;
+}
+
+public sealed record LoggerDirectory : DirectoryRecord
+{
+    public LoggersDirectory LoggersDirectory { get; }
+    public LoggerName LoggerName { get; }
+
+    private LoggerDirectory(LoggersDirectory loggersDirectory, LoggerName loggerName) : base(loggersDirectory.Path.Append(loggerName))
+    {
+        LoggersDirectory = loggersDirectory;
+        LoggerName = loggerName;
+    }
+
+    public static LoggerDirectory From(LoggersDirectory loggersDirectory, LoggerName loggerName) => new(loggersDirectory, loggerName);
+
+    public static LoggerDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
+    {
+        var parentDirectory = directory?.Parent;
+        if (parentDirectory is not null)
+        {
+            var loggersDirectory = LoggersDirectory.TryFrom(serviceDirectory, parentDirectory);
+
+            return loggersDirectory is null ? null : From(loggersDirectory, LoggerName.From(directory!.Name));
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record LoggerInformationFile : FileRecord
 {
     private static readonly string name = "loggerInformation.json";
 
-    public LoggerInformationFile(RecordPath path) : base(path)
+    public LoggerDirectory LoggerDirectory { get; }
+
+    private LoggerInformationFile(LoggerDirectory loggerDirectory) : base(loggerDirectory.Path.Append(name))
     {
+        LoggerDirectory = loggerDirectory;
     }
 
-    public static LoggerInformationFile From(LoggersDirectory loggersDirectory, LoggerName loggerName)
-        => new(loggersDirectory.Path.Append(loggerName)
-                                     .Append(name));
+    public static LoggerInformationFile From(LoggerDirectory loggerDirectory) => new(loggerDirectory);
 
-    public static LoggerInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        name.Equals(file.Name) && LoggersDirectory.TryFrom(serviceDirectory, file.Directory?.Parent) is not null
-        ? new(RecordPath.From(file.FullName))
-        : null;
+    public static LoggerInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
+    {
+        if (name.Equals(file.Name))
+        {
+            var loggerDirectory = LoggerDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return loggerDirectory is null ? null : new(loggerDirectory);
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record Logger([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Logger.LoggerContractProperties Properties)

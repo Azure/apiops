@@ -9,38 +9,28 @@ namespace common;
 public sealed record ProductApisFile : FileRecord
 {
     private static readonly string name = "apis.json";
-    private readonly ProductsDirectory productsDirectory;
-    private readonly ProductDisplayName productDisplayName;
 
-    private ProductApisFile(ProductsDirectory productsDirectory, ProductDisplayName productDisplayName)
-        : base(productsDirectory.Path.Append(productDisplayName).Append(name))
+    public ProductDirectory ProductDirectory { get; }
+
+    private ProductApisFile(ProductDirectory productDirectory) : base(productDirectory.Path.Append(name))
     {
-        this.productsDirectory = productsDirectory;
-        this.productDisplayName = productDisplayName;
+        ProductDirectory = productDirectory;
     }
 
-    public ProductInformationFile GetProductInformationFile() => ProductInformationFile.From(productsDirectory, productDisplayName);
-
-    public static ProductApisFile From(ProductsDirectory productsDirectory, ProductDisplayName displayName)
-        => new(productsDirectory, displayName);
+    public static ProductApisFile From(ProductDirectory productDirectory) => new(productDirectory);
 
     public static ProductApisFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        if (name.Equals(file.Name) is false)
+        if (name.Equals(file.Name))
+        {
+            var productDirectory = ProductDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return productDirectory is null ? null : new(productDirectory);
+        }
+        else
         {
             return null;
         }
-
-        var directory = file.Directory;
-        if (directory is null)
-        {
-            return null;
-        }
-
-        var productsDirectory = ProductsDirectory.TryFrom(serviceDirectory, directory.Parent);
-        return productsDirectory is null
-            ? null
-            : new(productsDirectory, ProductDisplayName.From(directory.Name));
     }
 }
 

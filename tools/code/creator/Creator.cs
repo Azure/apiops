@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi.Readers;
 using MoreLinq;
 using System;
 using System.Collections.Generic;
@@ -24,6 +25,7 @@ internal class Creator : BackgroundService
     private readonly Func<Uri, JsonObject, CancellationToken, Task> putJsonObject;
     private readonly ServiceDirectory serviceDirectory;
     private readonly ServiceUri serviceUri;
+    private readonly CommitId? commitId;
 
     public Creator(IHostApplicationLifetime applicationLifetime, ILogger<Creator> logger, IConfiguration configuration, AzureHttpClient azureHttpClient)
     {
@@ -35,6 +37,7 @@ internal class Creator : BackgroundService
         this.serviceDirectory = GetServiceDirectory(configuration);
         this.configurationModel = configuration.Get<ConfigurationModel>();
         this.serviceUri = GetServiceUri(configuration, azureHttpClient, serviceDirectory, configurationModel);
+        this.commitId = TryGetCommitId(configuration);
     }
 
     private static ServiceDirectory GetServiceDirectory(IConfiguration configuration) =>
@@ -61,6 +64,13 @@ internal class Creator : BackgroundService
         };
 
         return ServiceUri.From(serviceProviderUri, getServiceName());
+    }
+
+    private static CommitId? TryGetCommitId(IConfiguration configuration)
+    {
+        var commitId = configuration.TryGetValue("COMMIT_ID");
+
+        return commitId is null ? null : CommitId.From(commitId);
     }
 
     protected override async Task ExecuteAsync(CancellationToken cancellationToken)
@@ -90,7 +100,7 @@ internal class Creator : BackgroundService
 
     private async Task Run(CancellationToken cancellationToken)
     {
-        foreach (var fileAction in GetFilesToProcess())
+        foreach (var fileAction in await GetFilesToProcess())
         {
             var task = fileAction.Key switch
             {
@@ -103,9 +113,16 @@ internal class Creator : BackgroundService
         }
     }
 
-    private ImmutableDictionary<Action, ImmutableList<FileRecord>> GetFilesToProcess()
+    private async Task<ImmutableDictionary<Action, ImmutableList<FileRecord>>> GetFilesToProcess() =>
+        commitId is null
+        ? GetDictionaryFromRootDirectoryFiles()
+        : await GetFilesFromCommitId(commitId);
+
+    private async Task<ImmutableDictionary<Action, ImmutableList<FileRecord>>> GetFilesFromCommitId(CommitId commitId)
     {
-        return GetDictionaryFromRootDirectoryFiles();
+        var dictionary = await Git.GetFilesFromCommit(commitId, serviceDirectory);
+
+        return dictionary.ToImmutableDictionary(kvp => kvp.Key == CommitStatus.Delete ? Action.Delete : Action.Put, kvp => kvp.Value.Choose(TryClassifyFile).ToImmutableList());
     }
 
     private ImmutableDictionary<Action, ImmutableList<FileRecord>> GetDictionaryFromRootDirectoryFiles()
@@ -131,8 +148,10 @@ internal class Creator : BackgroundService
         ?? ProductApisFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? DiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiInformationFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? ApiSpecificationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiDiagnosticsFile.TryFrom(serviceDirectory, file) as FileRecord
-        ?? ApiPolicyFile.TryFrom(serviceDirectory, file) as FileRecord;
+        ?? ApiPolicyFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? ApiOperationPolicyFile.TryFrom(serviceDirectory, file) as FileRecord;
 
     private async Task DeleteFiles(IReadOnlyCollection<FileRecord> files)
     {
@@ -158,7 +177,8 @@ internal class Creator : BackgroundService
         {
             await PutApiInformationFiles(files, cancellationToken);
             await Task.WhenAll(PutApiPolicyFiles(files, cancellationToken),
-                               PutApiDiagnosticsFiles(files, cancellationToken));
+                               PutApiDiagnosticsFiles(files, cancellationToken),
+                               PutApiOperationPolicyFiles(files, cancellationToken));
         };
 
         await PutServiceInformationFile(files, cancellationToken);
@@ -218,9 +238,18 @@ internal class Creator : BackgroundService
     {
         logger.LogInformation("Putting service policy file {servicePolicyFile}...", file.Path);
 
-        var json = await file.ToJsonObject(cancellationToken);
+        var policyText = await file.ReadAsText(cancellationToken);
+        var json = PolicyTextToJsonObject(policyText);
         var uri = ServicePolicyUri.From(serviceUri);
         await putJsonObject(uri, json, cancellationToken);
+    }
+
+    public static JsonObject PolicyTextToJsonObject(string policyText)
+    {
+        var propertiesJson = new JsonObject().AddProperty("format", "rawxml")
+                                             .AddProperty("value", policyText);
+
+        return new JsonObject().AddProperty("properties", propertiesJson);
     }
 
     private Task PutNamedValueInformationFiles(IReadOnlyCollection<FileRecord> files, CancellationToken cancellationToken) =>
@@ -229,7 +258,7 @@ internal class Creator : BackgroundService
 
     private async Task PutNamedValueInformationFile(NamedValueInformationFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing named value information file {namedValueInformationFile}...", file.Path);
+        logger.LogInformation("Processing named value information file {namedValueInformationFile}...", file.Path);
 
         var json = file.ReadAsJsonObject();
         var namedValue = NamedValue.FromJsonObject(json);
@@ -266,7 +295,7 @@ internal class Creator : BackgroundService
 
     private async Task PutGatewayInformationFile(GatewayInformationFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing gateway information file {gatewayInformationFile}...", file.Path);
+        logger.LogInformation("Processing gateway information file {gatewayInformationFile}...", file.Path);
 
         var json = file.ReadAsJsonObject();
         var gateway = Gateway.FromJsonObject(json);
@@ -302,9 +331,9 @@ internal class Creator : BackgroundService
 
     private async Task PutGatewayApisFile(GatewayApisFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing gateway apis file {gatewayApisFile}...", file.Path);
+        logger.LogInformation("Processing gateway apis file {gatewayApisFile}...", file.Path);
 
-        var gatewayInformationFile = file.GetGatewayInformationFile();
+        var gatewayInformationFile = GatewayInformationFile.From(file.GatewayDirectory);
         var gateway = Gateway.FromJsonObject(gatewayInformationFile.ReadAsJsonObject());
         var gatewayApis = file.ReadAsJsonArray().Choose(node => node?.AsObject()).Select(GatewayApi.FromJsonObject);
         var configurationGatewayApis = configurationModel.Gateways?.FirstOrDefault(configurationGateway => configurationGateway.Name == gateway.Name)
@@ -344,7 +373,7 @@ internal class Creator : BackgroundService
 
     private async Task PutLoggerInformationFile(LoggerInformationFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing logger information file {loggerInformationFile}...", file.Path);
+        logger.LogInformation("Processing logger information file {loggerInformationFile}...", file.Path);
 
         var json = file.ReadAsJsonObject();
         var serviceLogger = Logger.FromJsonObject(json);
@@ -398,7 +427,7 @@ internal class Creator : BackgroundService
 
     private async Task PutProductInformationFile(ProductInformationFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing product information file {productInformationFile}...", file.Path);
+        logger.LogInformation("Processing product information file {productInformationFile}...", file.Path);
 
         var json = file.ReadAsJsonObject();
         var product = Product.FromJsonObject(json);
@@ -442,8 +471,9 @@ internal class Creator : BackgroundService
     {
         logger.LogInformation("Putting product policy file {productPolicyFile}...", file.Path);
 
-        var json = await file.ToJsonObject(cancellationToken);
-        var informationFile = file.GetProductInformationFile();
+        var policyText = await file.ReadAsText(cancellationToken);
+        var json = PolicyTextToJsonObject(policyText);
+        var informationFile = ProductInformationFile.From(file.ProductDirectory);
         var name = ProductName.From(informationFile);
         var productUri = ProductUri.From(serviceUri, name);
         var policyUri = ProductPolicyUri.From(productUri);
@@ -457,9 +487,9 @@ internal class Creator : BackgroundService
 
     private async Task PutProductApisFile(ProductApisFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing product apis file {productApisFile}...", file.Path);
+        logger.LogInformation("Processing product apis file {productApisFile}...", file.Path);
 
-        var productInformationFile = file.GetProductInformationFile();
+        var productInformationFile = ProductInformationFile.From(file.ProductDirectory);
         var product = Product.FromJsonObject(productInformationFile.ReadAsJsonObject());
         var productApis = file.ReadAsJsonArray().Choose(node => node?.AsObject()).Select(ProductApi.FromJsonObject);
         var configurationProductApis = configurationModel.Products?.FirstOrDefault(configurationProduct => configurationProduct.Name == product.Name)
@@ -499,7 +529,7 @@ internal class Creator : BackgroundService
 
     private async Task PutDiagnosticInformationFile(DiagnosticInformationFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing diagnostic information file {diagnosticInformationFile}...", file.Path);
+        logger.LogInformation("Processing diagnostic information file {diagnosticInformationFile}...", file.Path);
 
         var json = file.ReadAsJsonObject();
         var diagnostic = Diagnostic.FromJsonObject(json);
@@ -535,7 +565,7 @@ internal class Creator : BackgroundService
 
     private async Task PutApiInformationFile(ApiInformationFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing api information file {apiInformationFile}...", file.Path);
+        logger.LogInformation("Processing api information file {apiInformationFile}...", file.Path);
 
         var json = file.ReadAsJsonObject();
         var api = Api.FromJsonObject(json);
@@ -574,8 +604,9 @@ internal class Creator : BackgroundService
     {
         logger.LogInformation("Putting api policy file {apiPolicyFile}...", file.Path);
 
-        var json = await file.ToJsonObject(cancellationToken);
-        var informationFile = file.GetApiInformationFile();
+        var policyText = await file.ReadAsText(cancellationToken);
+        var json = PolicyTextToJsonObject(policyText);
+        var informationFile = ApiInformationFile.From(file.ApiDirectory);
         var name = ApiName.From(informationFile);
         var apiUri = ApiUri.From(serviceUri, name);
         var policyUri = ApiPolicyUri.From(apiUri);
@@ -589,9 +620,9 @@ internal class Creator : BackgroundService
 
     private async Task PutApiDiagnosticsFile(ApiDiagnosticsFile file, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Parsing api diagnostics file {apiDiagnosticsFile}...", file.Path);
+        logger.LogInformation("Processing api diagnostics file {apiDiagnosticsFile}...", file.Path);
 
-        var apiInformationFile = file.GetApiInformationFile();
+        var apiInformationFile = ApiInformationFile.From(file.ApiDirectory);
         var api = Api.FromJsonObject(apiInformationFile.ReadAsJsonObject());
         var apiDiagnostics = file.ReadAsJsonArray().Choose(node => node?.AsObject()).Select(ApiDiagnostic.FromJsonObject);
         var configurationApiDiagnostics = configurationModel.Apis?.FirstOrDefault(configurationApi => configurationApi.Name == api.Name)
@@ -629,725 +660,49 @@ internal class Creator : BackgroundService
         await putJsonObject(apiDiagnosticUri, json, cancellationToken);
     }
 
+    private Task PutApiOperationPolicyFiles(IReadOnlyCollection<FileRecord> files, CancellationToken cancellationToken) =>
+        files.Choose(file => file as ApiOperationPolicyFile)
+             .ExecuteInParallel(PutApiOperationPolicyFile, cancellationToken);
+
+    private async Task PutApiOperationPolicyFile(ApiOperationPolicyFile file, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Processing api operation policy file {apiOperationPolicyFile}...", file.Path);
+
+        var apiDirectory = file.ApiOperationDirectory.ApiOperationsDirectory.ApiDirectory;
+
+        var apiSpecificationFile = ApiSpecificationFile.TryFindFirstIn(apiDirectory)
+            ?? throw new InvalidOperationException($"Could not find API specification file for operation policy {file.Path}. Specification file is required to get the operation name.");
+
+        var apiOperationDisplayName = file.ApiOperationDirectory.ApiOperationDisplayName;
+        var apiOperationName = GetApiOperationNameFromApiSpecificationFile(apiSpecificationFile, apiOperationDisplayName);
+        var apiInformationFile = ApiInformationFile.From(apiDirectory);
+        var apiName = ApiName.From(apiInformationFile);
+        var apiUri = ApiUri.From(serviceUri, apiName);
+        var apiOperationUri = ApiOperationUri.From(apiUri, apiOperationName);
+        var apiOperationPolicyUri = ApiOperationPolicyUri.From(apiOperationUri);
+
+        var policyText = await file.ReadAsText(cancellationToken);
+        var json = PolicyTextToJsonObject(policyText);
+
+        await putJsonObject(apiOperationPolicyUri, json, cancellationToken);
+    }
+
+    private static ApiOperationName GetApiOperationNameFromApiSpecificationFile(FileRecord apiSpecificationFile, ApiOperationDisplayName displayName)
+    {
+        using var stream = apiSpecificationFile.ReadAsStream();
+        var specificationDocument = new OpenApiStreamReader().Read(stream, out var _);
+
+        var operation =
+            specificationDocument.Paths.Values.SelectMany(pathItem => pathItem.Operations.Values)
+                                              .FirstOrDefault(operation => operation.Summary.Equals((string)displayName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException($"Could not find operation with display name {displayName} in specification file {apiSpecificationFile.Path}.");
+
+        return ApiOperationName.From(operation.OperationId);
+    }
+
     private enum Action
     {
         Put,
         Delete
     }
 }
-
-//public class Creator : ConsoleService
-//{
-//    private readonly ServiceUri serviceUri;
-//    private readonly DirectoryInfo serviceDirectory;
-//    private readonly CommitId? commitId;
-//    private readonly Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources;
-//    private readonly Func<Uri, Stream, CancellationToken, Task<Unit>> putStreamResource;
-//    private readonly Func<Uri, JsonObject, CancellationToken, Task<Unit>> putJsonObjectResource;
-//    private readonly Func<Uri, CancellationToken, Task<Unit>> deleteResource;
-
-//    private void A()
-//    {
-//        var deserializer = new YamlDotNet.Serialization.Deserializer();
-
-//        deserializer.Deserialize()
-//    }
-
-//    public Creator(IHostApplicationLifetime applicationLifetime, ILogger<Creator> logger, IConfiguration configuration, AzureHttpClient azureHttpClient) : base(applicationLifetime, logger)
-//    {
-//        this.serviceDirectory = GetServiceDirectory(configuration);
-//        this.serviceUri = GetServiceUri(configuration, azureHttpClient, serviceDirectory);
-//        this.commitId = TryGetCommitId(configuration);
-//        this.getResources = azureHttpClient.GetResources;
-//        this.putStreamResource = azureHttpClient.PutResource;
-//        this.putJsonObjectResource = azureHttpClient.PutResource;
-//        this.deleteResource = azureHttpClient.DeleteResource;
-//    }
-
-//    private static DirectoryInfo GetServiceDirectory(IConfiguration configuration)
-//    {
-//        var path = configuration["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"];
-
-//        return new DirectoryInfo(path);
-//    }
-
-//    private static ServiceUri GetServiceUri(IConfiguration configuration, AzureHttpClient azureHttpClient, DirectoryInfo serviceDirectory)
-//    {
-//        var subscriptionId = configuration["AZURE_SUBSCRIPTION_ID"];
-//        var resourceGroupName = configuration["AZURE_RESOURCE_GROUP_NAME"];
-//        var serviceInformationFile = serviceDirectory.GetFileInfo(Constants.ServiceInformationFileName);
-//        var serviceName = Service.GetNameFromInformationFile(serviceInformationFile, CancellationToken.None).GetAwaiter().GetResult();
-
-//        var serviceUri = azureHttpClient.BaseUri.AppendPath("subscriptions")
-//                                                .AppendPath(subscriptionId)
-//                                                .AppendPath("resourceGroups")
-//                                                .AppendPath(resourceGroupName)
-//                                                .AppendPath("providers/Microsoft.ApiManagement/service")
-//                                                .AppendPath(serviceName)
-//                                                .SetQueryParameter("api-version", "2021-04-01-preview");
-
-//        return ServiceUri.From(serviceUri);
-//    }
-
-//    private static CommitId? TryGetCommitId(IConfiguration configuration)
-//    {
-//        var configurationSection = configuration.GetSection("COMMIT_ID");
-
-//        return configurationSection.Exists()
-//            ? CommitId.From(configurationSection.Value)
-//            : null;
-//    }
-
-//    protected override async Task ExecuteAsync(CancellationToken cancellationToken)
-//    {
-//        await GetFilesToProcess().Map(ClassifyFiles)
-//                                 .Bind(fileMap => ProcessFiles(fileMap, cancellationToken));
-//    }
-
-//    private Task<ILookup<ResourceAction, FileInfo>> GetFilesToProcess()
-//    {
-//        var matchCommitStatusToAction = (CommitStatus status) => status switch
-//            {
-//                CommitStatus.Delete => ResourceAction.Delete,
-//                _ => ResourceAction.Put
-//            };
-
-//        var getLookupFromCommitId = (CommitId commitId) =>
-//            Git.GetFilesFromCommit(commitId, serviceDirectory)
-//               .Map(lookup => lookup.MapKeys(matchCommitStatusToAction));
-
-//        var getLookupFromDirectory = () =>
-//            serviceDirectory.EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true })
-//                            .ToLookup(_ => ResourceAction.Put);
-
-//        return commitId.Map(getLookupFromCommitId)
-//                       .IfNull(() => Task.FromResult(getLookupFromDirectory()));
-//    }
-
-//    private ImmutableDictionary<ResourceAction, ILookup<FileType, FileInfo>> ClassifyFiles(ILookup<ResourceAction, FileInfo> fileLookup)
-//    {
-//        return fileLookup.ToImmutableDictionary(grouping => grouping.Key,
-//                                                grouping => grouping.ToLookup(file => FileType.TryGetFileType(serviceDirectory, file))
-//                                                                    .RemoveNullKeys());
-//    }
-
-//    private async Task<Unit> ProcessFiles(ImmutableDictionary<ResourceAction, ILookup<FileType, FileInfo>> fileMap, CancellationToken cancellationToken)
-//    {
-//        foreach (var (resourceAction, fileLookup) in fileMap)
-//        {
-//            await ProcessFiles(resourceAction, fileLookup, cancellationToken);
-//        }
-
-//        return Unit.Default;
-//    }
-
-//    private Task<Unit> ProcessFiles(ResourceAction resourceAction, ILookup<FileType, FileInfo> fileLookup, CancellationToken cancellationToken)
-//    {
-//        return resourceAction switch
-//        {
-//            ResourceAction.Put => ProcessFilesToPut(fileLookup, cancellationToken),
-//            ResourceAction.Delete => ProcessFilesToDelete(fileLookup, cancellationToken),
-//            _ => throw new InvalidOperationException($"Resource action {resourceAction} is invalid.")
-//        };
-//    }
-
-//    private async Task<Unit> ProcessFilesToPut(ILookup<FileType, FileInfo> fileLookup, CancellationToken cancellationToken)
-//    {
-//        var putServiceInformationFile = () => fileLookup.Lookup(FileType.ServiceInformation)
-//                                                        .FirstOrDefault()
-//                                                        .Map(file => PutServiceInformation(file, cancellationToken))
-//                                                        .IfNull(() => Task.FromResult(Unit.Default));
-
-//        var putAuthorizationServers = () => fileLookup.Lookup(FileType.AuthorizationServerInformation)
-//                                                      .ExecuteInParallel(PutAuthorizationServerInformation, cancellationToken);
-
-//        var putGateways = () => fileLookup.Lookup(FileType.GatewayInformation)
-//                                          .ExecuteInParallel(PutGatewayInformation, cancellationToken);
-
-//        var putServicePolicy = () => fileLookup.Lookup(FileType.ServicePolicy)
-//                                                .FirstOrDefault()
-//                                                .Map(file => PutServicePolicy(file, cancellationToken))
-//                                                .IfNull(() => Task.FromResult(Unit.Default));
-
-//        var putProducts = () => fileLookup.Lookup(FileType.ProductInformation)
-//                                          .ExecuteInParallel(PutProductInformation, cancellationToken);
-
-//        var putProductPolicies = () => fileLookup.Lookup(FileType.ProductPolicy)
-//                                                 .ExecuteInParallel(PutProductPolicy, cancellationToken);
-
-//        var putLoggers = () => fileLookup.Lookup(FileType.LoggerInformation)
-//                                         .ExecuteInParallel(PutLoggerInformation, cancellationToken);
-
-//        var putServiceDiagnostics = () => fileLookup.Lookup(FileType.ServiceDiagnosticInformation)
-//                                                    .ExecuteInParallel(PutServiceDiagnosticInformation, cancellationToken);
-
-//        var putApiInformation = () =>
-//        {
-//            var getInformationFileFromSpecificationFile = (FileInfo specificationFile) => specificationFile.GetDirectoryInfo()
-//                                                                                                           .GetFileInfo(Constants.ApiInformationFileName);
-
-//            var jsonSpecificationFiles = fileLookup.Lookup(FileType.ApiJsonSpecification);
-//            var yamlSpecificationFiles = fileLookup.Lookup(FileType.ApiYamlSpecification);
-//            var specificationFiles = jsonSpecificationFiles.Concat(yamlSpecificationFiles);
-//            var apiInformationFiles = fileLookup.Lookup(FileType.ApiInformation);
-
-//            return specificationFiles.Select(getInformationFileFromSpecificationFile)
-//                                     .Concat(apiInformationFiles)
-//                                     .DistinctBy(file => file.FullName.Normalize())
-//                                     .ExecuteInParallel(PutApiInformation, cancellationToken);
-//        };
-
-//        var putApiDiagnostics = () => fileLookup.Lookup(FileType.ApiDiagnosticInformation)
-//                                                .ExecuteInParallel(PutApiDiagnosticInformation, cancellationToken);
-
-//        var putApiPolicies = () => fileLookup.Lookup(FileType.ApiPolicy)
-//                                             .ExecuteInParallel(PutApiPolicy, cancellationToken);
-
-//        var putOperationPolicies = () => fileLookup.Lookup(FileType.OperationPolicy)
-//                                                   .ExecuteInParallel(PutOperationPolicy, cancellationToken);
-
-//        await putServiceInformationFile();
-
-//        await Task.WhenAll(putAuthorizationServers(),
-//                           putGateways(),
-//                           putServicePolicy(),
-//                           putProducts(),
-//                           putLoggers());
-
-//        await Task.WhenAll(putProductPolicies(), putServiceDiagnostics());
-
-//        await putApiInformation();
-
-//        await Task.WhenAll(putApiPolicies(), putApiDiagnostics(), putOperationPolicies());
-
-//        return Unit.Default;
-//    }
-
-//    private async Task<Unit> PutServiceInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure service information with file {file}...");
-
-//        using var stream = file.OpenRead();
-
-//        return await putStreamResource(serviceUri, stream, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutAuthorizationServerInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure service authorization server with file {file}...");
-
-//        using var stream = file.OpenRead();
-//        var authorizationServerName = await AuthorizationServer.GetNameFromInformationFile(file, cancellationToken);
-//        var authorizationServerUri = AuthorizationServer.GetUri(serviceUri, authorizationServerName);
-
-//        return await putStreamResource(authorizationServerUri, stream, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutGatewayInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure service gateway with file {file}...");
-
-//        using var stream = file.OpenRead();
-//        var gatewayName = await Gateway.GetNameFromInformationFile(file, cancellationToken);
-//        var gatewayUri = Gateway.GetUri(serviceUri, gatewayName);
-
-//        await putStreamResource(gatewayUri, stream, cancellationToken);
-
-//        return await SetGatewayApis(file, cancellationToken);
-//    }
-
-//    private async Task<Unit> SetGatewayApis(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        var gatewayName = await Gateway.GetNameFromInformationFile(file, cancellationToken);
-//        var gatewayUri = Gateway.GetUri(serviceUri, gatewayName);
-//        var listApisUri = Api.GetListByGatewayUri(gatewayUri);
-
-//        var publishedApiDisplayNames = await getResources(listApisUri, cancellationToken).Select(jsonObject => jsonObject.GetObjectPropertyValue("properties")
-//                                                                                                                         .GetNonEmptyStringPropertyValue("displayName"))
-//                                                                                         .ToListAsync(cancellationToken);
-
-//        var fileApiDisplayNames = await file.ReadAsJsonObject(cancellationToken)
-//                                            .Map(json => json.TryGetObjectArrayPropertyValue("apis")
-//                                                             .IfNull(() => Enumerable.Empty<JsonObject>())
-//                                                             .Select(jsonObject => jsonObject.GetNonEmptyStringPropertyValue("displayName")));
-
-//        var gatewayApisToDelete = publishedApiDisplayNames.ExceptBy(fileApiDisplayNames, displayName => displayName.Normalize());
-//        var gatewayApisToCreate = fileApiDisplayNames.ExceptBy(publishedApiDisplayNames, displayName => displayName.Normalize());
-
-//        var deletionTasks = gatewayApisToDelete.Select(displayName => GetApiNameFromServiceUri(displayName, cancellationToken).Bind(apiName => DeleteGatewayApi(gatewayUri, apiName, cancellationToken)));
-//        var creationTasks = gatewayApisToCreate.Select(displayName => GetApiNameFromServiceDirectory(displayName, cancellationToken).Bind(apiName => PutGatewayApi(gatewayUri, apiName, cancellationToken)));
-
-//        await Task.WhenAll(deletionTasks.Concat(creationTasks));
-
-//        return Unit.Default;
-//    }
-
-//    private async Task<ApiName> GetApiNameFromServiceUri(string apiDisplayName, CancellationToken cancellationToken)
-//    {
-//        var apiListUri = Api.GetListByServiceUri(serviceUri);
-
-//        return await getResources(apiListUri, cancellationToken).Where(apiJson => apiDisplayName == GetDisplayNameFromResourceJson(apiJson))
-//                                                                .Select(apiJson => apiJson.GetNonEmptyStringPropertyValue("name"))
-//                                                                .Select(ApiName.From)
-//                                                                .FirstOrDefaultAsync(cancellationToken)
-//                            ?? throw new InvalidOperationException($"Could not find API with display name {apiDisplayName}.");
-//    }
-
-//    private Task<ApiName> GetApiNameFromServiceDirectory(string apiDisplayName, CancellationToken cancellationToken)
-//    {
-//        return serviceDirectory.GetSubDirectory(Constants.ApisFolderName)
-//                               .GetSubDirectory(DirectoryName.From(apiDisplayName))
-//                               .GetFileInfo(Constants.ApiInformationFileName)
-//                               .ReadAsJsonObject(cancellationToken)
-//                               .Map(jsonObject => jsonObject.GetNonEmptyStringPropertyValue("name"))
-//                               .Map(ApiName.From);
-//    }
-
-//    private async Task<Unit> DeleteGatewayApi(GatewayUri gatewayUri, ApiName apiName, CancellationToken cancellationToken)
-//    {
-//        var gatewayApiUri = Api.GetUri(gatewayUri, apiName);
-
-//        return await deleteResource(gatewayApiUri, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutGatewayApi(GatewayUri gatewayUri, ApiName apiName, CancellationToken cancellationToken)
-//    {
-//        var gatewayApiUri = Api.GetUri(gatewayUri, apiName);
-
-//        using var payloadStream = new MemoryStream();
-
-//        var payloadJson = new JsonObject().AddProperty("properties",
-//                                                       new JsonObject().AddStringProperty("provisioningState", "created"));
-
-//        await payloadJson.SerializeToStream(payloadStream, cancellationToken);
-
-//        return await putStreamResource(gatewayApiUri, payloadStream, cancellationToken);
-//    }
-
-//    private Task<Unit> PutServicePolicy(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure service policy with file {file}...");
-
-//        var policyUri = Policy.GetServicePolicyUri(serviceUri);
-
-//        return PutPolicy(policyUri, file, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutPolicy(Uri policyUri, FileInfo file, CancellationToken cancellationToken)
-//    {
-//        var policyText = await file.ReadAsText(cancellationToken);
-
-//        using var stream = new MemoryStream();
-
-//        await new JsonObject().AddStringProperty("format", "rawxml")
-//                              .AddStringProperty("value", policyText)
-//                              .AddToJsonObject("properties", new JsonObject())
-//                              .SerializeToStream(stream, cancellationToken);
-
-//        return await putStreamResource(policyUri, stream, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutServiceDiagnosticInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        var diagnosticName = await Diagnostic.GetNameFromInformationFile(file, cancellationToken);
-//        var diagnosticUri = Diagnostic.GetUri(serviceUri, diagnosticName);
-//        using var fileStream = file.OpenRead();
-
-//        return await putStreamResource(diagnosticUri, fileStream, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutProductInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure service product with file {file}...");
-
-//        using var stream = file.OpenRead();
-//        var productName = await Product.GetNameFromInformationFile(file, cancellationToken);
-//        var productUri = Product.GetUri(serviceUri, productName);
-
-//        await putStreamResource(productUri, stream, cancellationToken);
-
-//        return await SetProductApis(file, cancellationToken);
-//    }
-
-//    private async Task<Unit> SetProductApis(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        var productName = await Product.GetNameFromInformationFile(file, cancellationToken);
-//        var productUri = Product.GetUri(serviceUri, productName);
-//        var listApisUri = Api.GetListByProductUri(productUri);
-
-//        var publishedApiDisplayNames = await getResources(listApisUri, cancellationToken).Select(jsonObject => jsonObject.GetObjectPropertyValue("properties")
-//                                                                                                                         .GetNonEmptyStringPropertyValue("displayName"))
-//                                                                                         .ToListAsync(cancellationToken);
-
-//        var fileApiDisplayNames = await file.ReadAsJsonObject(cancellationToken)
-//                                            .Map(json => json.TryGetObjectArrayPropertyValue("apis")
-//                                                             .IfNull(() => Enumerable.Empty<JsonObject>())
-//                                                             .Select(jsonObject => jsonObject.GetNonEmptyStringPropertyValue("displayName")));
-
-//        var productApisToDelete = publishedApiDisplayNames.ExceptBy(fileApiDisplayNames, displayName => displayName.Normalize());
-//        var productApisToCreate = fileApiDisplayNames.ExceptBy(publishedApiDisplayNames, displayName => displayName.Normalize());
-
-//        var deletionTasks = productApisToDelete.Select(displayName => GetApiNameFromServiceUri(displayName, cancellationToken).Bind(apiName => DeleteProductApi(productUri, apiName, cancellationToken)));
-//        var creationTasks = productApisToCreate.Select(displayName => GetApiNameFromServiceDirectory(displayName, cancellationToken).Bind(apiName => PutProductApi(productUri, apiName, cancellationToken)));
-
-//        await Task.WhenAll(deletionTasks.Concat(creationTasks));
-
-//        return Unit.Default;
-//    }
-
-//    private async Task<Unit> DeleteProductApi(ProductUri productUri, ApiName apiName, CancellationToken cancellationToken)
-//    {
-//        var productApiUri = Api.GetUri(productUri, apiName);
-
-//        return await deleteResource(productApiUri, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutProductApi(ProductUri productUri, ApiName apiName, CancellationToken cancellationToken)
-//    {
-//        var productApiUri = Api.GetUri(productUri, apiName);
-
-//        using var payloadStream = new MemoryStream();
-
-//        var payloadJson = new JsonObject().AddProperty("properties",
-//                                                       new JsonObject().AddStringProperty("provisioningState", "created"));
-
-//        await payloadJson.SerializeToStream(payloadStream, cancellationToken);
-
-//        return await putStreamResource(productApiUri, payloadStream, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutProductPolicy(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure product policy with file {file}...");
-
-//        var productName = await Product.GetNameFromPolicyFile(file, cancellationToken);
-//        var productUri = Product.GetUri(serviceUri, productName);
-//        var policyUri = Policy.GetProductPolicyUri(productUri);
-
-//        return await PutPolicy(policyUri, file, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutLoggerInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure logger information with file {file}...");
-
-//        var loggerName = await common.Logger.GetNameFromInformationFile(file, cancellationToken);
-//        var loggerUri = common.Logger.GetUri(serviceUri, loggerName);
-//        using var fileStream = file.OpenRead();
-//        return await putStreamResource(loggerUri, fileStream, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutApiInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure API information with file {file}...");
-
-//        var getApiInformationStream = async () =>
-//        {
-//            var addSpecificationToJson = async (FileName specificationFileName, string specificationFormat, JsonObject apiJson) =>
-//            {
-//                var specificationFile = file.GetDirectoryInfo().GetFileInfo(specificationFileName);
-
-//                if (specificationFile.Exists)
-//                {
-//                    Logger.LogInformation($"Adding contents of API specification file {specificationFile}...");
-//                    var specification = await specificationFile.ReadAsText(cancellationToken);
-
-//                    var propertiesJson = apiJson.GetObjectPropertyValue("properties")
-//                                                .AddStringProperty("format", specificationFormat)
-//                                                .AddStringProperty("value", specification);
-
-//                    return apiJson.AddProperty("properties", propertiesJson);
-//                }
-//                else
-//                {
-//                    return apiJson;
-//                }
-//            };
-
-//            var addYamlSpecificationToJson = (JsonObject apiJson) => addSpecificationToJson(Constants.ApiYamlSpecificationFileName, "openapi", apiJson);
-//            var addJsonSpecificationToJson = (JsonObject apiJson) => addSpecificationToJson(Constants.ApiJsonSpecificationFileName, "openapi+json", apiJson);
-
-//            var apiJson = await file.ReadAsJsonObject(cancellationToken);
-//            apiJson = await addJsonSpecificationToJson(apiJson);
-//            apiJson = await addYamlSpecificationToJson(apiJson);
-
-//            var memoryStream = new MemoryStream();
-//            await apiJson.SerializeToStream(memoryStream, cancellationToken);
-//            return memoryStream;
-//        };
-
-//        var apiInformationStream = await getApiInformationStream();
-//        var apiName = await Api.GetNameFromInformationFile(file, cancellationToken);
-//        var apiUri = Api.GetUri(serviceUri, apiName);
-
-//        return await putStreamResource(apiUri, apiInformationStream, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutApiPolicy(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure API policy with file {file}...");
-
-//        var apiName = await Api.GetNameFromPolicyFile(file, cancellationToken);
-//        var apiUri = Api.GetUri(serviceUri, apiName);
-//        var policyUri = Policy.GetApiPolicyUri(apiUri);
-
-//        return await PutPolicy(policyUri, file, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutApiDiagnosticInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        var apiName = await Api.GetNameFromDiagnosticInformationFile(file, cancellationToken);
-//        var apiUri = Api.GetUri(serviceUri, apiName);
-//        var diagnosticName = await Diagnostic.GetNameFromInformationFile(file, cancellationToken);
-//        var diagnosticUri = Diagnostic.GetUri(apiUri, diagnosticName);
-//        using var fileStream = file.OpenRead();
-
-//        return await putStreamResource(diagnosticUri, fileStream, cancellationToken);
-//    }
-
-//    private async Task<Unit> PutOperationPolicy(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"Updating Azure API operation policy with file {file}...");
-
-//        var apiName = await Operation.GetApiNameFromPolicyFile(file, cancellationToken);
-//        var apiUri = Api.GetUri(serviceUri, apiName);
-//        var operationName = Operation.GetNameFromPolicyFile(file);
-//        var operationUri = Operation.GetUri(apiUri, operationName);
-//        var policyUri = Policy.GetOperationPolicyUri(operationUri);
-
-//        return await PutPolicy(policyUri, file, cancellationToken);
-//    }
-
-//    private async Task<Unit> ProcessFilesToDelete(ILookup<FileType, FileInfo> fileLookup, CancellationToken cancellationToken)
-//    {
-//        var deleteServiceInformationFile = () => fileLookup.Lookup(FileType.ServiceInformation)
-//                                                           .FirstOrDefault()
-//                                                           .Map(file => DeleteServiceInformation(file, cancellationToken))
-//                                                           .IfNull(() => Task.FromResult(Unit.Default));
-
-//        var deleteAuthorizationServers = () => fileLookup.Lookup(FileType.AuthorizationServerInformation)
-//                                                         .ExecuteInParallel(DeleteAuthorizationServerInformation, cancellationToken);
-
-//        var deleteGateways = () => fileLookup.Lookup(FileType.GatewayInformation)
-//                                             .ExecuteInParallel(DeleteGatewayInformation, cancellationToken);
-
-//        var deleteServicePolicy = () => fileLookup.Lookup(FileType.ServicePolicy)
-//                                                  .FirstOrDefault()
-//                                                  .Map(file => DeleteServicePolicy(file, cancellationToken))
-//                                                  .IfNull(() => Task.FromResult(Unit.Default));
-
-//        var deleteProducts = () => fileLookup.Lookup(FileType.ProductInformation)
-//                                             .ExecuteInParallel(DeleteProductInformation, cancellationToken);
-
-//        var deleteProductPolicies = () => fileLookup.Lookup(FileType.ProductPolicy)
-//                                                    .ExecuteInParallel(DeleteProductPolicy, cancellationToken);
-
-//        var deleteLoggers = () => fileLookup.Lookup(FileType.LoggerInformation)
-//                                            .ExecuteInParallel(DeleteLoggerInformation, cancellationToken);
-
-//        var deleteServiceDiagnostics = () => fileLookup.Lookup(FileType.ServiceDiagnosticInformation)
-//                                                       .ExecuteInParallel(DeleteServiceDiagnosticInformation, cancellationToken);
-
-//        var deleteApiInformation = () => fileLookup.Lookup(FileType.ApiInformation)
-//                                                   .ExecuteInParallel(DeleteApiInformation, cancellationToken);
-
-//        var deleteApiDiagnostics = () => fileLookup.Lookup(FileType.ApiDiagnosticInformation)
-//                                                   .ExecuteInParallel(DeleteApiDiagnosticInformation, cancellationToken);
-
-//        var deleteApiPolicies = () => fileLookup.Lookup(FileType.ApiPolicy)
-//                                                .ExecuteInParallel(DeleteApiPolicy, cancellationToken);
-
-//        var deleteOperationPolicies = () => fileLookup.Lookup(FileType.OperationPolicy)
-//                                                      .ExecuteInParallel(DeleteOperationPolicy, cancellationToken);
-
-//        await Task.WhenAll(deleteApiPolicies(), deleteApiDiagnostics(), deleteOperationPolicies());
-
-//        await deleteApiInformation();
-
-//        await Task.WhenAll(deleteProductPolicies(), deleteServiceDiagnostics());
-
-//        await Task.WhenAll(deleteAuthorizationServers(),
-//                           deleteGateways(),
-//                           deleteServicePolicy(),
-//                           deleteProducts(),
-//                           deleteLoggers());
-
-//        await deleteServiceInformationFile();
-
-//        return Unit.Default;
-//    }
-
-//    private Task<Unit> DeleteServiceInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"File {file} was deleted; deleting service information...");
-
-//        throw new NotImplementedException("Delete service manually. For safety reasons, automatic instance deletion was not implemented.");
-//    }
-
-//    private Task<Unit> DeleteAuthorizationServerInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"File {file} was deleted; deleting authorization server...");
-
-//        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
-//                  .Map(fileContents => fileContents.ToJsonObject())
-//                  .Map(jsonObject => AuthorizationServer.GetNameFromInformationFile(jsonObject))
-//                  .Map(name => AuthorizationServer.GetUri(serviceUri, name))
-//                  .Bind(uri => deleteResource(uri, cancellationToken));
-//    }
-
-//    private Task<Unit> DeleteGatewayInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"File {file} was deleted; deleting gateway...");
-
-//        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
-//                  .Map(fileContents => fileContents.ToJsonObject())
-//                  .Map(jsonObject => Gateway.GetNameFromInformationFile(jsonObject))
-//                  .Map(name => Gateway.GetUri(serviceUri, name))
-//                  .Bind(uri => deleteResource(uri, cancellationToken));
-//    }
-
-//    private Task<Unit> DeleteServicePolicy(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"File {file} was deleted; deleting service policy...");
-
-//        var policyUri = Policy.GetServicePolicyUri(serviceUri);
-
-//        return deleteResource(policyUri, cancellationToken);
-//    }
-
-//    private Task<Unit> DeleteServiceDiagnosticInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"File {file} was deleted; deleting service diagnostic...");
-
-//        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
-//                  .Map(fileContents => fileContents.ToJsonObject())
-//                  .Map(jsonObject => Diagnostic.GetNameFromInformationFile(jsonObject))
-//                  .Map(name => Diagnostic.GetUri(serviceUri, name))
-//                  .Bind(uri => deleteResource(uri, cancellationToken));
-//    }
-
-//    private Task<Unit> DeleteProductInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"File {file} was deleted; deleting service product...");
-
-//        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
-//                  .Map(fileContents => fileContents.ToJsonObject())
-//                  .Map(jsonObject => Product.GetNameFromInformationFile(jsonObject))
-//                  .Map(name => Product.GetUri(serviceUri, name))
-//                  .Bind(uri => deleteResource(uri, cancellationToken));
-//    }
-
-//    private static string GetDisplayNameFromResourceJson(JsonObject json)
-//    {
-//        return json.GetObjectPropertyValue("properties")
-//                   .GetNonEmptyStringPropertyValue("displayName");
-//    }
-
-//    private async Task<Unit> DeleteProductPolicy(FileInfo productPolicyFile, CancellationToken cancellationToken)
-//    {
-//        var productInformationFile = Product.GetInformationFileFromPolicyFile(productPolicyFile);
-
-//        if (productInformationFile.Exists)
-//        {
-//            Logger.LogInformation($"File {productPolicyFile} was deleted; deleting product policy...");
-
-//            var productName = await Product.GetNameFromPolicyFile(productPolicyFile, cancellationToken);
-//            var productUri = Product.GetUri(serviceUri, productName);
-//            var policyUri = Policy.GetProductPolicyUri(productUri);
-
-//            return await deleteResource(policyUri, cancellationToken);
-//        }
-//        else
-//        {
-//            Logger.LogInformation($"Product policy file {productPolicyFile} was deleted, but information file {productInformationFile} is missing; skipping product policy deletion...");
-//            return Unit.Default;
-//        }
-//    }
-
-//    private Task<Unit> DeleteLoggerInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"File {file} was deleted; deleting service logger...");
-
-//        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
-//                  .Map(fileContents => fileContents.ToJsonObject())
-//                  .Map(jsonObject => common.Logger.GetNameFromInformationFile(jsonObject))
-//                  .Map(name => common.Logger.GetUri(serviceUri, name))
-//                  .Bind(uri => deleteResource(uri, cancellationToken));
-//    }
-
-//    private Task<Unit> DeleteApiInformation(FileInfo file, CancellationToken cancellationToken)
-//    {
-//        Logger.LogInformation($"File {file} was deleted; deleting API...");
-
-//        return Git.GetPreviousCommitContents(commitId.IfNullThrow("Commit ID cannot be null."), file, serviceDirectory)
-//                  .Map(fileContents => fileContents.ToJsonObject())
-//                  .Map(jsonObject => Api.GetNameFromInformationFile(jsonObject))
-//                  .Map(name => Api.GetUri(serviceUri, name))
-//                  .Bind(uri => deleteResource(uri, cancellationToken));
-//    }
-
-//    private async Task<Unit> DeleteApiPolicy(FileInfo apiPolicyFile, CancellationToken cancellationToken)
-//    {
-//        var apiInformationFile = Api.GetInformationFileFromPolicyFile(apiPolicyFile);
-
-//        if (apiInformationFile.Exists)
-//        {
-//            Logger.LogInformation($"File {apiPolicyFile} was deleted; deleting API policy...");
-
-//            var apiName = await Api.GetNameFromPolicyFile(apiPolicyFile, cancellationToken);
-//            var apiUri = Api.GetUri(serviceUri, apiName);
-//            var policyUri = Policy.GetApiPolicyUri(apiUri);
-
-//            return await deleteResource(policyUri, cancellationToken);
-//        }
-//        else
-//        {
-//            Logger.LogInformation($"File {apiPolicyFile} was deleted, but information file {apiInformationFile} is missing; skipping API policy deletion...");
-//            return Unit.Default;
-//        }
-//    }
-
-//    private async Task<Unit> DeleteApiDiagnosticInformation(FileInfo apiDiagnosticFile, CancellationToken cancellationToken)
-//    {
-//        var apiInformationFile = Api.GetInformationFileFromDiagnosticFile(apiDiagnosticFile);
-
-//        if (apiInformationFile.Exists)
-//        {
-//            Logger.LogInformation($"File {apiDiagnosticFile} was deleted; deleting API diagnostic...");
-
-//            var apiName = await Api.GetNameFromDiagnosticInformationFile(apiDiagnosticFile, cancellationToken);
-//            var apiUri = Api.GetUri(serviceUri, apiName);
-//            var diagnosticName = DiagnosticName.From(apiDiagnosticFile.GetDirectoryName());
-//            var diagnosticUri = Diagnostic.GetUri(apiUri, diagnosticName);
-
-//            return await deleteResource(diagnosticUri, cancellationToken);
-//        }
-//        else
-//        {
-//            Logger.LogInformation($"Api diagnostic file {apiDiagnosticFile} was deleted, but information file {apiInformationFile} is missing; skipping API diagnostic deletion...");
-//            return Unit.Default;
-//        }
-//    }
-
-//    private async Task<Unit> DeleteOperationPolicy(FileInfo operationPolicyFile, CancellationToken cancellationToken)
-//    {
-//        var apiInformationFile = Operation.GetApiInformationFileFromPolicyFile(operationPolicyFile);
-//        if (apiInformationFile.Exists)
-//        {
-//            Logger.LogInformation($"File {operationPolicyFile} was deleted; deleting operation policy...");
-
-//            var apiName = await Api.GetNameFromInformationFile(apiInformationFile, cancellationToken);
-//            var apiUri = Api.GetUri(serviceUri, apiName);
-//            var operationName = Operation.GetNameFromPolicyFile(operationPolicyFile);
-//            var operationUri = Operation.GetUri(apiUri, operationName);
-//            var policyUri = Policy.GetOperationPolicyUri(operationUri);
-
-//            return await deleteResource(policyUri, cancellationToken);
-//        }
-//        else
-//        {
-//            Logger.LogInformation($"File {operationPolicyFile} was deleted, but information file {apiInformationFile} is missing; skipping operation policy deletion...");
-//            return Unit.Default;
-//        }
-//    }
-//}

@@ -1,55 +1,34 @@
 ﻿using System;
 using System.IO;
 using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace common;
 
 public sealed record ProductPolicyFile : FileRecord
 {
     private static readonly string name = "policy.xml";
-    private readonly ProductsDirectory productsDirectory;
-    private readonly ProductDisplayName productDisplayName;
 
-    private ProductPolicyFile(ProductsDirectory productsDirectory, ProductDisplayName productDisplayName)
-        : base(productsDirectory.Path.Append(productDisplayName).Append(name))
+    public ProductDirectory ProductDirectory { get; }
+
+    private ProductPolicyFile(ProductDirectory productDirectory) : base(productDirectory.Path.Append(name))
     {
-        this.productsDirectory = productsDirectory;
-        this.productDisplayName = productDisplayName;
+        ProductDirectory = productDirectory;
     }
 
-    public async Task<JsonObject> ToJsonObject(CancellationToken cancellationToken)
-    {
-        var policyText = await File.ReadAllTextAsync(Path, cancellationToken);
-        var propertiesJson = new JsonObject().AddProperty("format", "rawxml")
-                                             .AddProperty("value", policyText);
-
-        return new JsonObject().AddProperty("properties", propertiesJson);
-    }
-
-    public ProductInformationFile GetProductInformationFile() => ProductInformationFile.From(productsDirectory, productDisplayName);
-
-    public static ProductPolicyFile From(ProductsDirectory productsDirectory, ProductDisplayName displayName)
-        => new(productsDirectory, displayName);
+    public static ProductPolicyFile From(ProductDirectory productDirectory) => new(productDirectory);
 
     public static ProductPolicyFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        if (name.Equals(file.Name) is false)
+        if (name.Equals(file.Name))
+        {
+            var productDirectory = ProductDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return productDirectory is null ? null : new(productDirectory);
+        }
+        else
         {
             return null;
         }
-
-        var directory = file.Directory;
-        if (directory is null)
-        {
-            return null;
-        }
-
-        var productsDirectory = ProductsDirectory.TryFrom(serviceDirectory, directory.Parent);
-        return productsDirectory is null
-            ? null
-            : new(productsDirectory, ProductDisplayName.From(directory.Name));
     }
 }
 

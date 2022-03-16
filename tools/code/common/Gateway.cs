@@ -37,35 +37,76 @@ public sealed record GatewaysDirectory : DirectoryRecord
 {
     private static readonly string name = "gateways";
 
-    private GatewaysDirectory(RecordPath path) : base(path)
+    public ServiceDirectory ServiceDirectory { get; }
+
+    private GatewaysDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
     {
+        ServiceDirectory = serviceDirectory;
     }
 
-    public static GatewaysDirectory From(ServiceDirectory serviceDirectory) =>
-        new(serviceDirectory.Path.Append(name));
+    public static GatewaysDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
 
     public static GatewaysDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.Path.PathEquals(directory.Parent?.FullName)
-        ? new(RecordPath.From(directory.FullName))
+        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
+        ? new(serviceDirectory)
         : null;
+}
+
+public sealed record GatewayDirectory : DirectoryRecord
+{
+    public GatewaysDirectory GatewaysDirectory { get; }
+    public GatewayName GatewayName { get; }
+
+    private GatewayDirectory(GatewaysDirectory gatewaysDirectory, GatewayName gatewayName) : base(gatewaysDirectory.Path.Append(gatewayName))
+    {
+        GatewaysDirectory = gatewaysDirectory;
+        GatewayName = gatewayName;
+    }
+
+    public static GatewayDirectory From(GatewaysDirectory gatewaysDirectory, GatewayName gatewayName) => new(gatewaysDirectory, gatewayName);
+
+    public static GatewayDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
+    {
+        var parentDirectory = directory?.Parent;
+        if (parentDirectory is not null)
+        {
+            var gatewaysDirectory = GatewaysDirectory.TryFrom(serviceDirectory, parentDirectory);
+
+            return gatewaysDirectory is null ? null : From(gatewaysDirectory, GatewayName.From(directory!.Name));
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record GatewayInformationFile : FileRecord
 {
     private static readonly string name = "gatewayInformation.json";
 
-    public GatewayInformationFile(RecordPath path) : base(path)
+    public GatewayDirectory GatewayDirectory { get; }
+
+    private GatewayInformationFile(GatewayDirectory gatewayDirectory) : base(gatewayDirectory.Path.Append(name))
     {
+        GatewayDirectory = gatewayDirectory;
     }
 
-    public static GatewayInformationFile From(GatewaysDirectory gatewaysDirectory, GatewayName gatewayName)
-        => new(gatewaysDirectory.Path.Append(gatewayName)
-                                     .Append(name));
+    public static GatewayInformationFile From(GatewayDirectory gatewayDirectory) => new(gatewayDirectory);
 
-    public static GatewayInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        name.Equals(file.Name) && GatewaysDirectory.TryFrom(serviceDirectory, file.Directory?.Parent) is not null
-        ? new(RecordPath.From(file.FullName))
-        : null;
+    public static GatewayInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
+    {
+        if (name.Equals(file.Name))
+        {
+            var gatewayDirectory = GatewayDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return gatewayDirectory is null ? null : new(gatewayDirectory);
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record Gateway([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Gateway.GatewayContractProperties Properties)

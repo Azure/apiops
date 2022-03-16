@@ -9,38 +9,28 @@ namespace common;
 public sealed record GatewayApisFile : FileRecord
 {
     private static readonly string name = "apis.json";
-    private readonly GatewaysDirectory gatewaysDirectory;
-    private readonly GatewayName gatewayName;
 
-    private GatewayApisFile(GatewaysDirectory gatewaysDirectory, GatewayName gatewayName)
-        : base(gatewaysDirectory.Path.Append(gatewayName).Append(name))
+    public GatewayDirectory GatewayDirectory { get; }
+
+    private GatewayApisFile(GatewayDirectory gatewayDirectory) : base(gatewayDirectory.Path.Append(name))
     {
-        this.gatewaysDirectory = gatewaysDirectory;
-        this.gatewayName = gatewayName;
+        GatewayDirectory = gatewayDirectory;
     }
 
-    public GatewayInformationFile GetGatewayInformationFile() => GatewayInformationFile.From(gatewaysDirectory, gatewayName);
-
-    public static GatewayApisFile From(GatewaysDirectory gatewaysDirectory, GatewayName displayName)
-        => new(gatewaysDirectory, displayName);
+    public static GatewayApisFile From(GatewayDirectory gatewayDirectory) => new(gatewayDirectory);
 
     public static GatewayApisFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        if (name.Equals(file.Name) is false)
+        if (name.Equals(file.Name))
+        {
+            var gatewayDirectory = GatewayDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return gatewayDirectory is null ? null : new(gatewayDirectory);
+        }
+        else
         {
             return null;
         }
-
-        var directory = file.Directory;
-        if (directory is null)
-        {
-            return null;
-        }
-
-        var gatewaysDirectory = GatewaysDirectory.TryFrom(serviceDirectory, directory.Parent);
-        return gatewaysDirectory is null
-            ? null
-            : new(gatewaysDirectory, GatewayName.From(directory.Name));
     }
 }
 

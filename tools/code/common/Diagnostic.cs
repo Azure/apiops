@@ -37,35 +37,76 @@ public sealed record DiagnosticsDirectory : DirectoryRecord
 {
     private static readonly string name = "diagnostics";
 
-    private DiagnosticsDirectory(RecordPath path) : base(path)
+    public ServiceDirectory ServiceDirectory { get; }
+
+    private DiagnosticsDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
     {
+        ServiceDirectory = serviceDirectory;
     }
 
-    public static DiagnosticsDirectory From(ServiceDirectory serviceDirectory) =>
-        new(serviceDirectory.Path.Append(name));
+    public static DiagnosticsDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
 
     public static DiagnosticsDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.Path.PathEquals(directory.Parent?.FullName)
-        ? new(RecordPath.From(directory.FullName))
+        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
+        ? new(serviceDirectory)
         : null;
+}
+
+public sealed record DiagnosticDirectory : DirectoryRecord
+{
+    public DiagnosticsDirectory DiagnosticsDirectory { get; }
+    public DiagnosticName DiagnosticName { get; }
+
+    private DiagnosticDirectory(DiagnosticsDirectory diagnosticsDirectory, DiagnosticName diagnosticName) : base(diagnosticsDirectory.Path.Append(diagnosticName))
+    {
+        DiagnosticsDirectory = diagnosticsDirectory;
+        DiagnosticName = diagnosticName;
+    }
+
+    public static DiagnosticDirectory From(DiagnosticsDirectory diagnosticsDirectory, DiagnosticName diagnosticName) => new(diagnosticsDirectory, diagnosticName);
+
+    public static DiagnosticDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
+    {
+        var parentDirectory = directory?.Parent;
+        if (parentDirectory is not null)
+        {
+            var diagnosticsDirectory = DiagnosticsDirectory.TryFrom(serviceDirectory, parentDirectory);
+
+            return diagnosticsDirectory is null ? null : From(diagnosticsDirectory, DiagnosticName.From(directory!.Name));
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record DiagnosticInformationFile : FileRecord
 {
     private static readonly string name = "diagnosticInformation.json";
 
-    public DiagnosticInformationFile(RecordPath path) : base(path)
+    public DiagnosticDirectory DiagnosticDirectory { get; }
+
+    private DiagnosticInformationFile(DiagnosticDirectory diagnosticDirectory) : base(diagnosticDirectory.Path.Append(name))
     {
+        DiagnosticDirectory = diagnosticDirectory;
     }
 
-    public static DiagnosticInformationFile From(DiagnosticsDirectory diagnosticsDirectory, DiagnosticName diagnosticName)
-        => new(diagnosticsDirectory.Path.Append(diagnosticName)
-                                     .Append(name));
+    public static DiagnosticInformationFile From(DiagnosticDirectory diagnosticDirectory) => new(diagnosticDirectory);
 
-    public static DiagnosticInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        name.Equals(file.Name) && DiagnosticsDirectory.TryFrom(serviceDirectory, file.Directory?.Parent) is not null
-        ? new(RecordPath.From(file.FullName))
-        : null;
+    public static DiagnosticInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
+    {
+        if (name.Equals(file.Name))
+        {
+            var diagnosticDirectory = DiagnosticDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return diagnosticDirectory is null ? null : new(diagnosticDirectory);
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record Diagnostic([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Diagnostic.DiagnosticContractProperties Properties)

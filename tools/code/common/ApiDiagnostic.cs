@@ -18,38 +18,28 @@ public sealed record ApiDiagnosticName : NonEmptyString
 public sealed record ApiDiagnosticsFile : FileRecord
 {
     private static readonly string name = "diagnostics.json";
-    private readonly ApisDirectory apisDirectory;
-    private readonly ApiDisplayName apiDisplayName;
 
-    private ApiDiagnosticsFile(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName)
-        : base(apisDirectory.Path.Append(apiDisplayName).Append(name))
+    public ApiDirectory ApiDirectory { get; }
+
+    private ApiDiagnosticsFile(ApiDirectory apiDirectory) : base(apiDirectory.Path.Append(name))
     {
-        this.apisDirectory = apisDirectory;
-        this.apiDisplayName = apiDisplayName;
+        ApiDirectory = apiDirectory;
     }
 
-    public ApiInformationFile GetApiInformationFile() => ApiInformationFile.From(apisDirectory, apiDisplayName);
-
-    public static ApiDiagnosticsFile From(ApisDirectory apisDirectory, ApiDisplayName displayName)
-        => new(apisDirectory, displayName);
+    public static ApiDiagnosticsFile From(ApiDirectory apiDirectory) => new(apiDirectory);
 
     public static ApiDiagnosticsFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        if (name.Equals(file.Name) is false)
+        if (name.Equals(file.Name))
+        {
+            var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return apiDirectory is null ? null : new(apiDirectory);
+        }
+        else
         {
             return null;
         }
-
-        var directory = file.Directory;
-        if (directory is null)
-        {
-            return null;
-        }
-
-        var apisDirectory = ApisDirectory.TryFrom(serviceDirectory, directory.Parent);
-        return apisDirectory is null
-            ? null
-            : new(apisDirectory, ApiDisplayName.From(directory.Name));
     }
 }
 

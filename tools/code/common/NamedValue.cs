@@ -52,35 +52,76 @@ public sealed record NamedValuesDirectory : DirectoryRecord
 {
     private static readonly string name = "named values";
 
-    private NamedValuesDirectory(RecordPath path) : base(path)
+    public ServiceDirectory ServiceDirectory { get; }
+
+    private NamedValuesDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
     {
+        ServiceDirectory = serviceDirectory;
     }
 
-    public static NamedValuesDirectory From(ServiceDirectory serviceDirectory) =>
-        new(serviceDirectory.Path.Append(name));
+    public static NamedValuesDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
 
     public static NamedValuesDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.Path.PathEquals(directory.Parent?.FullName)
-        ? new(RecordPath.From(directory.FullName))
+        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
+        ? new(serviceDirectory)
         : null;
+}
+
+public sealed record NamedValueDirectory : DirectoryRecord
+{
+    public NamedValuesDirectory NamedValuesDirectory { get; }
+    public NamedValueDisplayName NamedValueDisplayName { get; }
+
+    private NamedValueDirectory(NamedValuesDirectory namedValuesDirectory, NamedValueDisplayName namedValueDisplayName) : base(namedValuesDirectory.Path.Append(namedValueDisplayName))
+    {
+        NamedValuesDirectory = namedValuesDirectory;
+        NamedValueDisplayName = namedValueDisplayName;
+    }
+
+    public static NamedValueDirectory From(NamedValuesDirectory namedValuesDirectory, NamedValueDisplayName namedValueDisplayName) => new(namedValuesDirectory, namedValueDisplayName);
+
+    public static NamedValueDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
+    {
+        var parentDirectory = directory?.Parent;
+        if (parentDirectory is not null)
+        {
+            var namedValuesDirectory = NamedValuesDirectory.TryFrom(serviceDirectory, parentDirectory);
+
+            return namedValuesDirectory is null ? null : From(namedValuesDirectory, NamedValueDisplayName.From(directory!.Name));
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record NamedValueInformationFile : FileRecord
 {
     private static readonly string name = "namedValueInformation.json";
 
-    public NamedValueInformationFile(RecordPath path) : base(path)
+    public NamedValueDirectory NamedValueDirectory { get; }
+
+    private NamedValueInformationFile(NamedValueDirectory namedValueDirectory) : base(namedValueDirectory.Path.Append(name))
     {
+        NamedValueDirectory = namedValueDirectory;
     }
 
-    public static NamedValueInformationFile From(NamedValuesDirectory namedValuesDirectory, NamedValueDisplayName displayName)
-        => new(namedValuesDirectory.Path.Append(displayName)
-                                        .Append(name));
+    public static NamedValueInformationFile From(NamedValueDirectory namedValueDirectory) => new(namedValueDirectory);
 
-    public static NamedValueInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        name.Equals(file.Name) && NamedValuesDirectory.TryFrom(serviceDirectory, file.Directory?.Parent) is not null
-        ? new(RecordPath.From(file.FullName))
-        : null;
+    public static NamedValueInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
+    {
+        if (name.Equals(file.Name))
+        {
+            var namedValueDirectory = NamedValueDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return namedValueDirectory is null ? null : new(namedValueDirectory);
+        }
+        else
+        {
+            return null;
+        }
+    }
 }
 
 public sealed record NamedValue(string Name, NamedValue.NamedValueCreateContractProperties Properties)

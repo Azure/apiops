@@ -1,55 +1,34 @@
 ﻿using System;
 using System.IO;
 using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace common;
 
 public sealed record ApiOperationPolicyFile : FileRecord
 {
     private static readonly string name = "policy.xml";
-    private readonly ApiOperationsDirectory apiOperationsDirectory;
-    private readonly ApiOperationDisplayName apiOperationDisplayName;
 
-    private ApiOperationPolicyFile(ApiOperationsDirectory apiOperationsDirectory, ApiOperationDisplayName apiOperationDisplayName)
-        : base(apiOperationsDirectory.Path.Append(apiOperationDisplayName).Append(name))
+    public ApiOperationDirectory ApiOperationDirectory { get; }
+
+    private ApiOperationPolicyFile(ApiOperationDirectory apiOperationDirectory) : base(apiOperationDirectory.Path.Append(name))
     {
-        this.apiOperationsDirectory = apiOperationsDirectory;
-        this.apiOperationDisplayName = apiOperationDisplayName;
+        ApiOperationDirectory = apiOperationDirectory;
     }
 
-    public async Task<JsonObject> ToJsonObject(CancellationToken cancellationToken)
-    {
-        var policyText = await File.ReadAllTextAsync(Path, cancellationToken);
-        var propertiesJson = new JsonObject().AddProperty("format", "rawxml")
-                                             .AddProperty("value", policyText);
-
-        return new JsonObject().AddProperty("properties", propertiesJson);
-    }
-
-    //public ApiOperationInformationFile GetApiOperationInformationFile() => ApiOperationInformationFile.From(apiOperationsDirectory, apiOperationDisplayName);
-
-    public static ApiOperationPolicyFile From(ApiOperationsDirectory apiOperationsDirectory, ApiOperationDisplayName displayName)
-        => new(apiOperationsDirectory, displayName);
+    public static ApiOperationPolicyFile From(ApiOperationDirectory apiOperationDirectory) => new(apiOperationDirectory);
 
     public static ApiOperationPolicyFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        if (name.Equals(file.Name) is false)
+        if (name.Equals(file.Name))
+        {
+            var apiOperationDirectory = ApiOperationDirectory.TryFrom(serviceDirectory, file.Directory);
+
+            return apiOperationDirectory is null ? null : new(apiOperationDirectory);
+        }
+        else
         {
             return null;
         }
-
-        var directory = file.Directory;
-        if (directory is null)
-        {
-            return null;
-        }
-
-        var apiOperationsDirectory = ApiOperationsDirectory.TryFrom(serviceDirectory, directory.Parent);
-        return apiOperationsDirectory is null
-            ? null
-            : new(apiOperationsDirectory, ApiOperationDisplayName.From(directory.Name));
     }
 }
 

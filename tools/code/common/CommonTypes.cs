@@ -51,16 +51,18 @@ public sealed record RecordPath : NonEmptyString
 
     public RecordPath Append(string path) => new(Path.Combine(this, path));
 
-    public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(this, path);
+    //public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(this, path);
 
     public static RecordPath From(string value) => new(value);
 }
 
 public abstract record FileRecord
 {
+    private FileInfo FileInfo => new(Path);
+
     public RecordPath Path { get; }
 
-    private FileInfo FileInfo => new(Path);
+    public string Name => FileInfo.Name;
 
     protected FileRecord(RecordPath path)
     {
@@ -69,7 +71,13 @@ public abstract record FileRecord
 
     public bool Exists() => FileInfo.Exists;
 
+    public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(Path, path);
+
+    public bool PathEquals([NotNullWhen(true)] FileInfo? file) => PathEquals(file?.FullName);
+
     public Stream ReadAsStream() => FileInfo.OpenRead();
+
+    public Task<string> ReadAsText(CancellationToken cancellationToken) => File.ReadAllTextAsync(Path, cancellationToken);
 
     public JsonObject ReadAsJsonObject() => ReadAsJsonNode().AsObject();
 
@@ -127,9 +135,11 @@ public abstract record FileRecord
 
 public abstract record DirectoryRecord
 {
+    private DirectoryInfo DirectoryInfo => new(Path);
+
     public RecordPath Path { get; }
 
-    private DirectoryInfo DirectoryInfo => new(Path);
+    public string Name => this.DirectoryInfo.Name;
 
     protected DirectoryRecord(RecordPath path)
     {
@@ -137,6 +147,10 @@ public abstract record DirectoryRecord
     }
 
     public bool Exists() => DirectoryInfo.Exists;
+
+    public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(Path, path);
+
+    public bool PathEquals([NotNullWhen(true)] DirectoryInfo? file) => PathEquals(file?.FullName);
 
     public static implicit operator DirectoryInfo(DirectoryRecord record) => record.DirectoryInfo;
 }

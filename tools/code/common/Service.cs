@@ -45,20 +45,18 @@ public sealed record ServiceInformationFile : FileRecord
 {
     private static readonly string name = "serviceInformation.json";
 
-    private ServiceInformationFile(RecordPath path) : base(path)
+    public ServiceDirectory ServiceDirectory { get; }
+
+    private ServiceInformationFile(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
     {
+        ServiceDirectory = serviceDirectory;
     }
 
-    public static ServiceInformationFile From(ServiceDirectory serviceDirectory)
-    {
-        var path = serviceDirectory.Path.Append(name);
+    public static ServiceInformationFile From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
 
-        return new(path);
-    }
-
-    public static ServiceInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file) =>
-        name.Equals(file.Name) && serviceDirectory.Path.PathEquals(file.Directory?.FullName)
-        ? new(RecordPath.From(file.FullName))
+    public static ServiceInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo? file) =>
+        name.Equals(file?.Name) && serviceDirectory.PathEquals(file?.Directory)
+        ? new(serviceDirectory)
         : null;
 }
 

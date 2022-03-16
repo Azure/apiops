@@ -139,9 +139,10 @@ internal class Extractor : BackgroundService
             return;
         }
 
+        var namedValuesDirectory = NamedValuesDirectory.From(serviceDirectory);
         var namedValueDisplayName = NamedValueDisplayName.From(namedValue.Properties.DisplayName);
-        var directory = NamedValuesDirectory.From(serviceDirectory);
-        var file = NamedValueInformationFile.From(directory, namedValueDisplayName);
+        var namedValueDirectory = NamedValueDirectory.From(namedValuesDirectory, namedValueDisplayName);
+        var file = NamedValueInformationFile.From(namedValueDirectory);
         var parsedJson = namedValue.ToJsonObject();
 
         await file.OverwriteWithJson(parsedJson, cancellationToken);
@@ -161,9 +162,10 @@ internal class Extractor : BackgroundService
 
     private async Task ExportGatewayInformation(Gateway gateway, CancellationToken cancellationToken)
     {
+        var gatewaysDirectory = GatewaysDirectory.From(serviceDirectory);
         var gatewayName = GatewayName.From(gateway.Name);
-        var directory = GatewaysDirectory.From(serviceDirectory);
-        var file = GatewayInformationFile.From(directory, gatewayName);
+        var gatewayDirectory = GatewayDirectory.From(gatewaysDirectory, gatewayName);
+        var file = GatewayInformationFile.From(gatewayDirectory);
         var parsedJson = gateway.ToJsonObject();
 
         await file.OverwriteWithJson(parsedJson, cancellationToken);
@@ -182,9 +184,11 @@ internal class Extractor : BackgroundService
 
         if (apiJsonObjects.Any())
         {
+            var gatewaysDirectory = GatewaysDirectory.From(serviceDirectory);
+            var gatewayDirectory = GatewayDirectory.From(gatewaysDirectory, gatewayName);
+            var file = GatewayApisFile.From(gatewayDirectory);
+
             var apisJsonArray = new JsonArray(apiJsonObjects);
-            var directory = GatewaysDirectory.From(serviceDirectory);
-            var file = GatewayApisFile.From(directory, gatewayName);
 
             await file.OverwriteWithJson(apisJsonArray, cancellationToken);
         }
@@ -205,9 +209,11 @@ internal class Extractor : BackgroundService
 
     private async Task ExportProductInformation(Product product, CancellationToken cancellationToken)
     {
+        var productsDirectory = ProductsDirectory.From(serviceDirectory);
         var productDisplayName = ProductDisplayName.From(product.Properties.DisplayName);
-        var directory = ProductsDirectory.From(serviceDirectory);
-        var file = ProductInformationFile.From(directory, productDisplayName);
+        var productDirectory = ProductDirectory.From(productsDirectory, productDisplayName);
+        var file = ProductInformationFile.From(productDirectory);
+
         var parsedJson = product.ToJsonObject();
 
         await file.OverwriteWithJson(parsedJson, cancellationToken);
@@ -224,8 +230,11 @@ internal class Extractor : BackgroundService
         {
             var productsDirectory = ProductsDirectory.From(serviceDirectory);
             var productDisplayName = ProductDisplayName.From(product.Properties.DisplayName);
-            var policyFile = ProductPolicyFile.From(productsDirectory, productDisplayName);
+            var productDirectory = ProductDirectory.From(productsDirectory, productDisplayName);
+            var policyFile = ProductPolicyFile.From(productDirectory);
+
             var policy = ProductPolicy.GetFromJson(uriJson);
+
             await policyFile.OverwriteWithText(policy, cancellationToken);
         }
     }
@@ -243,10 +252,12 @@ internal class Extractor : BackgroundService
 
         if (apiJsonObjects.Any())
         {
-            var apisJsonArray = new JsonArray(apiJsonObjects);
+            var productsDirectory = ProductsDirectory.From(serviceDirectory);
             var productDisplayName = ProductDisplayName.From(product.Properties.DisplayName);
-            var directory = ProductsDirectory.From(serviceDirectory);
-            var file = ProductApisFile.From(directory, productDisplayName);
+            var productDirectory = ProductDirectory.From(productsDirectory, productDisplayName);
+            var file = ProductApisFile.From(productDirectory);
+
+            var apisJsonArray = new JsonArray(apiJsonObjects);
 
             await file.OverwriteWithJson(apisJsonArray, cancellationToken);
         }
@@ -262,9 +273,11 @@ internal class Extractor : BackgroundService
 
     private async Task ExportLoggerInformation(Logger logger, CancellationToken cancellationToken)
     {
+        var loggersDirectory = LoggersDirectory.From(serviceDirectory);
         var loggerName = LoggerName.From(logger.Name);
-        var loggerssDirectory = LoggersDirectory.From(serviceDirectory);
-        var file = LoggerInformationFile.From(loggerssDirectory, loggerName);
+        var loggerDirectory = LoggerDirectory.From(loggersDirectory, loggerName);
+        var file = LoggerInformationFile.From(loggerDirectory);
+
         var parsedJson = logger.ToJsonObject();
 
         await file.OverwriteWithJson(parsedJson, cancellationToken);
@@ -280,9 +293,11 @@ internal class Extractor : BackgroundService
 
     private async Task ExportDiagnosticInformation(Diagnostic diagnostic, CancellationToken cancellationToken)
     {
-        var diagnosticName = DiagnosticName.From(diagnostic.Name);
         var diagnosticsDirectory = DiagnosticsDirectory.From(serviceDirectory);
-        var file = DiagnosticInformationFile.From(diagnosticsDirectory, diagnosticName);
+        var diagnosticName = DiagnosticName.From(diagnostic.Name);
+        var diagnosticDirectory = DiagnosticDirectory.From(diagnosticsDirectory, diagnosticName);
+        var file = DiagnosticInformationFile.From(diagnosticDirectory);
+
         var parsedJson = diagnostic.ToJsonObject();
 
         await file.OverwriteWithJson(parsedJson, cancellationToken);
@@ -305,9 +320,11 @@ internal class Extractor : BackgroundService
 
     private async Task ExportApiInformation(Api api, CancellationToken cancellationToken)
     {
+        var apisDirectory = ApisDirectory.From(serviceDirectory);
         var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
-        var directory = ApisDirectory.From(serviceDirectory);
-        var file = ApiInformationFile.From(directory, apiDisplayName);
+        var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+        var file = ApiInformationFile.From(apiDirectory);
+
         var parsedJson = api.ToJsonObject();
 
         await file.OverwriteWithJson(parsedJson, cancellationToken);
@@ -315,15 +332,17 @@ internal class Extractor : BackgroundService
 
     private async Task ExportApiSpecification(Api api, CancellationToken cancellationToken)
     {
+        var apisDirectory = ApisDirectory.From(serviceDirectory);
         var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
-        var specificationFile = ApiSpecificationFile.From(serviceDirectory, apiDisplayName, specificationFormat);
+        var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+        var file = ApiSpecificationFile.From(apiDirectory, specificationFormat);
 
         var apiName = ApiName.From(api.Name);
         var apiUri = ApiUri.From(serviceUri, apiName);
         var downloadUri = await ApiSpecificationFile.GetDownloadUri(apiUri, uri => getResourceAsJsonObject(uri, cancellationToken), specificationFormat);
         using var specificationStream = await nonAuthenticatedHttpClient.GetSuccessfulResponseStream(downloadUri, cancellationToken);
 
-        await specificationFile.OverwriteWithStream(specificationStream, cancellationToken);
+        await file.OverwriteWithStream(specificationStream, cancellationToken);
     }
 
     private async Task ExportApiPolicy(Api api, CancellationToken cancellationToken)
@@ -337,9 +356,12 @@ internal class Extractor : BackgroundService
         {
             var apisDirectory = ApisDirectory.From(serviceDirectory);
             var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
-            var policyFile = ApiPolicyFile.From(apisDirectory, apiDisplayName);
+            var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+            var file = ApiPolicyFile.From(apiDirectory);
+
             var policy = ApiPolicy.GetFromJson(uriJson);
-            await policyFile.OverwriteWithText(policy, cancellationToken);
+
+            await file.OverwriteWithText(policy, cancellationToken);
         }
     }
 
@@ -355,10 +377,12 @@ internal class Extractor : BackgroundService
                                                                                  .ToArrayAsync(cancellationToken);
         if (diagnosticJsonObjects.Any())
         {
-            var diagnosticsJsonArray = new JsonArray(diagnosticJsonObjects);
+            var apisDirectory = ApisDirectory.From(serviceDirectory);
             var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
-            var directory = ApisDirectory.From(serviceDirectory);
-            var file = ApiDiagnosticsFile.From(directory, apiDisplayName);
+            var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+            var file = ApiDiagnosticsFile.From(apiDirectory);
+
+            var diagnosticsJsonArray = new JsonArray(diagnosticJsonObjects);
 
             await file.OverwriteWithJson(diagnosticsJsonArray, cancellationToken);
         }
@@ -390,11 +414,15 @@ internal class Extractor : BackgroundService
         {
             var apisDirectory = ApisDirectory.From(serviceDirectory);
             var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
-            var apiOperationsDirectory = ApiOperationsDirectory.From(apisDirectory, apiDisplayName);
+            var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+            var apiOperationsDirectory = ApiOperationsDirectory.From(apiDirectory);
             var apiOperationDisplayName = ApiOperationDisplayName.From(apiOperation.Properties.DisplayName);
-            var policyFile = ApiOperationPolicyFile.From(apiOperationsDirectory, apiOperationDisplayName);
+            var apiOperationDirectory = ApiOperationDirectory.From(apiOperationsDirectory, apiOperationDisplayName);
+            var file = ApiOperationPolicyFile.From(apiOperationDirectory);
+
             var policy = ApiOperationPolicy.GetFromJson(uriJson);
-            await policyFile.OverwriteWithText(policy, cancellationToken);
+
+            await file.OverwriteWithText(policy, cancellationToken);
         }
     }
 }
