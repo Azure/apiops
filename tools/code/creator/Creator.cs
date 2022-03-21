@@ -240,10 +240,10 @@ internal class Creator : BackgroundService
 
         await PutServiceInformationFile(serviceInformationFiles, cancellationToken);
         await PutServicePolicyFile(servicePolicyFiles, cancellationToken);
+        await PutLoggerInformationFiles(loggerInformationFiles, cancellationToken);
         await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
         await PutDiagnosticInformationFiles(diagnosticInformationFiles, cancellationToken);
         await PutGatewayInformationFiles(gatewayInformationFiles, cancellationToken);
-        await PutLoggerInformationFiles(loggerInformationFiles, cancellationToken);
         await PutProductInformationFiles(productInformationFiles, cancellationToken);
         await PutProductPolicyFiles(productPolicyFiles, cancellationToken);
         await PutApiInformationAndSpecificationFiles(apiInformationFiles, apiSpecificationFiles, cancellationToken);
