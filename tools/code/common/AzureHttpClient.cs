@@ -34,7 +34,7 @@ public class AzureHttpClient
         return HttpPipelineBuilder.Build(ClientOptions.Default, policy);
     }
 
-    public async Task<JsonObject> GetResourceAsJsonObject(Uri uri, CancellationToken cancellationToken)
+    public async ValueTask<JsonObject> GetResourceAsJsonObject(Uri uri, CancellationToken cancellationToken)
     {
         var jsonObject = await TryGetResourceAsJsonObject(uri, cancellationToken);
 
@@ -60,7 +60,7 @@ public class AzureHttpClient
         }
     }
 
-    public async Task<JsonObject?> TryGetResourceAsJsonObject(Uri uri, CancellationToken cancellationToken)
+    public async ValueTask<JsonObject?> TryGetResourceAsJsonObject(Uri uri, CancellationToken cancellationToken)
     {
         var request = pipeline.CreateRequest(RequestMethod.Get, uri);
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
@@ -68,14 +68,21 @@ public class AzureHttpClient
         return response.TryGetResourceJson();
     }
 
-    public async Task PutJsonObject(Uri uri, JsonObject jsonObject, CancellationToken cancellationToken)
+    public async ValueTask PutJsonObject(Uri uri, JsonObject jsonObject, CancellationToken cancellationToken)
     {
         var request = pipeline.CreateRequest(RequestMethod.Put, uri, jsonObject);
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
         response.ValidateSuccess();
     }
 
-    public async Task PutStream(Uri uri, Stream stream, CancellationToken cancellationToken)
+    public async ValueTask DeleteResource(Uri uri, CancellationToken cancellationToken)
+    {
+        var request = pipeline.CreateRequest(RequestMethod.Delete, uri);
+        var response = await pipeline.SendRequestAsync(request, cancellationToken);
+        response.ValidateSuccess();
+    }
+
+    public async ValueTask PutStream(Uri uri, Stream stream, CancellationToken cancellationToken)
     {
         var request = pipeline.CreateRequest(RequestMethod.Put, uri, stream);
         var response = await pipeline.SendRequestAsync(request, cancellationToken);

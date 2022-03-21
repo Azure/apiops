@@ -1,8 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -13,24 +17,6 @@ public sealed record GatewayName : NonEmptyString
     }
 
     public static GatewayName From(string value) => new(value);
-
-    public static GatewayName From(GatewayInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var gateway = Gateway.FromJsonObject(jsonObject);
-
-        return new GatewayName(gateway.Name);
-    }
-}
-
-public sealed record GatewayUri : UriRecord
-{
-    public GatewayUri(Uri value) : base(value)
-    {
-    }
-
-    public static GatewayUri From(ServiceUri serviceUri, GatewayName gatewayName) =>
-        new(UriExtensions.AppendPath(serviceUri, "gateways").AppendPath(gatewayName));
 }
 
 public sealed record GatewaysDirectory : DirectoryRecord
@@ -109,33 +95,57 @@ public sealed record GatewayInformationFile : FileRecord
     }
 }
 
-public sealed record Gateway([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Gateway.GatewayContractProperties Properties)
+public static class Gateway
 {
-    public record GatewayContractProperties
-    {
-        [JsonPropertyName("description")]
-        public string? Description { get; init; }
+    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
-        [JsonPropertyName("locationData")]
-        public ResourceLocationDataContract? LocationData { get; init; }
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("gateways")
+               .AppendPath(gatewayName);
+
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("gateways");
+
+    public static GatewayName GetNameFromFile(GatewayInformationFile file)
+    {
+        var jsonObject = file.ReadAsJsonObject();
+        var gateway = Deserialize(jsonObject);
+
+        return GatewayName.From(gateway.Name);
     }
 
-    public record ResourceLocationDataContract([property: JsonPropertyName("name")] string Name)
-    {
-        [JsonPropertyName("city")]
-        public string? City { get; init; }
+    public static Models.Gateway Deserialize(JsonObject jsonObject) =>
+        JsonSerializer.Deserialize<Models.Gateway>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
 
-        [JsonPropertyName("countryOrRegion")]
-        public string? CountryOrRegion { get; init; }
-        [JsonPropertyName("district")]
-        public string? District { get; init; }
+    public static JsonObject Serialize(Models.Gateway gateway) =>
+        JsonSerializer.SerializeToNode(gateway, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
+
+    public static async ValueTask<Models.Gateway> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, gatewayName);
+        var json = await getResource(uri, cancellationToken);
+        return Deserialize(json);
     }
 
-    public JsonObject ToJsonObject() =>
-        JsonSerializer.SerializeToNode(this)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
+    public static IAsyncEnumerable<Models.Gateway> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
+    {
+        var uri = ListUri(serviceProviderUri, serviceName);
+        return getResources(uri, cancellationToken).Select(Deserialize);
+    }
 
-    public static Gateway FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Gateway>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Gateway gateway, CancellationToken cancellationToken)
+    {
+        var name = GatewayName.From(gateway.Name);
+        var uri = GetUri(serviceProviderUri, serviceName, name);
+        var json = Serialize(gateway);
+        await putResource(uri, json, cancellationToken);
+    }
 
-    public static Uri GetListByServiceUri(ServiceUri serviceUri) => UriExtensions.AppendPath(serviceUri, "gateways");
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, gatewayName);
+        await deleteResource(uri, cancellationToken);
+    }
 }

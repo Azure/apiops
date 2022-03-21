@@ -33,9 +33,7 @@ public static class Program
 
     private static void ConfigureConfiguration(IConfigurationBuilder builder)
     {
-        var config = new Dictionary<string, string>();
-
-        builder.AddInMemoryCollection(config);
+        builder.AddUserSecrets(typeof(Program).Assembly);
     }
 
     private static void ConfigureServices(IServiceCollection services)

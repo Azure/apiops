@@ -1,6 +1,8 @@
 ﻿using System;
 using System.IO;
 using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -32,17 +34,41 @@ public sealed record ApiOperationPolicyFile : FileRecord
     }
 }
 
-public sealed record ApiOperationPolicyUri : UriRecord
+public static class ApiOperationPolicy
 {
-    public ApiOperationPolicyUri(Uri value) : base(value)
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName) =>
+        ApiOperation.GetUri(serviceProviderUri, serviceName, apiName, apiOperationName)
+                    .AppendPath("policies")
+                    .AppendPath("policy")
+                    .SetQueryParameter("format", "rawxml");
+
+    public static async ValueTask<string?> TryGet(Func<Uri, CancellationToken, ValueTask<JsonObject?>> tryGetResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName, CancellationToken cancellationToken)
     {
+        var uri = GetUri(serviceProviderUri, serviceName, apiName, apiOperationName);
+        var json = await tryGetResource(uri, cancellationToken);
+
+        return json?.GetJsonObjectProperty("properties")
+                    .GetStringProperty("value");
     }
 
-    public static ApiOperationPolicyUri From(ApiOperationUri apiOperationUri) =>
-        new(UriExtensions.AppendPath(apiOperationUri, "policies").AppendPath("policy").SetQueryParameter("format", "rawxml"));
-}
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName, string policyText, CancellationToken cancellationToken)
+    {
+        var json = new JsonObject
+        {
+            ["properties"] = new JsonObject
+            {
+                ["format"] = "rawxml",
+                ["value"] = policyText
+            }
+        };
 
-public record ApiOperationPolicy
-{
-    public static string GetFromJson(JsonObject jsonObject) => jsonObject.GetJsonObjectProperty("properties").GetStringProperty("value");
+        var uri = GetUri(serviceProviderUri, serviceName, apiName, apiOperationName);
+        await putResource(uri, json, cancellationToken);
+    }
+
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, apiName, apiOperationName);
+        await deleteResource(uri, cancellationToken);
+    }
 }

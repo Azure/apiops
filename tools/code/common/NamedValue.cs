@@ -1,6 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -11,14 +17,6 @@ public sealed record NamedValueName : NonEmptyString
     }
 
     public static NamedValueName From(string value) => new(value);
-
-    public static NamedValueName From(NamedValueInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var namedValue = NamedValue.FromJsonObject(jsonObject);
-
-        return new NamedValueName(namedValue.Name);
-    }
 }
 
 public sealed record NamedValueDisplayName : NonEmptyString
@@ -28,24 +26,6 @@ public sealed record NamedValueDisplayName : NonEmptyString
     }
 
     public static NamedValueDisplayName From(string value) => new(value);
-
-    public static NamedValueDisplayName From(NamedValueInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var namedValue = NamedValue.FromJsonObject(jsonObject);
-
-        return new NamedValueDisplayName(namedValue.Properties.DisplayName);
-    }
-}
-
-public sealed record NamedValueUri : UriRecord
-{
-    public NamedValueUri(Uri value) : base(value)
-    {
-    }
-
-    public static NamedValueUri From(ServiceUri serviceUri, NamedValueName namedValueName) =>
-        new(UriExtensions.AppendPath(serviceUri, "namedValues").AppendPath(namedValueName));
 }
 
 public sealed record NamedValuesDirectory : DirectoryRecord
@@ -124,57 +104,57 @@ public sealed record NamedValueInformationFile : FileRecord
     }
 }
 
-public sealed record NamedValue(string Name, NamedValue.NamedValueCreateContractProperties Properties)
+public static class NamedValue
 {
-    public JsonObject ToJsonObject() =>
-        new JsonObject().AddProperty("name", Name)
-                        .AddProperty("properties", Properties.ToJsonObject());
+    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
-    public static NamedValue FromJsonObject(JsonObject jsonObject) =>
-        new(Name: jsonObject.GetStringProperty("name"),
-            Properties: jsonObject.GetAndMapJsonObjectProperty("properties", NamedValueCreateContractProperties.FromJsonObject));
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, NamedValueName namedValueName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("namedValues")
+               .AppendPath(namedValueName);
 
-    public sealed record NamedValueCreateContractProperties(string DisplayName)
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("namedValues");
+
+    public static NamedValueName GetNameFromFile(NamedValueInformationFile file)
     {
-        public KeyVaultContractCreateProperties? KeyVault { get; init; }
-        public bool? Secret { get; init; }
-        public string[]? Tags { get; init; }
-        public string? Value { get; init; }
+        var jsonObject = file.ReadAsJsonObject();
+        var namedValue = Deserialize(jsonObject);
 
-        public JsonObject ToJsonObject() =>
-            new JsonObject().AddProperty("displayName", DisplayName)
-                            .AddPropertyIfNotNull("keyVault", KeyVault?.ToJsonObject())
-                            .AddPropertyIfNotNull("secret", Secret)
-                            .AddPropertyIfNotNull("tags", Tags?.ToJsonArray(method => JsonValue.Create(method)))
-                            .AddPropertyIfNotNull("value", Value);
-
-        public static NamedValueCreateContractProperties FromJsonObject(JsonObject jsonObject) =>
-            new(DisplayName: jsonObject.GetStringProperty("displayName"))
-            {
-                KeyVault = jsonObject.TryGetAndMapNullableJsonObjectProperty("keyVault", KeyVaultContractCreateProperties.FromJsonObject),
-                Secret = jsonObject.TryGetNullableBoolProperty("secret"),
-                Tags = jsonObject.TryGetAndMapNullableJsonArrayProperty("tags", node => node.GetValue<string>()),
-                Value = jsonObject.TryGetNullableStringProperty("value")
-            };
-
+        return NamedValueName.From(namedValue.Name);
     }
 
-    public sealed record KeyVaultContractCreateProperties
+    public static Models.NamedValue Deserialize(JsonObject jsonObject) =>
+        JsonSerializer.Deserialize<Models.NamedValue>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
+
+    public static JsonObject Serialize(Models.NamedValue namedValue) =>
+        JsonSerializer.SerializeToNode(namedValue, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
+
+    public static async ValueTask<Models.NamedValue> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, NamedValueName namedValueName, CancellationToken cancellationToken)
     {
-        public string? IdentityClientId { get; init; }
-        public string? SecretIdentifier { get; init; }
-
-        public JsonObject ToJsonObject() =>
-            new JsonObject().AddPropertyIfNotNull("identityClientId", IdentityClientId)
-                            .AddPropertyIfNotNull("secretIdentifier", SecretIdentifier);
-
-        public static KeyVaultContractCreateProperties FromJsonObject(JsonObject jsonObject) =>
-            new()
-            {
-                IdentityClientId = jsonObject.TryGetNullableStringProperty("identityClientId"),
-                SecretIdentifier = jsonObject.TryGetNullableStringProperty("secretIdentifier")
-            };
+        var uri = GetUri(serviceProviderUri, serviceName, namedValueName);
+        var json = await getResource(uri, cancellationToken);
+        return Deserialize(json);
     }
 
-    public static Uri GetListByServiceUri(ServiceUri serviceUri) => UriExtensions.AppendPath(serviceUri, "namedValues");
+    public static IAsyncEnumerable<Models.NamedValue> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
+    {
+        var uri = ListUri(serviceProviderUri, serviceName);
+        return getResources(uri, cancellationToken).Select(Deserialize);
+    }
+
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.NamedValue namedValue, CancellationToken cancellationToken)
+    {
+        var name = NamedValueName.From(namedValue.Name);
+        var uri = GetUri(serviceProviderUri, serviceName, name);
+        var json = Serialize(namedValue);
+        await putResource(uri, json, cancellationToken);
+    }
+
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, NamedValueName namedValueName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, namedValueName);
+        await deleteResource(uri, cancellationToken);
+    }
 }

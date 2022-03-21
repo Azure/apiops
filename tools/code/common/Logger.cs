@@ -1,8 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -13,24 +17,6 @@ public sealed record LoggerName : NonEmptyString
     }
 
     public static LoggerName From(string value) => new(value);
-
-    public static LoggerName From(LoggerInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var logger = Logger.FromJsonObject(jsonObject);
-
-        return new LoggerName(logger.Name);
-    }
-}
-
-public sealed record LoggerUri : UriRecord
-{
-    public LoggerUri(Uri value) : base(value)
-    {
-    }
-
-    public static LoggerUri From(ServiceUri serviceUri, LoggerName loggerName) =>
-        new(UriExtensions.AppendPath(serviceUri, "loggers").AppendPath(loggerName));
 }
 
 public sealed record LoggersDirectory : DirectoryRecord
@@ -109,37 +95,57 @@ public sealed record LoggerInformationFile : FileRecord
     }
 }
 
-public sealed record Logger([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Logger.LoggerContractProperties Properties)
+public static class Logger
 {
-    public record LoggerContractProperties
+    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, LoggerName loggerName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("loggers")
+               .AppendPath(loggerName);
+
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("loggers");
+
+    public static LoggerName GetNameFromFile(LoggerInformationFile file)
     {
-        [JsonPropertyName("description")]
-        public string? Description { get; init; }
-        [JsonPropertyName("isBuffered")]
-        public bool? IsBuffered { get; init; }
-        [JsonPropertyName("loggerType")]
-        public string? LoggerType { get; init; }
-        [JsonPropertyName("resourceId")]
-        public string? ResourceId { get; init; }
-        [JsonPropertyName("credentials")]
-        public Credentials? Credentials { get; init; }
+        var jsonObject = file.ReadAsJsonObject();
+        var logger = Deserialize(jsonObject);
+
+        return LoggerName.From(logger.Name);
     }
 
-    public record Credentials
+    public static Models.Logger Deserialize(JsonObject jsonObject) =>
+        JsonSerializer.Deserialize<Models.Logger>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
+
+    public static JsonObject Serialize(Models.Logger logger) =>
+        JsonSerializer.SerializeToNode(logger, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
+
+    public static async ValueTask<Models.Logger> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, LoggerName loggerName, CancellationToken cancellationToken)
     {
-        [JsonPropertyName("instrumentationKey")]
-        public string? InstrumentationKey { get; init; }
-        [JsonPropertyName("name")]
-        public string? Name { get; init; }
-        [JsonPropertyName("connectionString")]
-        public string? ConnectionString { get; init; }
+        var uri = GetUri(serviceProviderUri, serviceName, loggerName);
+        var json = await getResource(uri, cancellationToken);
+        return Deserialize(json);
     }
 
-    public JsonObject ToJsonObject() =>
-        JsonSerializer.SerializeToNode(this)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
+    public static IAsyncEnumerable<Models.Logger> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
+    {
+        var uri = ListUri(serviceProviderUri, serviceName);
+        return getResources(uri, cancellationToken).Select(Deserialize);
+    }
 
-    public static Logger FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Logger>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Logger logger, CancellationToken cancellationToken)
+    {
+        var name = LoggerName.From(logger.Name);
+        var uri = GetUri(serviceProviderUri, serviceName, name);
+        var json = Serialize(logger);
+        await putResource(uri, json, cancellationToken);
+    }
 
-    public static Uri GetListByServiceUri(ServiceUri serviceUri) => UriExtensions.AppendPath(serviceUri, "loggers");
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, LoggerName loggerName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, loggerName);
+        await deleteResource(uri, cancellationToken);
+    }
 }

@@ -1,8 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -24,16 +28,6 @@ public sealed record ApiOperationDisplayName : NonEmptyString
     public static ApiOperationDisplayName From(string value) => new(value);
 }
 
-public sealed record ApiOperationUri : UriRecord
-{
-    public ApiOperationUri(Uri value) : base(value)
-    {
-    }
-
-    public static ApiOperationUri From(ApiUri apiUri, ApiOperationName operationName) =>
-        new(UriExtensions.AppendPath(apiUri, "operations").AppendPath(operationName));
-}
-
 public sealed record ApiOperationsDirectory : DirectoryRecord
 {
     private static readonly string name = "operations";
@@ -49,12 +43,11 @@ public sealed record ApiOperationsDirectory : DirectoryRecord
 
     public static ApiOperationsDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
     {
-        var parentDirectory = directory?.Parent;
-        if (parentDirectory is not null)
+        if (name.Equals(directory?.Name))
         {
-            var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, parentDirectory);
+            var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, directory.Parent);
 
-            return apiDirectory is null ? null : From(apiDirectory);
+            return apiDirectory is null ? null : new(apiDirectory);
         }
         else
         {
@@ -92,19 +85,49 @@ public sealed record ApiOperationDirectory : DirectoryRecord
     }
 }
 
-public sealed record ApiOperation([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] ApiOperation.OperationContractProperties Properties)
+public static class ApiOperation
 {
-    public record OperationContractProperties([property: JsonPropertyName("displayName")] string DisplayName,
-                                              [property: JsonPropertyName("method")] string Method,
-                                              [property: JsonPropertyName("urlTemplate")] string UrlTemplate)
+    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName) =>
+        Api.GetUri(serviceProviderUri, serviceName, apiName)
+           .AppendPath("operations")
+           .AppendPath(apiOperationName);
+
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName) =>
+        Api.GetUri(serviceProviderUri, serviceName, apiName)
+           .AppendPath("operations");
+
+    public static Models.ApiOperation Deserialize(JsonObject jsonObject) =>
+        JsonSerializer.Deserialize<Models.ApiOperation>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
+
+    public static JsonObject Serialize(Models.ApiOperation apiOperation) =>
+        JsonSerializer.SerializeToNode(apiOperation, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
+
+    public static async ValueTask<Models.ApiOperation> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName, CancellationToken cancellationToken)
     {
+        var uri = GetUri(serviceProviderUri, serviceName, apiName, apiOperationName);
+        var json = await getResource(uri, cancellationToken);
+        return Deserialize(json);
     }
 
-    public JsonObject ToJsonObject() =>
-        JsonSerializer.SerializeToNode(this)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
+    public static IAsyncEnumerable<Models.ApiOperation> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var uri = ListUri(serviceProviderUri, serviceName, apiName);
+        return getResources(uri, cancellationToken).Select(Deserialize);
+    }
 
-    public static ApiOperation FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<ApiOperation>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, Models.ApiOperation apiOperation, CancellationToken cancellationToken)
+    {
+        var name = ApiOperationName.From(apiOperation.Name);
+        var uri = GetUri(serviceProviderUri, serviceName, apiName, name);
+        var json = Serialize(apiOperation);
+        await putResource(uri, json, cancellationToken);
+    }
 
-    public static Uri GetListByApiUri(ApiUri apiUri) => UriExtensions.AppendPath(apiUri, "operations");
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, apiName, apiOperationName);
+        await deleteResource(uri, cancellationToken);
+    }
 }

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace common;
@@ -16,14 +17,6 @@ public sealed record ApiName : NonEmptyString
     }
 
     public static ApiName From(string value) => new(value);
-
-    public static ApiName From(ApiInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var api = Api.FromJsonObject(jsonObject);
-
-        return new ApiName(api.Name);
-    }
 }
 
 public sealed record ApiDisplayName : NonEmptyString
@@ -33,24 +26,6 @@ public sealed record ApiDisplayName : NonEmptyString
     }
 
     public static ApiDisplayName From(string value) => new(value);
-
-    public static ApiDisplayName From(ApiInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var api = Api.FromJsonObject(jsonObject);
-
-        return new ApiDisplayName(api.Properties.DisplayName);
-    }
-}
-
-public sealed record ApiUri : UriRecord
-{
-    public ApiUri(Uri value) : base(value)
-    {
-    }
-
-    public static ApiUri From(ServiceUri serviceUri, ApiName apiName) =>
-        new(UriExtensions.AppendPath(serviceUri, "apis").AppendPath(apiName));
 }
 
 public sealed record ApisDirectory : DirectoryRecord
@@ -129,265 +104,57 @@ public sealed record ApiInformationFile : FileRecord
     }
 }
 
-public sealed record ApiSpecificationFile : FileRecord
+public static class Api
 {
-    private readonly Format format;
+    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
-    public ApiDirectory ApiDirectory { get; }
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("apis")
+               .AppendPath(apiName);
 
-    private ApiSpecificationFile(ApiDirectory apiDirectory, Format format = Format.Yaml)
-        : base(apiDirectory.Path.Append(GetNameFromFormat(format)))
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("apis");
+
+    public static ApiName GetNameFromFile(ApiInformationFile file)
     {
-        this.format = format;
+        var jsonObject = file.ReadAsJsonObject();
+        var api = Deserialize(jsonObject);
 
-        ApiDirectory = apiDirectory;
+        return ApiName.From(api.Name);
     }
 
-    public static ApiSpecificationFile From(ApiDirectory apiDirectory, Format format = Format.Yaml) => new(apiDirectory, format);
+    public static Models.Api Deserialize(JsonObject jsonObject) =>
+        JsonSerializer.Deserialize<Models.Api>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
 
-    public static ApiSpecificationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
+    public static JsonObject Serialize(Models.Api api) =>
+        JsonSerializer.SerializeToNode(api, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
+
+    public static async ValueTask<Models.Api> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, CancellationToken cancellationToken)
     {
-        if (Enum.TryParse<Format>(string.Concat(file.Extension.Skip(1)), ignoreCase: true, out var format))
-        {
-            if (GetNameFromFormat(format).Equals(file?.Name))
-            {
-                var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
-
-                return apiDirectory is null ? null : new(apiDirectory);
-            }
-            else
-            {
-                return null;
-            }
-        }
-        else
-        {
-            return null;
-        }
+        var uri = GetUri(serviceProviderUri, serviceName, apiName);
+        var json = await getResource(uri, cancellationToken);
+        return Deserialize(json);
     }
 
-    public static ApiSpecificationFile? TryFindFirstIn(ApiDirectory apiDirectory)
+    public static IAsyncEnumerable<Models.Api> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
     {
-        var directoryFileNames =
-            apiDirectory.Exists()
-            ? new DirectoryInfo(apiDirectory.Path).EnumerateFiles().Select(file => file.Name).ToList()
-            : new List<string>();
-
-        return
-            Enum.GetValues<Format>()
-                .Where(format =>
-                {
-                    var formatFileName = TryGetNameFromFormat(format);
-                    return formatFileName is not null && directoryFileNames.Contains(formatFileName);
-                })
-                .Select(format => new ApiSpecificationFile(apiDirectory, format))
-                .FirstOrDefault();
+        var uri = ListUri(serviceProviderUri, serviceName);
+        return getResources(uri, cancellationToken).Select(Deserialize);
     }
 
-    public static async Task<Uri> GetDownloadUri(ApiUri apiUri, Func<Uri, Task<JsonObject>> getJsonObjectFromUri, Format format = Format.Yaml)
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Api api, CancellationToken cancellationToken)
     {
-        var exportUri =
-            UriExtensions.SetQueryParameter(apiUri, "export", "true")
-                         .SetQueryParameter("format",
-                                            format switch
-                                            {
-                                                Format.Json => "openapi+json-link",
-                                                Format.Yaml => "openapi-link",
-                                                _ => throw new InvalidOperationException($"File format {format} is invalid. Only OpenAPI YAML & JSON are supported.")
-                                            });
-
-        var exportJson = await getJsonObjectFromUri(exportUri);
-        var downloadUrl = exportJson.GetJsonObjectProperty("value")
-                                    .GetStringProperty("link");
-
-        return new Uri(downloadUrl);
+        var name = ApiName.From(api.Name);
+        var uri = GetUri(serviceProviderUri, serviceName, name);
+        var json = Serialize(api);
+        await putResource(uri, json, cancellationToken);
     }
 
-    private static string GetNameFromFormat(Format format) =>
-        TryGetNameFromFormat(format) ?? throw new InvalidOperationException($"File format {format} is invalid.");
-
-    private static string? TryGetNameFromFormat(Format format) =>
-        format switch
-        {
-            Format.Json => "specification.json",
-            Format.Yaml => "specification.yaml",
-            _ => null
-        };
-
-    public enum Format
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, CancellationToken cancellationToken)
     {
-        Json,
-        Yaml
+        var uri = GetUri(serviceProviderUri, serviceName, apiName);
+        await deleteResource(uri, cancellationToken);
     }
-}
-
-public sealed record Api([property: JsonPropertyName("name")] string Name,
-                         [property: JsonPropertyName("properties")] Api.ApiCreateOrUpdateProperties Properties)
-{
-    public sealed record ApiCreateOrUpdateProperties([property: JsonPropertyName("path")] string Path,
-                                                     [property: JsonPropertyName("displayName")] string DisplayName)
-    {
-        [JsonPropertyName("apiRevision")]
-        public string? ApiRevision { get; init; }
-
-        [JsonPropertyName("apiRevisionDescription")]
-        public string? ApiRevisionDescription { get; init; }
-
-        [JsonPropertyName("apiType")]
-        public string? ApiType { get; init; }
-
-        [JsonPropertyName("apiVersion")]
-        public string? ApiVersion { get; init; }
-
-        [JsonPropertyName("apiVersionDescription")]
-        public string? ApiVersionDescription { get; init; }
-
-        [JsonPropertyName("apiVersionSet")]
-        public ApiVersionSetContractDetails? ApiVersionSet { get; init; }
-
-        [JsonPropertyName("apiVersionSetId")]
-        public string? ApiVersionSetId { get; init; }
-
-        [JsonPropertyName("authenticationSettings")]
-        public AuthenticationSettingsContract? AuthenticationSettings { get; init; }
-
-        [JsonPropertyName("contact")]
-        public ApiContactInformation? Contact { get; init; }
-
-        [JsonPropertyName("description")]
-        public string? Description { get; init; }
-
-        [JsonPropertyName("format")]
-        public string? Format { get; init; }
-
-        [JsonPropertyName("isCurrent")]
-        public bool? IsCurrent { get; init; }
-
-        [JsonPropertyName("license")]
-        public ApiLicenseInformation? License { get; init; }
-
-        [JsonPropertyName("protocols")]
-        public string[]? Protocols { get; init; }
-
-        [JsonPropertyName("serviceUrl")]
-        public string? ServiceUrl { get; init; }
-
-        [JsonPropertyName("sourceApiId")]
-        public string? SourceApiId { get; init; }
-
-        [JsonPropertyName("subscriptionKeyParameterNames")]
-        public SubscriptionKeyParameterNamesContract? SubscriptionKeyParameterNames { get; init; }
-
-        [JsonPropertyName("subscriptionRequired")]
-        public bool? SubscriptionRequired { get; init; }
-
-        [JsonPropertyName("termsOfServiceUrl")]
-        public string? TermsOfServiceUrl { get; init; }
-
-        [JsonPropertyName("type")]
-        public string? Type { get; init; }
-
-        [JsonPropertyName("value")]
-        public string? Value { get; init; }
-
-        [JsonPropertyName("wsdlSelector")]
-        public ApiCreateOrUpdatePropertiesWsdlSelector? WsdlSelector { get; init; }
-    }
-
-    public sealed record ApiVersionSetContractDetails
-    {
-        [JsonPropertyName("description")]
-        public string? Description { get; init; }
-
-        [JsonPropertyName("id")]
-        public string? Id { get; init; }
-
-        [JsonPropertyName("name")]
-        public string? Name { get; init; }
-
-        [JsonPropertyName("versionHeaderName")]
-        public string? VersionHeaderName { get; init; }
-
-        [JsonPropertyName("versioningScheme")]
-        public string? VersioningScheme { get; init; }
-
-        [JsonPropertyName("versionQueryName")]
-        public string? VersionQueryName { get; init; }
-    }
-
-    public sealed record AuthenticationSettingsContract
-    {
-        [JsonPropertyName("oAuth2")]
-        public OAuth2AuthenticationSettingsContract? OAuth2 { get; init; }
-
-        [JsonPropertyName("openid")]
-        public OpenIdAuthenticationSettingsContract? Openid { get; init; }
-    }
-
-    public sealed record OAuth2AuthenticationSettingsContract
-    {
-        [JsonPropertyName("authorizationServerId")]
-        public string? AuthorizationServerId { get; init; }
-
-        [JsonPropertyName("scope")]
-        public string? Scope { get; init; }
-    }
-
-    public sealed record OpenIdAuthenticationSettingsContract
-    {
-        [JsonPropertyName("bearerTokenSendingMethods")]
-        public string[]? BearerTokenSendingMethods { get; init; }
-
-        [JsonPropertyName("openidProviderId")]
-        public string? OpenidProviderId { get; init; }
-    }
-
-    public sealed record ApiContactInformation
-    {
-        [JsonPropertyName("name")]
-        public string? Email { get; init; }
-
-        [JsonPropertyName("name")]
-        public string? Name { get; init; }
-
-        [JsonPropertyName("url")]
-        public string? Url { get; init; }
-    }
-
-    public sealed record ApiLicenseInformation
-    {
-        [JsonPropertyName("name")]
-        public string? Name { get; init; }
-
-        [JsonPropertyName("url")]
-        public string? Url { get; init; }
-    }
-
-    public sealed record SubscriptionKeyParameterNamesContract
-    {
-        [JsonPropertyName("header")]
-        public string? Header { get; init; }
-
-        [JsonPropertyName("query")]
-        public string? Query { get; init; }
-    }
-
-    public sealed record ApiCreateOrUpdatePropertiesWsdlSelector
-    {
-        [JsonPropertyName("wsdlEndpointName")]
-        public string? WsdlEndpointName { get; init; }
-
-        [JsonPropertyName("wsdlServiceName")]
-        public string? WsdlServiceName { get; init; }
-    }
-
-    private static readonly JsonSerializerOptions serializerOptions = new(JsonSerializerDefaults.Web) { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
-
-    public JsonObject ToJsonObject() =>
-        JsonSerializer.SerializeToNode(this, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
-
-    public static Api FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Api>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Could not deserialize object.");
-
-    public static Uri GetListByServiceUri(ServiceUri serviceUri) => UriExtensions.AppendPath(serviceUri, "apis");
 }

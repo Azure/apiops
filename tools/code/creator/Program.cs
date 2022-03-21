@@ -27,6 +27,7 @@ public static class Program
 
     private static void ConfigureConfiguration(IConfigurationBuilder builder)
     {
+        builder.AddUserSecrets(typeof(Program).Assembly);
         var configuration = builder.Build();
         var yamlPath = configuration.TryGetValue("CONFIGURATION_YAML_PATH");
 

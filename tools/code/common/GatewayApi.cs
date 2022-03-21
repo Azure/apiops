@@ -1,8 +1,11 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
-using System.Text.Json;
+using System.Linq;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -34,23 +37,40 @@ public sealed record GatewayApisFile : FileRecord
     }
 }
 
-public sealed record GatewayApiUri : UriRecord
+public static class GatewayApi
 {
-    public GatewayApiUri(Uri value) : base(value)
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, ApiName apiName) =>
+        Gateway.GetUri(serviceProviderUri, serviceName, gatewayName)
+               .AppendPath("apis")
+               .AppendPath(apiName);
+
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName) =>
+        Gateway.GetUri(serviceProviderUri, serviceName, gatewayName)
+               .AppendPath("apis");
+
+    public static ImmutableList<ApiName> ListFromFile(GatewayApisFile file) =>
+        file.ReadAsJsonArray()
+            .Where(node => node is not null)
+            .Select(node => node!.AsObject())
+            .Select(jsonObject => jsonObject.GetStringProperty("name"))
+            .Select(ApiName.From)
+            .ToImmutableList();
+
+    public static IAsyncEnumerable<Models.Api> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, CancellationToken cancellationToken)
     {
+        var uri = ListUri(serviceProviderUri, serviceName, gatewayName);
+        return getResources(uri, cancellationToken).Select(Api.Deserialize);
     }
 
-    public static GatewayApiUri From(GatewayUri gatewayUri, ApiName apiName) =>
-        new(UriExtensions.AppendPath(gatewayUri, "apis").AppendPath(apiName));
-}
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, gatewayName, apiName);
+        await putResource(uri, new JsonObject(), cancellationToken);
+    }
 
-public sealed record GatewayApi([property: JsonPropertyName("name")] string Name)
-{
-    public JsonObject ToJsonObject() =>
-        JsonSerializer.SerializeToNode(this)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
-
-    public static GatewayApi FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<GatewayApi>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
-
-    public static Uri GetListByGatewayUri(GatewayUri gatewayUri) => UriExtensions.AppendPath(gatewayUri, "apis");
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, gatewayName, apiName);
+        await deleteResource(uri, cancellationToken);
+    }
 }

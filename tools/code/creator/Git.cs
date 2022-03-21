@@ -1,7 +1,7 @@
 ﻿using common;
 using Medallion.Shell;
 using System;
-using System.Collections.Immutable;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
@@ -49,11 +49,14 @@ internal static class Git
             : throw new InvalidOperationException($"Failed to get contents for file {file} in Git commit {commitId}. Error message is '{commandResult.StandardError}'.");
     }
 
-    public static async Task<ImmutableDictionary<CommitStatus, ImmutableList<FileInfo>>> GetFilesFromCommit(CommitId commitId, DirectoryInfo baseDirectory)
+    public static async IAsyncEnumerable<IGrouping<CommitStatus, FileInfo>> GetFilesFromCommit(CommitId commitId, DirectoryInfo baseDirectory)
     {
         var diffTreeOutput = await GetDiffTreeOutput(commitId, baseDirectory);
 
-        return ParseDiffTreeOutput(diffTreeOutput, baseDirectory);
+        foreach (var grouping in ParseDiffTreeOutput(diffTreeOutput, baseDirectory))
+        {
+            yield return grouping;
+        }
     }
 
     private static async Task<string> GetDiffTreeOutput(CommitId commitId, DirectoryInfo baseDirectory)
@@ -66,20 +69,17 @@ internal static class Git
             : throw new InvalidOperationException($"Failed to get files for commit {commitId} in directory {baseDirectory}. Error message is '{commandResult.StandardError}'.");
     }
 
-    private static ImmutableDictionary<CommitStatus, ImmutableList<FileInfo>> ParseDiffTreeOutput(string output, DirectoryInfo baseDirectory)
+    private static IEnumerable<IGrouping<CommitStatus, FileInfo>> ParseDiffTreeOutput(string output, DirectoryInfo baseDirectory)
     {
         var getFileFromOutputLine = (string outputLine) => new FileInfo(Path.Combine(baseDirectory.FullName, outputLine[1..].Trim()));
 
-        var commitStatusGroups =
+        return
             from outputLine in output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
             let commitStatus = TryGetCommitStatusFromOutputLine(outputLine)
             where commitStatus is not null
             let nonNullCommitStatus = commitStatus ?? throw new NullReferenceException() // Shouldn't be null here, adding to satisfy nullable compiler check
             let file = getFileFromOutputLine(outputLine)
-            group file by nonNullCommitStatus into commitStatusGroup
-            select (CommitStatus: commitStatusGroup.Key, Files: commitStatusGroup.ToImmutableList());
-
-        return commitStatusGroups.ToImmutableDictionary(group => group.CommitStatus, group => group.Files);
+            group file by nonNullCommitStatus;
     }
 
     private static CommitStatus? TryGetCommitStatusFromOutputLine(string diffTreeOutputLine)

@@ -1,6 +1,8 @@
 ﻿using System;
 using System.IO;
 using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -32,17 +34,41 @@ public sealed record ApiPolicyFile : FileRecord
     }
 }
 
-public sealed record ApiPolicyUri : UriRecord
+public static class ApiPolicy
 {
-    public ApiPolicyUri(Uri value) : base(value)
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName) =>
+        Api.GetUri(serviceProviderUri, serviceName, apiName)
+               .AppendPath("policies")
+               .AppendPath("policy")
+               .SetQueryParameter("format", "rawxml");
+
+    public static async ValueTask<string?> TryGet(Func<Uri, CancellationToken, ValueTask<JsonObject?>> tryGetResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, CancellationToken cancellationToken)
     {
+        var uri = GetUri(serviceProviderUri, serviceName, apiName);
+        var json = await tryGetResource(uri, cancellationToken);
+
+        return json?.GetJsonObjectProperty("properties")
+                    .GetStringProperty("value");
     }
 
-    public static ApiPolicyUri From(ApiUri apiUri) =>
-        new(UriExtensions.AppendPath(apiUri, "policies").AppendPath("policy").SetQueryParameter("format", "rawxml"));
-}
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, string policyText, CancellationToken cancellationToken)
+    {
+        var json = new JsonObject
+        {
+            ["properties"] = new JsonObject
+            {
+                ["format"] = "rawxml",
+                ["value"] = policyText
+            }
+        };
 
-public record ApiPolicy
-{
-    public static string GetFromJson(JsonObject jsonObject) => jsonObject.GetJsonObjectProperty("properties").GetStringProperty("value");
+        var uri = GetUri(serviceProviderUri, serviceName, apiName);
+        await putResource(uri, json, cancellationToken);
+    }
+
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, apiName);
+        await deleteResource(uri, cancellationToken);
+    }
 }

@@ -1,8 +1,11 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
-using System.Text.Json;
+using System.Linq;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -34,23 +37,40 @@ public sealed record ProductApisFile : FileRecord
     }
 }
 
-public sealed record ProductApiUri : UriRecord
+public static class ProductApi
 {
-    public ProductApiUri(Uri value) : base(value)
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, ApiName apiName) =>
+        Product.GetUri(serviceProviderUri, serviceName, productName)
+               .AppendPath("apis")
+               .AppendPath(apiName);
+
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName) =>
+        Product.GetUri(serviceProviderUri, serviceName, productName)
+               .AppendPath("apis");
+
+    public static ImmutableList<ApiName> ListFromFile(ProductApisFile file) =>
+        file.ReadAsJsonArray()
+            .Where(node => node is not null)
+            .Select(node => node!.AsObject())
+            .Select(jsonObject => jsonObject.GetStringProperty("name"))
+            .Select(ApiName.From)
+            .ToImmutableList();
+
+    public static IAsyncEnumerable<Models.Api> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, CancellationToken cancellationToken)
     {
+        var uri = ListUri(serviceProviderUri, serviceName, productName);
+        return getResources(uri, cancellationToken).Select(Api.Deserialize);
     }
 
-    public static ProductApiUri From(ProductUri productUri, ApiName apiName) =>
-        new(UriExtensions.AppendPath(productUri, "apis").AppendPath(apiName));
-}
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, productName, apiName);
+        await putResource(uri, new JsonObject(), cancellationToken);
+    }
 
-public sealed record ProductApi([property: JsonPropertyName("name")] string Name)
-{
-    public JsonObject ToJsonObject() =>
-        JsonSerializer.SerializeToNode(this)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
-
-    public static ProductApi FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<ProductApi>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
-
-    public static Uri GetListByProductUri(ProductUri productUri) => UriExtensions.AppendPath(productUri, "apis");
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, productName, apiName);
+        await deleteResource(uri, cancellationToken);
+    }
 }

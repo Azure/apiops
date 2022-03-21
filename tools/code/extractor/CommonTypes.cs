@@ -23,7 +23,7 @@ internal class NonAuthenticatedHttpClient
         this.client = client;
     }
 
-    public async Task<Stream> GetSuccessfulResponseStream(Uri uri, CancellationToken cancellationToken)
+    public async ValueTask<Stream> GetSuccessfulResponseStream(Uri uri, CancellationToken cancellationToken)
     {
         var response = await client.GetAsync(uri, cancellationToken);
 

@@ -1,8 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -13,24 +17,6 @@ public sealed record DiagnosticName : NonEmptyString
     }
 
     public static DiagnosticName From(string value) => new(value);
-
-    public static DiagnosticName From(DiagnosticInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var diagnostic = Diagnostic.FromJsonObject(jsonObject);
-
-        return new DiagnosticName(diagnostic.Name);
-    }
-}
-
-public sealed record DiagnosticUri : UriRecord
-{
-    public DiagnosticUri(Uri value) : base(value)
-    {
-    }
-
-    public static DiagnosticUri From(ServiceUri serviceUri, DiagnosticName diagnosticName) =>
-        new(UriExtensions.AppendPath(serviceUri, "diagnostics").AppendPath(diagnosticName));
 }
 
 public sealed record DiagnosticsDirectory : DirectoryRecord
@@ -109,94 +95,57 @@ public sealed record DiagnosticInformationFile : FileRecord
     }
 }
 
-public sealed record Diagnostic([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Diagnostic.DiagnosticContractProperties Properties)
+public static class Diagnostic
 {
-    public record DiagnosticContractProperties([property: JsonPropertyName("loggerId")] string LoggerId)
+    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, DiagnosticName diagnosticName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("diagnostics")
+               .AppendPath(diagnosticName);
+
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("diagnostics");
+
+    public static DiagnosticName GetNameFromFile(DiagnosticInformationFile file)
     {
-        [JsonPropertyName("alwaysLog")]
-        public string? AlwaysLog { get; init; }
+        var jsonObject = file.ReadAsJsonObject();
+        var diagnostic = Deserialize(jsonObject);
 
-        [JsonPropertyName("backend")]
-        public PipelineDiagnosticSettings? Backend { get; init; }
-
-        [JsonPropertyName("frontend")]
-        public PipelineDiagnosticSettings? Frontend { get; init; }
-
-        [JsonPropertyName("httpCorrelationProtocol")]
-        public string? HttpCorrelationProtocol { get; init; }
-
-        [JsonPropertyName("logClientIp")]
-        public bool? LogClientIp { get; init; }
-
-        [JsonPropertyName("operationNameFormat")]
-        public string? OperationNameFormat { get; init; }
-
-        [JsonPropertyName("sampling")]
-        public SamplingSettings? Sampling { get; init; }
-
-        [JsonPropertyName("verbosity")]
-        public string? Verbosity { get; init; }
+        return DiagnosticName.From(diagnostic.Name);
     }
 
-    public record PipelineDiagnosticSettings
-    {
-        [JsonPropertyName("request")]
-        public HttpMessageDiagnostic? Request { get; init; }
+    public static Models.Diagnostic Deserialize(JsonObject jsonObject) =>
+        JsonSerializer.Deserialize<Models.Diagnostic>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
 
-        [JsonPropertyName("response")]
-        public HttpMessageDiagnostic? Response { get; init; }
+    public static JsonObject Serialize(Models.Diagnostic diagnostic) =>
+        JsonSerializer.SerializeToNode(diagnostic, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
+
+    public static async ValueTask<Models.Diagnostic> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, DiagnosticName diagnosticName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, diagnosticName);
+        var json = await getResource(uri, cancellationToken);
+        return Deserialize(json);
     }
 
-    public record HttpMessageDiagnostic
+    public static IAsyncEnumerable<Models.Diagnostic> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
     {
-        [JsonPropertyName("body")]
-        public BodyDiagnosticSettings? Body { get; init; }
-
-        [JsonPropertyName("dataMasking")]
-        public DataMasking? DataMasking { get; init; }
-
-        [JsonPropertyName("headers")]
-        public string[]? Headers { get; init; }
+        var uri = ListUri(serviceProviderUri, serviceName);
+        return getResources(uri, cancellationToken).Select(Deserialize);
     }
 
-    public record BodyDiagnosticSettings
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Diagnostic diagnostic, CancellationToken cancellationToken)
     {
-        [JsonPropertyName("bytes")]
-        public int? Bytes { get; init; }
+        var name = DiagnosticName.From(diagnostic.Name);
+        var uri = GetUri(serviceProviderUri, serviceName, name);
+        var json = Serialize(diagnostic);
+        await putResource(uri, json, cancellationToken);
     }
 
-    public record DataMasking
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, DiagnosticName diagnosticName, CancellationToken cancellationToken)
     {
-        [JsonPropertyName("headers")]
-        public DataMaskingEntity[]? Headers { get; init; }
-
-        [JsonPropertyName("queryParams")]
-        public DataMaskingEntity[]? QueryParams { get; init; }
+        var uri = GetUri(serviceProviderUri, serviceName, diagnosticName);
+        await deleteResource(uri, cancellationToken);
     }
-
-    public record DataMaskingEntity
-    {
-        [JsonPropertyName("mode")]
-        public string? Mode { get; init; }
-
-        [JsonPropertyName("value")]
-        public string? Value { get; init; }
-    }
-
-    public record SamplingSettings
-    {
-        [JsonPropertyName("percentage")]
-        public double? Percentage { get; init; }
-
-        [JsonPropertyName("samplingType")]
-        public string? SamplingType { get; init; }
-    }
-
-    public JsonObject ToJsonObject() =>
-        JsonSerializer.SerializeToNode(this)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
-
-    public static Diagnostic FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Diagnostic>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
-
-    public static Uri GetListByServiceUri(ServiceUri serviceUri) => UriExtensions.AppendPath(serviceUri, "diagnostics");
 }

@@ -51,8 +51,6 @@ public sealed record RecordPath : NonEmptyString
 
     public RecordPath Append(string path) => new(Path.Combine(this, path));
 
-    //public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(this, path);
-
     public static RecordPath From(string value) => new(value);
 }
 
@@ -113,7 +111,6 @@ public abstract record FileRecord
     {
         using var stream = FileInfo.OpenRead();
         var options = new JsonNodeOptions { PropertyNameCaseInsensitive = true };
-
         return JsonNode.Parse(stream, options) ?? throw new InvalidOperationException($"Could not read JSON from file ${Path}.");
     }
 

@@ -1,8 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
@@ -13,14 +17,6 @@ public sealed record ProductName : NonEmptyString
     }
 
     public static ProductName From(string value) => new(value);
-
-    public static ProductName From(ProductInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var product = Product.FromJsonObject(jsonObject);
-
-        return new ProductName(product.Name);
-    }
 }
 
 public sealed record ProductDisplayName : NonEmptyString
@@ -30,24 +26,6 @@ public sealed record ProductDisplayName : NonEmptyString
     }
 
     public static ProductDisplayName From(string value) => new(value);
-
-    public static ProductDisplayName From(ProductInformationFile file)
-    {
-        var jsonObject = file.ReadAsJsonObject();
-        var product = Product.FromJsonObject(jsonObject);
-
-        return new ProductDisplayName(product.Properties.DisplayName);
-    }
-}
-
-public sealed record ProductUri : UriRecord
-{
-    public ProductUri(Uri value) : base(value)
-    {
-    }
-
-    public static ProductUri From(ServiceUri serviceUri, ProductName productName) =>
-        new(UriExtensions.AppendPath(serviceUri, "products").AppendPath(productName));
 }
 
 public sealed record ProductsDirectory : DirectoryRecord
@@ -126,29 +104,57 @@ public sealed record ProductInformationFile : FileRecord
     }
 }
 
-public sealed record Product([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("properties")] Product.ProductContractProperties Properties)
+public static class Product
 {
-    public record ProductContractProperties([property: JsonPropertyName("displayName")] string DisplayName)
+    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("products")
+               .AppendPath(productName);
+
+    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
+        Service.GetUri(serviceProviderUri, serviceName)
+               .AppendPath("products");
+
+    public static ProductName GetNameFromFile(ProductInformationFile file)
     {
-        [JsonPropertyName("approvalRequired")]
-        public bool? ApprovalRequired { get; init; }
-        [JsonPropertyName("description")]
-        public string? Description { get; init; }
-        [JsonPropertyName("state")]
-        public string? State { get; init; }
-        [JsonPropertyName("subscriptionRequired")]
-        public bool? SubscriptionRequired { get; init; }
-        [JsonPropertyName("subscriptionsLimit")]
-        public int? SubscriptionsLimit { get; init; }
-        [JsonPropertyName("terms")]
-        public string? Terms { get; init; }
+        var jsonObject = file.ReadAsJsonObject();
+        var product = Deserialize(jsonObject);
+
+        return ProductName.From(product.Name);
     }
 
-    public JsonObject ToJsonObject() =>
-        JsonSerializer.SerializeToNode(this)?.AsObject() ?? throw new InvalidOperationException("Could not serialize object.");
+    public static Models.Product Deserialize(JsonObject jsonObject) =>
+        JsonSerializer.Deserialize<Models.Product>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
 
-    public static Product FromJsonObject(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Product>(jsonObject) ?? throw new InvalidOperationException("Could not deserialize object.");
+    public static JsonObject Serialize(Models.Product product) =>
+        JsonSerializer.SerializeToNode(product, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
 
-    public static Uri GetListByServiceUri(ServiceUri serviceUri) => UriExtensions.AppendPath(serviceUri, "products");
+    public static async ValueTask<Models.Product> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, productName);
+        var json = await getResource(uri, cancellationToken);
+        return Deserialize(json);
+    }
+
+    public static IAsyncEnumerable<Models.Product> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
+    {
+        var uri = ListUri(serviceProviderUri, serviceName);
+        return getResources(uri, cancellationToken).Select(Deserialize);
+    }
+
+    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Product product, CancellationToken cancellationToken)
+    {
+        var name = ProductName.From(product.Name);
+        var uri = GetUri(serviceProviderUri, serviceName, name);
+        var json = Serialize(product);
+        await putResource(uri, json, cancellationToken);
+    }
+
+    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri, serviceName, productName);
+        await deleteResource(uri, cancellationToken);
+    }
 }
