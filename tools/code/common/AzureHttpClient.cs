@@ -8,7 +8,6 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -84,15 +83,6 @@ public class AzureHttpClient
         var request = pipeline.CreateRequest(RequestMethod.Delete, uri);
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
         response.ValidateSuccess();
-    }
-
-    public async ValueTask PutStream(Uri uri, Stream stream, CancellationToken cancellationToken)
-    {
-        var request = pipeline.CreateRequest(RequestMethod.Put, uri, stream);
-        var response = await pipeline.SendRequestAsync(request, cancellationToken);
-        response.ValidateSuccess();
-
-        await WaitForLongRunningOperation(response, cancellationToken);
     }
 
     private async ValueTask WaitForLongRunningOperation(Response response, CancellationToken cancellationToken)
