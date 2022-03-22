@@ -99,11 +99,11 @@ public class AzureHttpClient
     {
         var updatedResponse = response;
         while ((updatedResponse.Status == ((int)HttpStatusCode.Accepted))
-               && response.Headers.TryGetValue("Location", out var locationHeaderValue)
+               && updatedResponse.Headers.TryGetValue("Location", out var locationHeaderValue)
                && Uri.TryCreate(locationHeaderValue, UriKind.Absolute, out var locationUri)
                && locationUri is not null)
         {
-            if (response.Headers.TryGetValue("Retry-After", out var retryAfterString) && int.TryParse(retryAfterString, out var retryAfterSeconds))
+            if (updatedResponse.Headers.TryGetValue("Retry-After", out var retryAfterString) && int.TryParse(retryAfterString, out var retryAfterSeconds))
             {
                 var retryAfterDuration = TimeSpan.FromSeconds(retryAfterSeconds);
                 await Task.Delay(retryAfterDuration, cancellationToken);
