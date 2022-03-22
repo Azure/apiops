@@ -6,7 +6,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -73,6 +75,8 @@ public class AzureHttpClient
         var request = pipeline.CreateRequest(RequestMethod.Put, uri, jsonObject);
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
         response.ValidateSuccess();
+
+        await WaitForLongRunningOperation(response, cancellationToken);
     }
 
     public async ValueTask DeleteResource(Uri uri, CancellationToken cancellationToken)
@@ -87,6 +91,32 @@ public class AzureHttpClient
         var request = pipeline.CreateRequest(RequestMethod.Put, uri, stream);
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
         response.ValidateSuccess();
+
+        await WaitForLongRunningOperation(response, cancellationToken);
+    }
+
+    private async ValueTask WaitForLongRunningOperation(Response response, CancellationToken cancellationToken)
+    {
+        var updatedResponse = response;
+        while ((updatedResponse.Status == ((int)HttpStatusCode.Accepted))
+               && response.Headers.TryGetValue("Location", out var locationHeaderValue)
+               && Uri.TryCreate(locationHeaderValue, UriKind.Absolute, out var locationUri)
+               && locationUri is not null)
+        {
+            if (response.Headers.TryGetValue("Retry-After", out var retryAfterString) && int.TryParse(retryAfterString, out var retryAfterSeconds))
+            {
+                var retryAfterDuration = TimeSpan.FromSeconds(retryAfterSeconds);
+                await Task.Delay(retryAfterDuration, cancellationToken);
+            }
+            else
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            }
+
+            var request = pipeline.CreateRequest(RequestMethod.Get, locationUri);
+            updatedResponse = await pipeline.SendRequestAsync(request, cancellationToken);
+            updatedResponse.ValidateSuccess();
+        }
     }
 }
 
