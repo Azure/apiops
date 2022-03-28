@@ -38,9 +38,9 @@ internal enum CommitStatus
 
 internal static class Git
 {
-    public static async Task<string> GetPreviousCommitContents(CommitId commitId, FileInfo file, DirectoryInfo baseDirectory)
+    public static async Task<string> GetPreviousCommitContents(CommitId commitId, FileInfo file)
     {
-        var gitRootDirectoryPath = await GetGitRootDirectoryPath(baseDirectory);
+        var gitRootDirectoryPath = await GetGitRootDirectoryPath(file);
         var relativePath = Path.GetRelativePath(gitRootDirectoryPath, file.FullName);
         var command = Command.Run("git", "-C", gitRootDirectoryPath, "show", $"{commitId}^1:{relativePath}");
         var commandResult = await command.Task;
@@ -60,14 +60,15 @@ internal static class Git
         }
     }
 
-    private static async Task<string> GetGitRootDirectoryPath(DirectoryInfo directory)
+    private static async Task<string> GetGitRootDirectoryPath(FileInfo file)
     {
-        var command = Command.Run("git", "-C", directory.FullName, "rev-parse", "--show-toplevel");
+        var fileDirectoryPath = file.Directory?.FullName ?? throw new NullReferenceException($"File {file.FullName} has a null directory.");
+        var command = Command.Run("git", "-C", fileDirectoryPath, "rev-parse", "--show-toplevel");
         var commandResult = await command.Task;
 
         return commandResult.Success
             ? commandResult.StandardOutput
-            : throw new InvalidOperationException($"Failed to get root Git directory for {directory.FullName}. Error message is '{commandResult.StandardError}'.");
+            : throw new InvalidOperationException($"Failed to get root Git directory for {file.FullName}. Error message is '{commandResult.StandardError}'.");
     }
 
     private static async Task<string> GetDiffTreeOutput(CommitId commitId, DirectoryInfo baseDirectory)

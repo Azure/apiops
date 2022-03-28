@@ -367,7 +367,7 @@ internal class Creator : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        var fileText = await Git.GetPreviousCommitContents(commitId, file);
         var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
         var name = GatewayName.From(Gateway.Deserialize(json).Name);
 
@@ -494,7 +494,7 @@ internal class Creator : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        var fileText = await Git.GetPreviousCommitContents(commitId, file);
         var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
         var name = LoggerName.From(Logger.Deserialize(json).Name);
 
@@ -543,7 +543,7 @@ internal class Creator : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        var fileText = await Git.GetPreviousCommitContents(commitId, file);
         var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
         var name = DiagnosticName.From(Diagnostic.Deserialize(json).Name);
 
@@ -601,7 +601,7 @@ internal class Creator : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        var fileText = await Git.GetPreviousCommitContents(commitId, file);
         var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
         var name = NamedValueName.From(NamedValue.Deserialize(json).Name);
 
@@ -656,7 +656,7 @@ internal class Creator : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        var fileText = await Git.GetPreviousCommitContents(commitId, file);
         var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
         var name = ProductName.From(Product.Deserialize(json).Name);
 
@@ -824,7 +824,7 @@ internal class Creator : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        var fileText = await Git.GetPreviousCommitContents(commitId, file);
         var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
         var name = ApiName.From(Api.Deserialize(json).Name);
 
