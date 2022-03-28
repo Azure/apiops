@@ -40,7 +40,7 @@ internal static class Git
 {
     public static async Task<string> GetPreviousCommitContents(CommitId commitId, FileInfo file, DirectoryInfo baseDirectory)
     {
-        var gitRootDirectoryPath = await GetGitRootDirectory(baseDirectory);
+        var gitRootDirectoryPath = await GetGitRootDirectoryPath(baseDirectory);
         var relativePath = Path.GetRelativePath(gitRootDirectoryPath, file.FullName);
         var command = Command.Run("git", "-C", gitRootDirectoryPath, "show", $"{commitId}^1:{relativePath}");
         var commandResult = await command.Task;
@@ -60,7 +60,7 @@ internal static class Git
         }
     }
 
-    private static async Task<string> GetGitRootDirectory(DirectoryInfo directory)
+    private static async Task<string> GetGitRootDirectoryPath(DirectoryInfo directory)
     {
         var command = Command.Run("git", "-C", directory.FullName, "rev-parse", "--show-toplevel");
         var commandResult = await command.Task;
