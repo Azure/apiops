@@ -66,7 +66,7 @@ internal static class Git
         var commandResult = await command.Task;
 
         return commandResult.Success
-            ? commandResult.StandardOutput
+            ? commandResult.StandardOutput.Trim()
             : throw new InvalidOperationException($"Failed to get root Git directory for {directory.FullName}. Error message is '{commandResult.StandardError}'.");
     }
 
