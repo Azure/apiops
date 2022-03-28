@@ -40,8 +40,9 @@ internal static class Git
 {
     public static async Task<string> GetPreviousCommitContents(CommitId commitId, FileInfo file, DirectoryInfo baseDirectory)
     {
-        var relativePath = Path.GetRelativePath(baseDirectory.FullName, file.FullName);
-        var command = Command.Run("git", "-C", baseDirectory.FullName, "show", $"{commitId}^1:{relativePath}");
+        var gitRootDirectoryPath = await GetRootGitDirectory(baseDirectory);
+        var relativePath = Path.GetRelativePath(gitRootDirectoryPath, file.FullName);
+        var command = Command.Run("git", "-C", gitRootDirectoryPath, "show", $"{commitId}^1:{relativePath}");
         var commandResult = await command.Task;
 
         return commandResult.Success
@@ -57,6 +58,16 @@ internal static class Git
         {
             yield return grouping;
         }
+    }
+
+    private static async Task<string> GetGitRootDirectory(DirectoryInfo directory)
+    {
+        var command = Command.Run("git", "-C", directory.FullName, "rev-parse", "--show-toplevel");
+        var commandResult = await command.Task;
+
+        return commandResult.Success
+            ? commandResult.StandardOutput
+            : throw new InvalidOperationException($"Failed to get root Git directory for {directory.FullName}. Error message is '{commandResult.StandardError}'.");
     }
 
     private static async Task<string> GetDiffTreeOutput(CommitId commitId, DirectoryInfo baseDirectory)
