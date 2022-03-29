@@ -82,9 +82,10 @@ while (("$#")); do
             overwrite_subfolder=$2
             shift 2
         else
-            overwrite_subfolder=""
+            echo "Error: Argument for $1 is missing" >&2
             exit 1
         fi
+      
         ;;
     -*) # unsupported flags
         echo "Error: Unsupported flag $1" >&2
@@ -97,7 +98,7 @@ while (("$#")); do
     esac
 done
 eval set -- "$PARAMS"
-set -eu -o pipefail
+set -e -o pipefail
 
 echo "Installing Azure DevOps extension..."
 az extension add --name "azure-devops"
@@ -114,10 +115,10 @@ git clone --branch "${branch_name}" --depth 1 "${authenticated_clone_url}" "${te
 echo "Creating temporary branch ${temporary_branch_name} from ${branch_name}..."
 git -C "${temporary_folder_path}" checkout -b "${temporary_branch_name}" "${branch_name}"
 
-if [ -n "$overwrite_subfolder" ] && [ -d "${temporary_folder_path:?}/${overwrite_subfolder:?}" ]; then
-    echo "Overwrite folder set to $overwrite_subfolder; deleting its contents..."
-    rm -rfv "${temporary_folder_path:?}/${overwrite_subfolder:?}"/*
-fi
+
+echo "Overwrite folder set to $overwrite_subfolder; deleting its contents..."
+rm -rfv "${temporary_folder_path:?}/${overwrite_subfolder:?}"/*
+
 
 echo "Copying source folder ${source_folder_path} contents to temporary folder ${temporary_folder_path}..."
 cp -r "${source_folder_path}"/* "${temporary_folder_path}"/
