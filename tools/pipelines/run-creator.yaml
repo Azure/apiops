@@ -1,14 +1,16 @@
-trigger: none
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+    - tools/*
 
-resources:
-  repositories:
-    - repository: apim-artifacts
-      type: git
-      name: apim-artifacts
-      trigger:
-        branches:
-          include:
-            - main
+parameters:
+  - name: API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH
+    type: string
+    displayName: Folder where the artifacts reside
+    default: "artifacts"
 
 variables:
   - group: apim-automation
@@ -16,56 +18,39 @@ variables:
     value: true
 
 stages:
-  - stage: push_changes_to_azure
-    displayName: Push changes to Azure
+  - stage: push_changes_to_Dev_APIM
+    displayName: Push changes to Dev APIM
     jobs:
-      - job: push_changes_to_azure
-        displayName: Push changes to Azure
+      - job: push_changes_to_Dev_APIM
+        displayName: Push changes to Dev APIM
         pool:
           vmImage: ubuntu-latest
         steps:
-          - checkout: self
-          - checkout: apim-artifacts
-          - task: UniversalPackages@0
-            displayName: Download creator
-            inputs:
-              downloadDirectory: '$(Pipeline.Workspace)/creator'
-              vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
-              vstsFeedPackage: 'creator'
-              vstsPackageVersion: '*'
-          - task: AzureCLI@2
-            displayName: Set creation variables
-            inputs:
-              azureSubscription: "$(SERVICE_CONNECTION_NAME)"
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                echo "##vso[task.setvariable issecret=true;variable=AZURE_BEARER_TOKEN]$(az account get-access-token --query "accessToken" --output tsv)"
-                echo "##vso[task.setvariable issecret=true;variable=AZURE_CLIENT_ID]$servicePrincipalId"
-                echo "##vso[task.setvariable issecret=true;variable=AZURE_CLIENT_SECRET]$servicePrincipalKey"
-                echo "##vso[task.setvariable issecret=true;variable=AZURE_TENANT_ID]$tenantId"
-                echo "##vso[task.setvariable issecret=true;variable=AZURE_SUBSCRIPTION_ID]$(az account show --query "id" --output tsv)"
-              addSpnToEnvironment: true
-              failOnStandardError: true
-          - task: AzureCLI@2
-            displayName: Run creator
-            inputs:
-              azureSubscription: "$(SERVICE_CONNECTION_NAME)"
-              scriptType: bash
-              scriptLocation: inlineScript
-              inlineScript: |
-                chmod u+x $(Pipeline.Workspace)/creator/creator
-                $(Pipeline.Workspace)/creator/creator
-                echo "Exit code is $?"
-                exit $?
-              addSpnToEnvironment: true
-              failOnStandardError: true
-            env:
-              AZURE_BEARER_TOKEN: $(AZURE_BEARER_TOKEN)
-              AZURE_CLIENT_ID: $(AZURE_CLIENT_ID)
-              AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
-              AZURE_TENANT_ID: $(AZURE_TENANT_ID)
-              AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
-              AZURE_RESOURCE_GROUP_NAME: $(RESOURCE_GROUP_NAME)
-              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: $(Build.SourcesDirectory)/$(Build.Repository.Name)
-              COMMIT_ID: $(Build.SourceVersion)
+          - template: apim-stage.yaml
+            parameters:
+              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+              RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME)
+              ENVIRONMRNT: "Dev"
+  - stage: push_changes_to_Prod_APIM
+    displayName: Push changes to Prod APIM
+    jobs:
+      - deployment: push_changes_to_Prod_APIM
+        displayName: Push changes to Prod APIM
+        pool:
+          vmImage: ubuntu-latest
+        # creates an environment if it doesn't exist
+        environment: 'Prod'
+        strategy:
+          # default deployment strategy, more coming...
+          runOnce:
+            deploy:
+               steps:
+                 - template: apim-stage.yaml
+                   parameters:
+                     API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+                     RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME_Prod)
+                     CONFIGURATION_YAML_PATH:  $(Build.SourcesDirectory)/configuration.prod.yaml
+                     ENVIRONMRNT: "Prod"
+              
+                  
+              
