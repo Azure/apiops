@@ -1,9 +1,10 @@
 name: Run - Creator
-
+     
 on:
+   # Triggers the workflow on pull request events but only for the main branch
   pull_request:
-    types:
-      - closed  
+    branches: [ main ]
+    types: [closed]
     
 jobs:
   get-commit:
