@@ -1,61 +1,47 @@
-# This is a basic workflow to help you get started with Actions
-
 name: Run - Creator
 
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the main branch
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
+    types:
+      - closed  
     
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-
-env:
-  AZURE_RESOURCE_GROUP_NAME: your-apim-resourceGroupName  # Replace this value with your resource group name
-  API_MANAGEMENT_SERVICE_NAME: your-apim-instanceName  # Replace this value with yourapim instance name 
-
-  TMPDIR: "./"
-  
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  get-commit:
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-      
       # Set the COMMIT_ID env variable
       - name: Set the Commit Id
+        id: commit
         run: |
-          echo "COMMIT_ID=$(echo $GITHUB_SHA)" >> $GITHUB_ENV
-          
-      # Download the Creator binary
-      - name: Download artifact
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          workflow: publish-creator.yml
-          name: creator
-          repo: YourGithubOrg/yourGithubApiToolsRepo
-
-      - name: Run creator
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_RESOURCE_GROUP_NAME: ${{ env.AZURE_RESOURCE_GROUP_NAME }}
-          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: "."
-          COMMIT_ID: ${{ env.COMMIT_ID }}
-        run: |
-          chmod +x ./creator
-          ./creator
+          echo "::set-output name=commit_id::${GITHUB_SHA}"
+    outputs:
+          commit_id: ${{ steps.commit.outputs.commit_id }}
+  create-dev:
+    needs: get-commit
+    uses: ./.github/workflows/run-creator-with-env.yaml
+    with:
+      API_MANAGEMENT_ENVIRONMENT: dev # change this to match the dev environment created in settings
+      COMMIT_ID: ${{ needs.get-commit.outputs.commit_id }} 
+      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}   
+      AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+      API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
+  create-prod:
+    needs: [get-commit, create-dev]
+    uses: ./.github/workflows/run-creator-with-env.yaml
+    with:
+      API_MANAGEMENT_ENVIRONMENT: prod # change this to match the prod environment created in settings
+      CONFIGURATION_YAML_PATH: configuration.prod.yaml # make sure the file is available at the root
+      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder
+      COMMIT_ID: ${{ needs.get-commit.outputs.commit_id }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+      API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }} 
