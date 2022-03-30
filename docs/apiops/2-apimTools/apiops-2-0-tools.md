@@ -51,5 +51,6 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | AZURE_SUBSCRIPTION_ID | Subscription ID of the APIM instance to be updated |
 | AZURE_RESOURCE_GROUP_NAME | Resource group name of the APIM instance to be updated |
 | API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH | Folder where the APIM artifacts are located |
+| CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to override configuration (e.g. policy backend value or namevalue pair) when promoting across APIM environments (e.g. dev -> qa -> prod). You will need a unique Yaml configuration file per environment  (e.g. configuration.prod.yaml for production).  |
 | AZURE_BEARER_TOKEN | Token for authentication to Azure. If this is not specified, the tool authenticate with  the [``DefaultAzureCredential``](https://docs.microsoft.com/en-us/dotnet/api/azure.identity.defaultazurecredential?view=azure-dotnet). |
 | COMMIT_ID | Git commit ID. If specified, the tool will only use files that were affected by that commit. New/modified files will be updated in Azure, and deleted artifacts will be removed from the Azure APIM instance. If unspecified, the tool will do a Put operation on the Azure APIM instance with all files in the artifacts folder. |
