@@ -17,7 +17,7 @@ This repo has a github codespace dev container defined, this container is based 
 
 - Wait for the container to build and connect to it
 - Understand the folder structure of the Repo:
-    - "apim-lab" folder , contains all the mark down documentation files for all the challenges
+    - "apiops" folder , contains all the mark down documentation files for all the challenges
     - "assets" folder, contains all the images, slides, and files used in the lab
 - Understand the index, title, and child metadata used by [just-the-docs theme](https://pmarsceill.github.io/just-the-docs/docs/navigation-structure/#ordering-pages) 
 - Run the website in github codespaces using the built-in task:

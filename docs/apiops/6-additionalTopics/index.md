@@ -1,5 +1,5 @@
 ---
-title: Contributing
+title: Additional Topics
 has_children: true
 nav_order: 7
 ---
