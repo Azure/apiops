@@ -16,6 +16,16 @@ parameters:
 steps:
 - script: echo Provided configuration was ${{ parameters.CONFIGURATION_YAML_PATH }}
 
+- task: Npm@1
+  displayName: 'Installing Stoplight Spectral.'
+  inputs:
+    command: custom   
+    verbose: false
+    customCommand: 'install -g @stoplight/spectral'
+
+- script: spectral lint "$(Build.Repository.Name)\artifacts\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
+  displayName: 'Lint API definition' 
+
 - checkout: self
 - task: UniversalPackages@0
   displayName: Download publisher

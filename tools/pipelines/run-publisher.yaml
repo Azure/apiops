@@ -31,15 +31,6 @@ stages:
               API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
               RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME)
               ENVIRONMRNT: "Dev"
-          - task: Npm@1
-            displayName: 'Installing Stoplight Spectral.'
-            inputs:
-              command: custom   
-              verbose: false
-              customCommand: 'install -g @stoplight/spectral'
-          - script: spectral lint "$(Build.Repository.Name)\artifacts\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
-            displayName: 'Lint API definition' 
-
   - stage: push_changes_to_Prod_APIM
     displayName: Push changes to Prod APIM
     jobs:
