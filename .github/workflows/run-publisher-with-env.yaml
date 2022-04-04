@@ -39,15 +39,15 @@ jobs:
         with:
           fetch-depth: 2
           
-      # Download the Creator binary
+      # Download the Publisher binary
       - name: Download artifact
         uses: dawidd6/action-download-artifact@v2
         with:
           github_token: ${{secrets.GITHUB_TOKEN}}
-          workflow: publish-creator.yaml
-          name: creator         
+          workflow: publish-publisher.yaml
+          name: publisher         
 
-      - name: Run creator without Config Yaml
+      - name: Run publisher without Config Yaml
         if: ${{ inputs.CONFIGURATION_YAML_PATH == '' }}
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -58,10 +58,10 @@ jobs:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
           COMMIT_ID: ${{ inputs.COMMIT_ID }}
         run: |
-          chmod +x ./creator
-          ./creator        
+          chmod +x ./publisher
+          ./publisher        
           
-      - name: Run creator with Config Yaml
+      - name: Run publisher with Config Yaml
         if: ${{ inputs.CONFIGURATION_YAML_PATH != '' }}
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -73,5 +73,5 @@ jobs:
           CONFIGURATION_YAML_PATH:  ${{ GITHUB.WORKSPACE }}/${{ inputs.CONFIGURATION_YAML_PATH }}
           COMMIT_ID: ${{ inputs.COMMIT_ID }}
         run: |
-          chmod +x ./creator
-          ./creator             
+          chmod +x ./publisher
+          ./publisher             

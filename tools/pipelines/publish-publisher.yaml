@@ -2,7 +2,7 @@ trigger:
   paths:
     include:
       - code/common
-      - code/creator
+      - code/publisher
 
 variables:
   - group: apim-automation
@@ -28,7 +28,7 @@ stages:
             inputs:
               command: publish
               publishWebProjects: false
-              projects: '$(Build.SourcesDirectory)/tools/code/creator/creator.csproj'
+              projects: '$(Build.SourcesDirectory)/tools/code/publisher/publisher.csproj'
               arguments: '--output $(Build.ArtifactStagingDirectory) --runtime linux-x64 -p:PublishSingleFile=true'
               modifyOutputPath: false
               zipAfterPublish: false
@@ -37,5 +37,5 @@ stages:
             inputs:
               command: publish
               vstsFeedPublish: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
-              vstsFeedPackagePublish: creator
-              packagePublishDescription: 'APIM creator tool'
+              vstsFeedPackagePublish: publisher
+              packagePublishDescription: 'APIM publisher tool'

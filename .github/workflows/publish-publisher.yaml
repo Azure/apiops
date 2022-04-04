@@ -24,12 +24,12 @@ jobs:
         with:
           dotnet-version: 6.0.x
           include-prerelease: true
-      - name: Build creator .bin
+      - name: Build publisher .bin
         run: |
-          cd tools/code/creator/
-          dotnet publish ./creator.csproj --self-contained --runtime linux-x64 -p:PublishSingleFile=true -o creator
+          cd tools/code/publisher/
+          dotnet publish ./publisher.csproj --self-contained --runtime linux-x64 -p:PublishSingleFile=true -o publisher
       - name: publish artifact
         uses: actions/upload-artifact@v2
         with:
-          name: creator
-          path: tools/code/creator/creator/creator
+          name: publisher
+          path: tools/code/publisher/publisher/publisher

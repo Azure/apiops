@@ -1,4 +1,4 @@
-﻿namespace creator;
+﻿namespace publisher;
 
 internal record ConfigurationModel
 {

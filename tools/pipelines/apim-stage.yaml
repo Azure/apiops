@@ -20,12 +20,12 @@ steps:
 - task: UniversalPackages@0
   displayName: Download publisher
   inputs:
-    downloadDirectory: '$(Pipeline.Workspace)/creator'
+    downloadDirectory: '$(Pipeline.Workspace)/publisher'
     vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
-    vstsFeedPackage: 'creator'
+    vstsFeedPackage: 'publisher'
     vstsPackageVersion: '*'
 - task: AzureCLI@2
-  displayName: Set creation variables
+  displayName: Set publishing variables
   inputs:
     azureSubscription: "$(SERVICE_CONNECTION_NAME)"
     scriptType: bash
@@ -45,8 +45,8 @@ steps:
     scriptType: bash
     scriptLocation: inlineScript
     inlineScript: |
-      chmod u+x $(Pipeline.Workspace)/creator/creator
-      $(Pipeline.Workspace)/creator/creator
+      chmod u+x $(Pipeline.Workspace)/publisher/publisher
+      $(Pipeline.Workspace)/publisher/publisher
       result=$?
       echo "Exit code is $result"
       exit $result

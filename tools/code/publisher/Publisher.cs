@@ -13,9 +13,9 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace creator;
+namespace publisher;
 
-internal class Creator : BackgroundService
+internal class Publisher : BackgroundService
 {
     private readonly IHostApplicationLifetime applicationLifetime;
     private readonly ILogger logger;
@@ -28,7 +28,7 @@ internal class Creator : BackgroundService
     private readonly ServiceName serviceName;
     private readonly CommitId? commitId;
 
-    public Creator(IHostApplicationLifetime applicationLifetime, ILogger<Creator> logger, IConfiguration configuration, AzureHttpClient azureHttpClient)
+    public Publisher(IHostApplicationLifetime applicationLifetime, ILogger<Publisher> logger, IConfiguration configuration, AzureHttpClient azureHttpClient)
     {
         this.applicationLifetime = applicationLifetime;
         this.logger = logger;

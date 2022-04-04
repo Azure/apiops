@@ -8,7 +8,7 @@ using Microsoft.Extensions.Hosting;
 using System;
 using System.Threading.Tasks;
 
-namespace creator;
+namespace publisher;
 
 public static class Program
 {
@@ -42,7 +42,7 @@ public static class Program
         services.AddSingleton(GetAzureEnvironment)
                 .AddTransient(GetTokenCredential)
                 .AddSingleton<AzureHttpClient>()
-                .AddHostedService<Creator>();
+                .AddHostedService<Publisher>();
     }
 
     private static AzureEnvironment GetAzureEnvironment(IServiceProvider provider) =>
