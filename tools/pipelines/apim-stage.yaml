@@ -18,7 +18,7 @@ steps:
 
 - checkout: self
 - task: UniversalPackages@0
-  displayName: Download creator
+  displayName: Download publisher
   inputs:
     downloadDirectory: '$(Pipeline.Workspace)/creator'
     vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
@@ -39,7 +39,7 @@ steps:
     addSpnToEnvironment: true
     failOnStandardError: true
 - task: AzureCLI@2
-  displayName: Run creator for ${{ parameters.ENVIRONMRNT}} environment
+  displayName: Run publisher for ${{ parameters.ENVIRONMRNT}} environment
   inputs:
     azureSubscription: "$(SERVICE_CONNECTION_NAME)"
     scriptType: bash

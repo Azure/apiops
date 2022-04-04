@@ -10,11 +10,11 @@ variables:
     value: true
 
 stages:
-  - stage: publish_creator
-    displayName: Publish creator
+  - stage: publish_publisher
+    displayName: Publish publisher
     jobs:
-      - job: publish_creator
-        displayName: Publish creator
+      - job: publish_publisher
+        displayName: Publish publisher
         pool:
           vmImage: ubuntu-latest
         steps:
@@ -33,7 +33,7 @@ stages:
               modifyOutputPath: false
               zipAfterPublish: false
           - task: UniversalPackages@0
-            displayName: Publish creator artifact
+            displayName: Publish publisher artifact
             inputs:
               command: publish
               vstsFeedPublish: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
