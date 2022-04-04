@@ -1,5 +1,5 @@
 
-name: run-creator-with-env
+name: run-publisher-with-env
 
 on:
   workflow_call:
