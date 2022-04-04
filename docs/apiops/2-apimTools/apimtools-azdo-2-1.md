@@ -30,5 +30,5 @@ nav_order: 1
 8. Create a new pipeline based on [**publish-extractor.yaml**](../../../tools/pipelines/publish-extractor.yaml). This pipeline will compile the extractor tool whenever it's updated and publish it as a package in Azure DevOps Artifacts.
 ![extractor pipeline](../../assets/images/extractor_pipeline.png)
 9. Run the pipeline.
-10. Create a new pipeline based on [**publish-creator.yaml**](../../../tools/pipelines/publish-creator.yaml). This pipeline will compile the creator tool whenever it's updated and publish it as a package in Azure DevOps Artifacts.
+10. Create a new pipeline based on [**publish-publisher.yaml**](../../../tools/pipelines/publish-publisher.yaml). This pipeline will compile the publisher tool whenever it's updated and publish it as a package in Azure DevOps Artifacts.
 11. Run the pipeline.

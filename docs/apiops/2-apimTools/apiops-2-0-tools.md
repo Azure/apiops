@@ -5,10 +5,10 @@ has_children: false
 nav_order: 0
 ---
 
-This section describes the extractor and creator components which form the core tools used to deploy and publish changes using APIOps.
+This section describes the extractor and publisher components which form the core tools used to deploy and publish changes using APIOps.
 
 ## Extractor
-The extractor generates APIOps artifacts from an existing APIM instance. These artifacts can then be used as the source of truth for your APIM environment; make changes to them and have a CI/CD process update your Azure environment (with the creator tool, for instance).
+The extractor generates APIOps artifacts from an existing APIM instance. These artifacts can then be used as the source of truth for your APIM environment; make changes to them and have a CI/CD process update your Azure environment (with the publisher tool, for instance).
 
 ### Parameters
 The tool expects certain configuration parameters. These can be passed as environment variables, command line arguments, etc. It will look for variables using the [``Host.CreateDefaultBuilder(arguments)``](https://docs.microsoft.com/en-us/dotnet/api/microsoft.extensions.hosting.host.createdefaultbuilder?view=dotnet-plat-ext-6.0#Microsoft_Extensions_Hosting_Host_CreateDefaultBuilder_System_String___) settings. Here are the expected parameters:
@@ -41,8 +41,8 @@ The extractor will export the artifacts listed below.
 | API policy | ./apis/``api_display_name``/policy.xml |
 | Operation policy | ./apis/``api_display_name``/operations/``operation_display_name``/policy.xml |
 
-## Creator
-The creator tool updates the Azure APIM instance with the artifact folder contents. If a commit ID is specified in the parameters, it will update the instance with only files that were changed by the commit.
+## Publisher
+The Publisher tool updates the Azure APIM instance with the artifact folder contents. If a commit ID is specified in the parameters, it will update the instance with only files that were changed by the commit.
 ### Parameters
 The tool expects certain configuration parameters. These can be passed as environment variables, command line arguments, etc. It will look for variables using the [``Host.CreateDefaultBuilder(arguments)``](https://docs.microsoft.com/en-us/dotnet/api/microsoft.extensions.hosting.host.createdefaultbuilder?view=dotnet-plat-ext-6.0#Microsoft_Extensions_Hosting_Host_CreateDefaultBuilder_System_String___) settings. Here are the expected parameters:
 

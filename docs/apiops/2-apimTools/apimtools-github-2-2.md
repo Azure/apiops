@@ -26,5 +26,5 @@ nav_order: 2
 5. Repeat the same process for the production apim instance (remember to use the information from the json object generated for the production apim instance in the service principal command above). Also for hte production environment we will need to add a protection rule to ensure that the production stage only gets triggered after manual approval. Here is the completed production environment settings with one reviewer selected. Its recommended you have at least two approvers in an enterpirse setting. ![github prod environment](../../assets/images/github_prod_environment.png)
 6. Here are the two completed environments: ![github environment](../../assets/images/Github_Environments.png)
 
-7. Next head to the actions section within your repository and manually run the "Publish - Creator" and "Publish - Extractor" workflows. This will generate the binaires which will be utilized later on by the Extractor and Creator runners. ![pipeline variable group](../../assets/images/GithubActionsPublishers.png)
+7. Next head to the actions section within your repository and manually run the "Publish - Publisher" and "Publish - Extractor" workflows. This will generate the binaires which will be utilized later on by the Extractor and Publisher runners. ![pipeline variable group](../../assets/images/GithubActionsPublishers.png)
 
