@@ -7,6 +7,8 @@ nav_order: 2
 
  
 ## Configure APIM tools in GitHub
+
+
 1. Create a new Github repository. We will refer to it as **apiops** in this tutorial.
 2. Copy the "code" and "utils" folder from the [**tools**](../../../tools/) folder to the tools folder under this new repository (ignore the pipelines folder as its only relevant if you are using Azure DevOps). Copy the .github/worflows folder from the [**.github/workflows**](https://github.com/Azure/apiops/tree/main/.github/workflows) folder to .github/workflows folder under this new repository. Your folder structure should look like this:
     - your-repo-name
@@ -23,5 +25,6 @@ nav_order: 2
 4.  To create an environment you will need to head to the settings menu in your Github repository and crete an environment called dev. Then add 6 secrets (4 from the command you issued above in addition to the apim instance name and resource group). Make sure to use the same names shown below as they will be referenced within the different workflows. ![github dev environment](../../assets/images/github_dev_environment.png)
 5. Repeat the same process for the production apim instance (remember to use the information from the json object generated for the production apim instance in the service principal command above). Also for hte production environment we will need to add a protection rule to ensure that the production stage only gets triggered after manual approval. Here is the completed production environment settings with one reviewer selected. Its recommended you have at least two approvers in an enterpirse setting. ![github prod environment](../../assets/images/github_prod_environment.png)
 6. Here are the two completed environments: ![github environment](../../assets/images/Github_Environments.png)
+
 7. Next head to the actions section within your repository and manually run the "Publish - Publisher" and "Publish - Extractor" workflows. This will generate the binaires which will be utilized later on by the Extractor and Publisher runners. ![pipeline variable group](../../assets/images/GithubActionsPublishers.png)
 

@@ -42,7 +42,7 @@ nav_order: 3
     ![](../../assets/images/10_VSCode_API_Changes_Extension.png)
 
     ![](../../assets/images/11_VSCode_API_Changes_Extension.png)
-12. Once the changes have been merged into main it kicks off the run-creator pipeline
+12. Once the changes have been merged into main it kicks off the run-publisher pipeline
 
     ![](../../assets/images/12_VSCode_API_Changes_Extension.png)
 
