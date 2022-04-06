@@ -7,15 +7,8 @@ nav_order: 1
 
 
 ## Configure APIM tools in Azure DevOps
-
-<<<<<<< HEAD
 1. Create a new project in Azure DevOps for this tutorial (optional). We will refer to it as **apiops** in this tutorial
 2. Publish the [**tools**](../../../tools/) folder to this new repository. Your folder structure should look like:
-=======
-1. Create a new project in Azure DevOps for this tutorial (optional).
-2. Create a new repository to hold the tools code. We will refer to it as **apim-tools** in this tutorial.
-3. Copy the [**tools**](https://github.com/Azure/apiops/tree/main/tools) folder  to this new repository. Your folder structure should look like this:
->>>>>>> main
     - your-repo-name
         - tools
             - code
@@ -23,11 +16,7 @@ nav_order: 1
             - pipelines
                 - ...
             - utils
-<<<<<<< HEAD
 3. [Create an Azure Artifacts feed](https://docs.microsoft.com/en-us/azure/devops/artifacts/concepts/feeds?view=azure-devops#create-a-feed). We will use the name **apim-tools** in this tutorial.
-=======
-4. [Create an Azure Artifacts feed](https://docs.microsoft.com/en-us/azure/devops/artifacts/concepts/feeds?view=azure-devops#create-a-feed). We will use the name **apim-tools** in this tutorial.
->>>>>>> main
 ![artifacts_feed](../../assets/images/artifacts_feed.png)
 4. [Create a pipeline variable group](https://docs.microsoft.com/en-us/azure/devops/pipelines/library/variable-groups?view=azure-devops&tabs=classic#create-a-variable-group) called **apim-automation**. In that group, add these variables:
     - **ARTIFACTS_FEED_NAME** and for its value, enter the name of the artifacts feed you just created.
