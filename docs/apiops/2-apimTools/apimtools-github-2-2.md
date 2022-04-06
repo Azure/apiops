@@ -10,7 +10,7 @@ nav_order: 2
 
 
 1. Create a new Github repository. We will refer to it as **apiops** in this tutorial.
-2. Copy the "code" and "utils" folder from the [**tools**](../../../tools/) folder to the tools folder under this new repository (ignore the pipelines folder as its only relevant if you are using Azure DevOps). Copy the .github/worflows folder from the [**.github/workflows**](https://github.com/Azure/apiops/tree/main/.github/workflows) folder to .github/workflows folder under this new repository. Your folder structure should look like this:
+2. Copy the "code" and "utils" folder from the [**tools**](https://github.com/Azure/apiops/tree/main/tools) folder to the tools folder under this new repository (ignore the pipelines folder as its only relevant if you are using Azure DevOps). Copy the .github/worflows folder from the [**.github/workflows**](https://github.com/Azure/apiops/tree/main/.github/workflows) folder to .github/workflows folder under this new repository. Your folder structure should look like this:
     - your-repo-name
         - .github/workflows
             - ...
