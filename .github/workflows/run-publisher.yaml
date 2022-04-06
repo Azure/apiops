@@ -1,0 +1,48 @@
+name: Run - Publisher
+     
+on:
+   # Triggers the workflow on pull request events but only for the main branch
+  pull_request:
+    branches: [ main ]
+    types: [closed]
+    
+jobs:
+  get-commit:
+    runs-on: ubuntu-latest
+    steps:
+      # Set the COMMIT_ID env variable
+      - name: Set the Commit Id
+        id: commit
+        run: |
+          echo "::set-output name=commit_id::${GITHUB_SHA}"
+    outputs:
+          commit_id: ${{ steps.commit.outputs.commit_id }}
+  create-dev:
+    needs: get-commit
+    uses: ./.github/workflows/run-publisher-with-env.yaml
+    with:
+      API_MANAGEMENT_ENVIRONMENT: dev # change this to match the dev environment created in settings
+      COMMIT_ID: ${{ needs.get-commit.outputs.commit_id }} 
+      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}   
+      AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+      API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
+  create-prod:
+    needs: [get-commit, create-dev]
+    uses: ./.github/workflows/run-publisher-with-env.yaml
+    with:
+      API_MANAGEMENT_ENVIRONMENT: prod # change this to match the prod environment created in settings
+      CONFIGURATION_YAML_PATH: configuration.prod.yaml # make sure the file is available at the root
+      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder
+      COMMIT_ID: ${{ needs.get-commit.outputs.commit_id }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+      API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }} 

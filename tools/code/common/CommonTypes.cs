@@ -1,34 +1,12 @@
-﻿namespace common;
+﻿using System;
+using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
 
-public struct Unit : IEquatable<Unit>
-{
-    public override bool Equals(object? obj)
-    {
-        return obj is Unit;
-    }
-
-    public bool Equals(Unit other)
-    {
-        return true;
-    }
-
-    public override int GetHashCode()
-    {
-        return 0;
-    }
-
-    public static bool operator ==(Unit left, Unit right)
-    {
-        return left.Equals(right);
-    }
-
-    public static bool operator !=(Unit left, Unit right)
-    {
-        return !(left == right);
-    }
-
-    public static Unit Default = new Unit();
-}
+namespace common;
 
 public abstract record NonEmptyString
 {
@@ -49,236 +27,127 @@ public abstract record NonEmptyString
     public static implicit operator string(NonEmptyString nonEmptyString) => nonEmptyString.ToString();
 }
 
-public record FileName : NonEmptyString
-{
-    private FileName(string value) : base(value)
-    {
-    }
-
-    public static FileName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("File name cannot be null or whitespace.", nameof(value))
-            : new FileName(value);
-    }
-}
-
-public record DirectoryName: NonEmptyString
-{
-    private DirectoryName(string value) : base(value)
-    {
-    }
-
-    public static DirectoryName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Directory name cannot be null or whitespace.", nameof(value))
-            : new DirectoryName(value);
-    }
-}
-
-public record ServiceName: NonEmptyString
-{
-    private ServiceName(string value) : base(value)
-    {
-    }
-
-    public static ServiceName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Service name cannot be null or whitespace.", nameof(value))
-            : new ServiceName(value);
-    }
-}
-
-public record ProductName: NonEmptyString
-{
-    private ProductName(string value) : base(value)
-    {
-    }
-
-    public static ProductName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Product name cannot be null or whitespace.", nameof(value))
-            : new ProductName(value);
-    }
-}
-
-public record GatewayName: NonEmptyString
-{
-    private GatewayName(string value) : base(value)
-    {
-    }
-
-    public static GatewayName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Gateway name cannot be null or whitespace.", nameof(value))
-            : new GatewayName(value);
-    }
-}
-
-public record AuthorizationServerName: NonEmptyString
-{
-    private AuthorizationServerName(string value) : base(value)
-    {
-    }
-
-    public static AuthorizationServerName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Authorization server name cannot be null or whitespace.", nameof(value))
-            : new AuthorizationServerName(value);
-    }
-}
-
-public record DiagnosticName : NonEmptyString
-{
-    private DiagnosticName(string value) : base(value)
-    {
-    }
-
-    public static DiagnosticName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Diagnostic name cannot be null or whitespace.", nameof(value))
-            : new DiagnosticName(value);
-    }
-}
-
-public record LoggerName : NonEmptyString
-{
-    private LoggerName(string value) : base(value)
-    {
-    }
-
-    public static LoggerName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Logger name cannot be null or whitespace.", nameof(value))
-            : new LoggerName(value);
-    }
-}
-
-public record ApiName : NonEmptyString
-{
-    private ApiName(string value) : base(value)
-    {
-    }
-
-    public static ApiName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Api name cannot be null or whitespace.", nameof(value))
-            : new ApiName(value);
-    }
-}
-
-public record OperationName : NonEmptyString
-{
-    private OperationName(string value) : base(value)
-    {
-    }
-
-    public static OperationName From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Operation name cannot be null or whitespace.", nameof(value))
-            : new OperationName(value);
-    }
-}
-
 public abstract record UriRecord
 {
     private readonly string value;
 
     protected UriRecord(Uri value)
     {
-        this.value = value.ToString();
+        this.value = (value.ToString());
     }
 
     public override string ToString() => value;
 
-    public Uri ToUri() => new Uri(value);
+    public Uri ToUri() => new(value);
 
     public static implicit operator Uri(UriRecord record) => record.ToUri();
 }
 
-public record ServiceUri : UriRecord
+public sealed record RecordPath : NonEmptyString
 {
-    private ServiceUri(Uri value) : base(value)
+    public RecordPath(string value) : base(value)
     {
     }
 
-    public static ServiceUri From(Uri value) => new ServiceUri(value);
+    public RecordPath Append(string path) => new(Path.Combine(this, path));
+
+    public static RecordPath From(string value) => new(value);
 }
 
-public record ProductUri : UriRecord
+public abstract record FileRecord
 {
-    private ProductUri(Uri value) : base(value)
+    private FileInfo FileInfo => new(Path);
+
+    public RecordPath Path { get; }
+
+    public string Name => FileInfo.Name;
+
+    protected FileRecord(RecordPath path)
     {
+        Path = path;
     }
 
-    public static ProductUri From(Uri value) => new ProductUri(value);
-}
+    public bool Exists() => FileInfo.Exists;
 
-public record GatewayUri : UriRecord
-{
-    private GatewayUri(Uri value) : base(value)
+    public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(Path, path);
+
+    public bool PathEquals([NotNullWhen(true)] FileInfo? file) => PathEquals(file?.FullName);
+
+    public Stream ReadAsStream() => FileInfo.OpenRead();
+
+    public Task<string> ReadAsText(CancellationToken cancellationToken) => File.ReadAllTextAsync(Path, cancellationToken);
+
+    public JsonObject ReadAsJsonObject() => ReadAsJsonNode().AsObject();
+
+    public JsonArray ReadAsJsonArray() => ReadAsJsonNode().AsArray();
+
+    public async Task OverwriteWithJson(JsonNode json, CancellationToken cancellationToken)
     {
+        CreateDirectoryIfNotExists();
+
+        using var stream = FileInfo.Open(FileMode.Create);
+        var options = new JsonSerializerOptions { WriteIndented = true };
+
+        await JsonSerializer.SerializeAsync(stream, json, options, cancellationToken);
     }
 
-    public static GatewayUri From(Uri value) => new GatewayUri(value);
-}
-
-public record AuthorizationServerUri : UriRecord
-{
-    private AuthorizationServerUri(Uri value) : base(value)
+    public async Task OverwriteWithText(string text, CancellationToken cancellationToken)
     {
+        CreateDirectoryIfNotExists();
+
+        await File.WriteAllTextAsync(Path, text, cancellationToken);
     }
 
-    public static AuthorizationServerUri From(Uri value) => new AuthorizationServerUri(value);
-}
-
-public record DiagnosticUri : UriRecord
-{
-    private DiagnosticUri(Uri value) : base(value)
+    public async Task OverwriteWithStream(Stream stream, CancellationToken cancellationToken)
     {
+        CreateDirectoryIfNotExists();
+
+        using var fileStream = FileInfo.Open(FileMode.Create);
+
+        await stream.CopyToAsync(fileStream, cancellationToken);
     }
 
-    public static DiagnosticUri From(Uri value) => new DiagnosticUri(value);
-}
-
-public record LoggerUri : UriRecord
-{
-    private LoggerUri(Uri value) : base(value)
+    private JsonNode ReadAsJsonNode()
     {
+        using var stream = FileInfo.OpenRead();
+        var options = new JsonNodeOptions { PropertyNameCaseInsensitive = true };
+        return JsonNode.Parse(stream, options) ?? throw new InvalidOperationException($"Could not read JSON from file ${Path}.");
     }
 
-    public static LoggerUri From(Uri value) => new LoggerUri(value);
-}
-
-public record ApiUri : UriRecord
-{
-    private ApiUri(Uri value) : base(value)
+    private void CreateDirectoryIfNotExists()
     {
+        var directory = GetDirectoryInfo();
+
+        directory.Create();
     }
 
-    public static ApiUri From(Uri value) => new ApiUri(value);
-}
-
-public record OperationUri : UriRecord
-{
-    private OperationUri(Uri value) : base(value)
+    private DirectoryInfo GetDirectoryInfo()
     {
+        return FileInfo.Directory
+               ?? throw new InvalidOperationException($"Cannot find directory associated with file path {Path}.");
     }
 
-    public static OperationUri From(Uri value) => new OperationUri(value);
+    public static implicit operator FileInfo(FileRecord record) => record.FileInfo;
 }
 
-public enum ApiSpecificationFormat
+public abstract record DirectoryRecord
 {
-    Json,
-    Yaml
+    private DirectoryInfo DirectoryInfo => new(Path);
+
+    public RecordPath Path { get; }
+
+    public string Name => this.DirectoryInfo.Name;
+
+    protected DirectoryRecord(RecordPath path)
+    {
+        Path = path;
+    }
+
+    public bool Exists() => DirectoryInfo.Exists;
+
+    public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(Path, path);
+
+    public bool PathEquals([NotNullWhen(true)] DirectoryInfo? file) => PathEquals(file?.FullName);
+
+    public static implicit operator DirectoryInfo(DirectoryRecord record) => record.DirectoryInfo;
 }

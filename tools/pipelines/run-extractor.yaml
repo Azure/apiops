@@ -8,10 +8,15 @@ parameters:
   - name: APIM_REPOSITORY_NAME
     type: string
     displayName: APIM repository for pull request
+  - name: API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH
+    type: string
+    displayName: Folder where you want to extract the artifacts
   - name: TARGET_BRANCH_NAME
     type: string
     displayName: Target branch for pull request
     default: main
+  
+    
 
 trigger: none
 
@@ -71,7 +76,7 @@ stages:
               AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
               AZURE_RESOURCE_GROUP_NAME: ${{ parameters.RESOURCE_GROUP_NAME }}
               API_MANAGEMENT_SERVICE_NAME: ${{ parameters.APIM_INSTANCE_NAME }}
-              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: $(Build.ArtifactStagingDirectory)
+              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: $(Build.ArtifactStagingDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
           - task: PublishPipelineArtifact@1
             displayName: Publish pipeline artifact
             inputs:
@@ -86,7 +91,6 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
-          - checkout: git://$(System.TeamProject)/${{ parameters.APIM_REPOSITORY_NAME }}
           - checkout: self
           - task: DownloadPipelineArtifact@2
             displayName: Download pipeline artifact
@@ -100,7 +104,7 @@ stages:
               azureSubscription: "$(SERVICE_CONNECTION_NAME)"
               scriptType: bash
               scriptLocation: scriptPath
-              scriptPath: $(Build.SourcesDirectory)/$(Build.Repository.Name)/tools/utils/create_pull_request.sh
-              arguments: --organization-url "$(System.TeamFoundationCollectionUri)" --project-name "$(System.TeamProject)" --repository-name "${{ parameters.APIM_REPOSITORY_NAME }}" --pull-request-title "Merging artifacts from portal (Build $(Build.BuildId))" --branch-name "${{ parameters.TARGET_BRANCH_NAME }}" --source-folder-path "$(Pipeline.Workspace)/artifacts-from-portal" --temporary-branch-name "artifacts-from-portal-build-$(Build.BuildId)" --temporary-folder-path "$(Agent.TempDirectory)/artifacts-from-portal"
+              scriptPath: $(Build.SourcesDirectory)/tools/utils/create_pull_request.sh
+              arguments: --organization-url "$(System.TeamFoundationCollectionUri)" --project-name "$(System.TeamProject)" --repository-name "${{ parameters.APIM_REPOSITORY_NAME }}" --pull-request-title "Merging artifacts from portal (Build $(Build.BuildId))" --branch-name "${{ parameters.TARGET_BRANCH_NAME }}" --source-folder-path "$(Pipeline.Workspace)/artifacts-from-portal" --temporary-branch-name "artifacts-from-portal-build-$(Build.BuildId)" --temporary-folder-path "$(Agent.TempDirectory)/artifacts-from-portal" --overwrite-subfolder "${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}" 
             env:
               AZURE_DEVOPS_EXT_PAT: "$(System.AccessToken)"

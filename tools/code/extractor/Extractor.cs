@@ -1,400 +1,435 @@
-﻿namespace extractor;
+﻿using common;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
 
-internal class Extractor : ConsoleService
+namespace extractor;
+
+internal class Extractor : BackgroundService
 {
-    private readonly ArmClient armClient;
+    private readonly IHostApplicationLifetime applicationLifetime;
+    private readonly ILogger logger;
     private readonly NonAuthenticatedHttpClient nonAuthenticatedHttpClient;
-    private readonly ServiceUri serviceUri;
-    private readonly DirectoryInfo serviceOutputDirectory;
-    private readonly ApiSpecificationFormat apiSpecificationFormat;
+    private readonly Func<Uri, CancellationToken, ValueTask<JsonObject?>> tryGetResource;
+    private readonly Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource;
+    private readonly Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources;
+    private readonly ServiceDirectory serviceDirectory;
+    private readonly ServiceProviderUri serviceProviderUri;
+    private readonly ServiceName serviceName;
+    private readonly ApiSpecificationFormat specificationFormat;
 
-    public Extractor(IHostApplicationLifetime applicationLifetime, ILogger<Extractor> logger, IConfiguration configuration, ArmClient armClient, NonAuthenticatedHttpClient nonAuthenticatedHttpClient) : base(applicationLifetime, logger)
+    public Extractor(IHostApplicationLifetime applicationLifetime, ILogger<Extractor> logger, IConfiguration configuration, AzureHttpClient azureHttpClient, NonAuthenticatedHttpClient nonAuthenticatedHttpClient)
     {
-        this.armClient = armClient;
+        this.applicationLifetime = applicationLifetime;
+        this.logger = logger;
         this.nonAuthenticatedHttpClient = nonAuthenticatedHttpClient;
-        serviceUri = GetServiceUri(configuration, armClient);
-        serviceOutputDirectory = GetOutputDirectory(configuration);
-        apiSpecificationFormat = GetApiSpecificationFormat(configuration);
+        this.tryGetResource = azureHttpClient.TryGetResourceAsJsonObject;
+        this.getResource = azureHttpClient.GetResourceAsJsonObject;
+        this.getResources = azureHttpClient.GetResourcesAsJsonObjects;
+        this.serviceDirectory = GetServiceDirectory(configuration);
+        this.serviceProviderUri = GetServiceProviderUri(configuration, azureHttpClient);
+        this.serviceName = ServiceName.From(configuration.GetValue("API_MANAGEMENT_SERVICE_NAME"));
+        this.specificationFormat = GetSpecificationFormat(configuration);
     }
 
-    private static ServiceUri GetServiceUri(IConfiguration configuration, ArmClient armClient)
+    private static ServiceDirectory GetServiceDirectory(IConfiguration configuration) =>
+        ServiceDirectory.From(configuration.GetValue("API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"));
+
+    private static ServiceProviderUri GetServiceProviderUri(IConfiguration configuration, AzureHttpClient azureHttpClient)
     {
-        var subscriptionId = configuration["AZURE_SUBSCRIPTION_ID"];
-        var resourceGroupName = configuration["AZURE_RESOURCE_GROUP_NAME"];
-        var serviceName = configuration["API_MANAGEMENT_SERVICE_NAME"];
+        var subscriptionId = configuration.GetValue("AZURE_SUBSCRIPTION_ID");
+        var resourceGroupName = configuration.GetValue("AZURE_RESOURCE_GROUP_NAME");
 
-        var serviceUri = armClient.GetBaseUri()
-                                  .AppendPath("subscriptions")
-                                  .AppendPath(subscriptionId)
-                                  .AppendPath("resourceGroups")
-                                  .AppendPath(resourceGroupName)
-                                  .AppendPath("providers/Microsoft.ApiManagement/service")
-                                  .AppendPath(serviceName)
-                                  .SetQueryParameter("api-version", "2021-04-01-preview");
-
-        return ServiceUri.From(serviceUri);
+        return ServiceProviderUri.From(azureHttpClient.ResourceManagerEndpoint, subscriptionId, resourceGroupName);
     }
 
-    private static DirectoryInfo GetOutputDirectory(IConfiguration configuration)
+    private static ApiSpecificationFormat GetSpecificationFormat(IConfiguration configuration)
     {
-        var path = configuration["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"];
+        var configurationFormat = configuration.TryGetValue("API_SPECIFICATION_FORMAT");
 
-        return new DirectoryInfo(path);
+        return configurationFormat is null
+            ? ApiSpecificationFormat.Yaml
+            : Enum.TryParse<ApiSpecificationFormat>(configurationFormat, ignoreCase: true, out var format)
+              ? format
+              : throw new InvalidOperationException("API specification format in configuration is invalid. Accepted values are 'json' and 'yaml'");
     }
 
-    private static ApiSpecificationFormat GetApiSpecificationFormat(IConfiguration configuration)
+    protected override async Task ExecuteAsync(CancellationToken cancellationToken)
     {
-        var section = configuration.GetSection("API_SPECIFICATION_FORMAT");
-
-        return section.Exists() && Enum.TryParse<ApiSpecificationFormat>(section.Value, out var apiSpecificationFormat)
-            ? apiSpecificationFormat
-            : ApiSpecificationFormat.Yaml;
-    }
-
-    protected override Task ExecuteAsync(CancellationToken cancellationToken)
-    {
-        return Task.WhenAll(ExportServiceInformation(cancellationToken),
-                            TryExportServicePolicy(cancellationToken),
-                            ExportProducts(cancellationToken),
-                            ExportGateways(cancellationToken),
-                            ExportAuthorizationServers(cancellationToken),
-                            ExportServiceDiagnostics(cancellationToken),
-                            ExportLoggers(cancellationToken),
-                            ExportApis(cancellationToken));
-    }
-
-    private async Task<Unit> ExportServiceInformation(CancellationToken cancellationToken)
-    {
-        var serviceInformationJson = await armClient.GetResource(serviceUri, cancellationToken)
-                                                    .Map(ServiceInformation.FormatResponseJson);
-
-        var serviceInformationFile = serviceOutputDirectory.GetFileInfo(Constants.ServiceInformationFileName);
-
-        return await serviceInformationFile.OverwriteWithJson(serviceInformationJson, cancellationToken);
-    }
-
-    private Task<Unit> TryExportServicePolicy(CancellationToken cancellationToken)
-    {
-        var policiesUri = common.Policy.GetListByServiceUri(serviceUri);
-
-        return TryExportPolicy(policiesUri, serviceOutputDirectory, cancellationToken);
-    }
-
-    private Task<Unit> TryExportPolicy(Uri policiesUri, DirectoryInfo policyOutputDirectory, CancellationToken cancellationToken)
-    {
-        var exportPolicy = (string policy) => policyOutputDirectory.GetFileInfo(Constants.PolicyFileName)
-                                                                   .OverwriteWithText(policy, cancellationToken);
-
-        return armClient.GetResources(policiesUri, cancellationToken)
-                .TryPick(common.Policy.TryGetFromResponseJson, cancellationToken)
-                .Bind(policy => policy.Map(exportPolicy)
-                                      .IfNull(() => Task.FromResult(Unit.Default)));
-    }
-
-    private Task<Unit> ExportProducts(CancellationToken cancellationToken)
-    {
-        var productsUri = Product.GetListByServiceUri(serviceUri);
-        var productsOutputDirectory = serviceOutputDirectory.GetSubDirectory(Constants.ProductsFolderName);
-        var productJsons = armClient.GetResources(productsUri, cancellationToken);
-
-        return productJsons.Select(productJson => productJson.GetNonEmptyStringPropertyValue("name"))
-                           .Select(ProductName.From)
-                           .Select(productName => Product.GetUri(serviceUri, productName))
-                           .ExecuteInParallel(productUri => ExportProduct(productUri, productsOutputDirectory, cancellationToken), cancellationToken);
-    }
-
-    private async Task<Unit> ExportProduct(ProductUri productUri, DirectoryInfo productsOutputDirectory, CancellationToken cancellationToken)
-    {
-        var productInformationJson = await armClient.GetResource(productUri, cancellationToken)
-                                                    .Map(ProductInformation.FormatResponseJson)
-                                                    .Bind(async productJson =>
-                                                    {
-                                                        var apis = await GetProductApis(productUri, cancellationToken);
-                                                        return productJson.AddProperty("apis", apis);
-                                                    });
-
-        var productDisplayName = GetDisplayNameFromResourceJson(productInformationJson);
-        var productOutputDirectory = productsOutputDirectory.GetSubDirectory(DirectoryName.From(productDisplayName));
-
-        await Task.WhenAll(ExportProductInformation(productInformationJson, productOutputDirectory, cancellationToken),
-                           TryExportProductPolicy(productUri, productOutputDirectory, cancellationToken));
-
-        return Unit.Default;
-    }
-
-    private static string GetDisplayNameFromResourceJson(JsonObject json)
-    {
-        return json.GetObjectPropertyValue("properties")
-                   .GetNonEmptyStringPropertyValue("displayName");
-    }
-
-    private Task<JsonArray> GetProductApis(ProductUri productUri, CancellationToken cancellationToken)
-    {
-        var apisUri = Api.GetListByProductUri(productUri);
-        var apiJsons = armClient.GetResources(apisUri, cancellationToken);
-
-        return apiJsons.Select(GetDisplayNameFromResourceJson)
-                       .Select(apiDisplayName => new JsonObject().AddStringProperty("displayName", apiDisplayName))
-                       .ToListAsync(cancellationToken)
-                       .AsTask()
-                       .Map(apiJsons => apiJsons.ToJsonArray());
-    }
-
-    private static Task<Unit> ExportProductInformation(JsonObject productInformationJson, DirectoryInfo productOutputDirectory, CancellationToken cancellationToken)
-    {
-        var productInformationFile = productOutputDirectory.GetFileInfo(Constants.ProductInformationFileName);
-        return productInformationFile.OverwriteWithJson(productInformationJson, cancellationToken);
-    }
-
-    private Task<Unit> TryExportProductPolicy(ProductUri productUri, DirectoryInfo productOutputDirectory, CancellationToken cancellationToken)
-    {
-        var policiesUri = common.Policy.GetListByProductUri(productUri);
-
-        return TryExportPolicy(policiesUri, productOutputDirectory, cancellationToken);
-    }
-
-    private Task<Unit> ExportGateways(CancellationToken cancellationToken)
-    {
-        var gatewaysUri = Gateway.GetListByServiceUri(serviceUri);
-        var gatewaysOutputDirectory = serviceOutputDirectory.GetSubDirectory(Constants.GatewaysFolderName);
-        var gatewayJsons = armClient.GetResources(gatewaysUri, cancellationToken);
-
-        return gatewayJsons.Select(gatewayJson => gatewayJson.GetNonEmptyStringPropertyValue("name"))
-                           .Select(GatewayName.From)
-                           .Select(gatewayName => Gateway.GetUri(serviceUri, gatewayName))
-                           .ExecuteInParallel(gatewayUri => ExportGateway(gatewayUri, gatewaysOutputDirectory, cancellationToken), cancellationToken);
-    }
-
-    private async Task<Unit> ExportGateway(GatewayUri gatewayUri, DirectoryInfo gatewaysOutputDirectory, CancellationToken cancellationToken)
-    {
-        var gatewayInformationJson = await armClient.GetResource(gatewayUri, cancellationToken)
-                                                    .Map(GatewayInformation.FormatResponseJson)
-                                                    .Bind(async gatewayJson =>
-                                                    {
-                                                        var apis = await GetGatewayApis(gatewayUri, cancellationToken);
-                                                        return gatewayJson.AddProperty("apis", apis);
-                                                    });
-
-        var gatewayName = gatewayInformationJson.GetNonEmptyStringPropertyValue("name");
-        var gatewayOutputDirectory = gatewaysOutputDirectory.GetSubDirectory(DirectoryName.From(gatewayName));
-
-        return await ExportGatewayInformation(gatewayInformationJson, gatewayOutputDirectory, cancellationToken);
-    }
-
-    private Task<JsonArray> GetGatewayApis(GatewayUri gatewayUri, CancellationToken cancellationToken)
-    {
-        var apisUri = Api.GetListByGatewayUri(gatewayUri);
-        var apiJsons = armClient.GetResources(apisUri, cancellationToken);
-
-        return apiJsons.Select(GetDisplayNameFromResourceJson)
-                       .Select(apiDisplayName => new JsonObject().AddStringProperty("displayName", apiDisplayName))
-                       .ToListAsync(cancellationToken)
-                       .AsTask()
-                       .Map(apiJsons => apiJsons.ToJsonArray());
-    }
-
-    private static Task<Unit> ExportGatewayInformation(JsonObject gatewayInformationJson, DirectoryInfo gatewayOutputDirectory, CancellationToken cancellationToken)
-    {
-        var gatewayInformationFile = gatewayOutputDirectory.GetFileInfo(Constants.GatewayInformationFileName);
-        return gatewayInformationFile.OverwriteWithJson(gatewayInformationJson, cancellationToken);
-    }
-
-    private Task<Unit> ExportAuthorizationServers(CancellationToken cancellationToken)
-    {
-        var authorizationServersUri = AuthorizationServer.GetListByServiceUri(serviceUri);
-        var authorizationServersOutputDirectory = serviceOutputDirectory.GetSubDirectory(Constants.AuthorizationServersFolderName);
-        var authorizationServerJsons = armClient.GetResources(authorizationServersUri, cancellationToken);
-
-        return authorizationServerJsons.Select(authorizationServerJson => authorizationServerJson.GetNonEmptyStringPropertyValue("name"))
-                                       .Select(AuthorizationServerName.From)
-                                       .Select(authorizationServerName => AuthorizationServer.GetUri(serviceUri, authorizationServerName))
-                                       .ExecuteInParallel(authorizationServerUri => ExportAuthorizationServer(authorizationServerUri, authorizationServersOutputDirectory, cancellationToken), cancellationToken);
-    }
-
-    private async Task<Unit> ExportAuthorizationServer(AuthorizationServerUri authorizationServerUri, DirectoryInfo authorizationServersOutputDirectory, CancellationToken cancellationToken)
-    {
-        var authorizationServerInformationJson = await armClient.GetResource(authorizationServerUri, cancellationToken)
-                                                                .Map(AuthorizationServerInformation.FormatResponseJson);
-
-        var authorizationServerName = authorizationServerInformationJson.GetNonEmptyStringPropertyValue("name");
-
-        var authorizationServerOutputDirectory = authorizationServersOutputDirectory.GetSubDirectory(DirectoryName.From(authorizationServerName));
-
-        return await ExportAuthorizationServerInformation(authorizationServerInformationJson, authorizationServerOutputDirectory, cancellationToken);
-    }
-
-    private static Task<Unit> ExportAuthorizationServerInformation(JsonObject authorizationServerInformationJson, DirectoryInfo authorizationServerOutputDirectory, CancellationToken cancellationToken)
-    {
-        var authorizationServerInformationFile = authorizationServerOutputDirectory.GetFileInfo(Constants.AuthorizationServerInformationFileName);
-        return authorizationServerInformationFile.OverwriteWithJson(authorizationServerInformationJson, cancellationToken);
-    }
-
-    private Task<Unit> ExportServiceDiagnostics(CancellationToken cancellationToken)
-    {
-        var diagnosticsUri = Diagnostic.GetListByServiceUri(serviceUri);
-        var diagnosticsOutputDirectory = serviceOutputDirectory.GetSubDirectory(Constants.DiagnosticsFolderName);
-        var diagnosticJsons = armClient.GetResources(diagnosticsUri, cancellationToken);
-
-        return ExportDiagnostics(diagnosticJsons,
-                                 getDiagnosticUriFromName: diagnosticName => Diagnostic.GetUri(serviceUri, diagnosticName),
-                                 diagnosticsOutputDirectory,
-                                 cancellationToken);
-    }
-
-    private Task<Unit> ExportDiagnostics(IAsyncEnumerable<JsonObject> diagnosticJsons, Func<DiagnosticName, DiagnosticUri> getDiagnosticUriFromName, DirectoryInfo diagnosticsOutputDirectory, CancellationToken cancellationToken)
-    {
-        return diagnosticJsons.Select(diagnosticJson => diagnosticJson.GetNonEmptyStringPropertyValue("name"))
-                              .Select(DiagnosticName.From)
-                              .Select(getDiagnosticUriFromName)
-                              .ExecuteInParallel(diagnosticUri => ExportDiagnostic(diagnosticUri, diagnosticsOutputDirectory, cancellationToken), cancellationToken);
-    }
-
-    private async Task<Unit> ExportDiagnostic(DiagnosticUri diagnosticUri, DirectoryInfo diagnosticsOutputDirectory, CancellationToken cancellationToken)
-    {
-        var diagnosticInformationJson = await armClient.GetResource(diagnosticUri, cancellationToken)
-                                                       .Map(DiagnosticInformation.FormatResponseJson);
-
-        var diagnosticName = diagnosticInformationJson.GetNonEmptyStringPropertyValue("name");
-
-        var diagnosticOutputDirectory = diagnosticsOutputDirectory.GetSubDirectory(DirectoryName.From(diagnosticName));
-
-        return await ExportDiagnosticInformation(diagnosticInformationJson, diagnosticOutputDirectory, cancellationToken);
-    }
-
-    private static Task<Unit> ExportDiagnosticInformation(JsonObject diagnosticInformationJson, DirectoryInfo diagnosticOutputDirectory, CancellationToken cancellationToken)
-    {
-        var diagnosticInformationFile = diagnosticOutputDirectory.GetFileInfo(Constants.DiagnosticInformationFileName);
-        return diagnosticInformationFile.OverwriteWithJson(diagnosticInformationJson, cancellationToken);
-    }
-
-    private Task<Unit> ExportLoggers(CancellationToken cancellationToken)
-    {
-        var loggersUri = common.Logger.GetListByServiceUri(serviceUri);
-        var loggersOutputDirectory = serviceOutputDirectory.GetSubDirectory(Constants.LoggersFolderName);
-        var loggerJsons = armClient.GetResources(loggersUri, cancellationToken);
-
-        return loggerJsons.Select(loggerJson => loggerJson.GetNonEmptyStringPropertyValue("name"))
-                          .Select(LoggerName.From)
-                          .Select(loggerName => common.Logger.GetUri(serviceUri, loggerName))
-                          .ExecuteInParallel(loggerUri => ExportLogger(loggerUri, loggersOutputDirectory, cancellationToken), cancellationToken);
-    }
-
-    private async Task<Unit> ExportLogger(LoggerUri loggerUri, DirectoryInfo loggersOutputDirectory, CancellationToken cancellationToken)
-    {
-        var loggerInformationJson = await armClient.GetResource(loggerUri, cancellationToken)
-                                                   .Map(LoggerInformation.FormatResponseJson);
-
-        var loggerName = loggerInformationJson.GetNonEmptyStringPropertyValue("name");
-
-        var loggerOutputDirectory = loggersOutputDirectory.GetSubDirectory(DirectoryName.From(loggerName));
-
-        return await ExportLoggerInformation(loggerInformationJson, loggerOutputDirectory, cancellationToken);
-    }
-
-    private static Task<Unit> ExportLoggerInformation(JsonObject loggerInformationJson, DirectoryInfo loggerOutputDirectory, CancellationToken cancellationToken)
-    {
-        var loggerInformationFile = loggerOutputDirectory.GetFileInfo(Constants.LoggerInformationFileName);
-        return loggerInformationFile.OverwriteWithJson(loggerInformationJson, cancellationToken);
-    }
-
-    private Task<Unit> ExportApis(CancellationToken cancellationToken)
-    {
-        var apisUri = Api.GetListByServiceUri(serviceUri);
-        var apisOutputDirectory = serviceOutputDirectory.GetSubDirectory(Constants.ApisFolderName);
-        var apiJsons = armClient.GetResources(apisUri, cancellationToken);
-
-        return apiJsons.Select(apiJson => apiJson.GetNonEmptyStringPropertyValue("name"))
-                       .Select(ApiName.From)
-                       .Select(apiName => Api.GetUri(serviceUri, apiName))
-                       .ExecuteInParallel(apiUri => ExportApi(apiUri, apisOutputDirectory, cancellationToken), cancellationToken);
-    }
-
-    private async Task<Unit> ExportApi(ApiUri apiUri, DirectoryInfo apisOutputDirectory, CancellationToken cancellationToken)
-    {
-        var apiInformationJson = await armClient.GetResource(apiUri, cancellationToken)
-                                                .Map(ApiInformation.FormatResponseJson);
-
-        var apiDisplayName = GetDisplayNameFromResourceJson(apiInformationJson);
-        var apiOutputDirectory = apisOutputDirectory.GetSubDirectory(DirectoryName.From(apiDisplayName));
-
-        await Task.WhenAll(ExportApiInformation(apiInformationJson, apiOutputDirectory, cancellationToken),
-                                  ExportApiSpecification(apiUri, apiOutputDirectory, cancellationToken),
-                                  ExportApiDiagnostics(apiUri, apiOutputDirectory, cancellationToken),
-                                  TryExportApiPolicy(apiUri, apiOutputDirectory, cancellationToken),
-                                  ExportOperations(apiUri, apiOutputDirectory, cancellationToken));
-
-        return Unit.Default;
-    }
-
-    private static Task<Unit> ExportApiInformation(JsonObject apiInformationJson, DirectoryInfo apiOutputDirectory, CancellationToken cancellationToken)
-    {
-        var apiInformationFile = apiOutputDirectory.GetFileInfo(Constants.ApiInformationFileName);
-        return apiInformationFile.OverwriteWithJson(apiInformationJson, cancellationToken);
-    }
-
-    private async Task<Unit> ExportApiSpecification(ApiUri apiUri, DirectoryInfo apiOutputDirectory, CancellationToken cancellationToken)
-    {
-        var specificationUri = ApiSpecification.GetExportUri(apiUri, apiSpecificationFormat);
-        using var specificationStream = await armClient.GetResource(specificationUri, cancellationToken)
-                                                       .Map(ApiSpecification.GetDownloadUriFromResponse)
-                                                       .Bind(downloadUri => nonAuthenticatedHttpClient.GetSuccessfulResponseStream(downloadUri, cancellationToken));
-
-        var specificationFileName = apiSpecificationFormat switch
+        try
         {
-            ApiSpecificationFormat.Json => Constants.ApiJsonSpecificationFileName,
-            _ => Constants.ApiYamlSpecificationFileName
-        };
+            logger.LogInformation("Beginning execution...");
 
-        var specificationFile = apiOutputDirectory.GetFileInfo(specificationFileName);
-        return await specificationFile.OverwriteWithStream(specificationStream, cancellationToken);
+            await Run(cancellationToken);
+
+            logger.LogInformation("Execution complete.");
+        }
+        catch (OperationCanceledException)
+        {
+            // Don't throw if operation was canceled
+        }
+        catch (Exception exception)
+        {
+            logger.LogCritical(exception, "");
+            Environment.ExitCode = -1;
+            throw;
+        }
+        finally
+        {
+            applicationLifetime.StopApplication();
+        }
     }
 
-    private Task<Unit> ExportApiDiagnostics(ApiUri apiUri, DirectoryInfo apiOutputDirectory, CancellationToken cancellationToken)
+    private async ValueTask Run(CancellationToken cancellationToken)
     {
-        var diagnosticsUri = Diagnostic.GetListByApiUri(apiUri);
-        var diagnosticsOutputDirectory = apiOutputDirectory.GetSubDirectory(Constants.DiagnosticsFolderName);
-        var diagnosticJsons = armClient.GetResources(diagnosticsUri, cancellationToken);
-        var getDiagnosticUriFromName = (DiagnosticName diagnosticName) => Diagnostic.GetUri(apiUri, diagnosticName);
-
-        return ExportDiagnostics(diagnosticJsons,
-                                 getDiagnosticUriFromName: diagnosticName => Diagnostic.GetUri(apiUri, diagnosticName),
-                                 diagnosticsOutputDirectory,
-                                 cancellationToken);
+        await ExportServiceInformation(cancellationToken);
+        await ExportServicePolicy(cancellationToken);
+        await ExportNamedValues(cancellationToken);
+        await ExportGateways(cancellationToken);
+        await ExportLoggers(cancellationToken);
+        await ExportProducts(cancellationToken);
+        await ExportApis(cancellationToken);
+        await ExportDiagnostics(cancellationToken);
     }
 
-    private Task<Unit> TryExportApiPolicy(ApiUri apiUri, DirectoryInfo apiOutputDirectory, CancellationToken cancellationToken)
+    private async ValueTask ExportServiceInformation(CancellationToken cancellationToken)
     {
-        var policiesUri = common.Policy.GetListByApiUri(apiUri);
+        logger.LogInformation("Exporting service information...");
 
-        return TryExportPolicy(policiesUri, apiOutputDirectory, cancellationToken);
+        var file = ServiceInformationFile.From(serviceDirectory);
+        var service = await Service.Get(getResource, serviceProviderUri, serviceName, cancellationToken);
+        var json = Service.Serialize(service);
+        await file.OverwriteWithJson(json, cancellationToken);
     }
 
-    private Task<Unit> ExportOperations(ApiUri apiUri, DirectoryInfo apiOutputDirectory, CancellationToken cancellationToken)
+    private async ValueTask ExportServicePolicy(CancellationToken cancellationToken)
     {
-        var operationsUri = Operation.GetListByApiUri(apiUri);
-        var operationsOutputDirectory = apiOutputDirectory.GetSubDirectory(Constants.OperationsFolderName);
-        var operationJsons = armClient.GetResources(operationsUri, cancellationToken);
+        var policyText = await ServicePolicy.TryGet(tryGetResource, serviceProviderUri, serviceName, cancellationToken);
 
-        return operationJsons.Select(operationJson => operationJson.GetNonEmptyStringPropertyValue("name"))
-                             .Select(OperationName.From)
-                             .Select(operationName => Operation.GetUri(apiUri, operationName))
-                             .ExecuteInParallel(operationUri => ExportOperation(operationUri, operationsOutputDirectory, cancellationToken), cancellationToken);
+        if (policyText is not null)
+        {
+            logger.LogInformation("Exporting service policy...");
+
+            var file = ServicePolicyFile.From(serviceDirectory);
+            await file.OverwriteWithText(policyText, cancellationToken);
+        }
     }
 
-    private async Task<Unit> ExportOperation(OperationUri operationUri, DirectoryInfo operationsOutputDirectory, CancellationToken cancellationToken)
+    private async ValueTask ExportGateways(CancellationToken cancellationToken)
     {
-        var operationInformationJson = await armClient.GetResource(operationUri, cancellationToken);
+        var gateways = Gateway.List(getResources, serviceProviderUri, serviceName, cancellationToken);
 
-        var operationDisplayName = GetDisplayNameFromResourceJson(operationInformationJson);
-        var operationOutputDirectory = operationsOutputDirectory.GetSubDirectory(DirectoryName.From(operationDisplayName));
-
-        return await TryExportOperationPolicy(operationUri, operationOutputDirectory, cancellationToken);
+        await Parallel.ForEachAsync(gateways, cancellationToken, ExportGateway);
     }
 
-    private Task<Unit> TryExportOperationPolicy(OperationUri operationUri, DirectoryInfo operationOutputDirectory, CancellationToken cancellationToken)
+    private async ValueTask ExportGateway(common.Models.Gateway gateway, CancellationToken cancellationToken)
     {
-        var policiesUri = common.Policy.GetListByOperationUri(operationUri);
+        await ExportGatewayInformation(gateway, cancellationToken);
+        await ExportGatewayApis(gateway, cancellationToken);
+    }
 
-        return TryExportPolicy(policiesUri, operationOutputDirectory, cancellationToken);
+    private async ValueTask ExportGatewayInformation(common.Models.Gateway gateway, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting information for gateway {gatewayName}...", gateway.Name);
+
+        var gatewaysDirectory = GatewaysDirectory.From(serviceDirectory);
+        var gatewayName = GatewayName.From(gateway.Name);
+        var gatewayDirectory = GatewayDirectory.From(gatewaysDirectory, gatewayName);
+        var file = GatewayInformationFile.From(gatewayDirectory);
+        var json = Gateway.Serialize(gateway);
+
+        await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportGatewayApis(common.Models.Gateway gateway, CancellationToken cancellationToken)
+    {
+        var gatewayName = GatewayName.From(gateway.Name);
+
+        var jsonArray = new JsonArray();
+        await GatewayApi.List(getResources, serviceProviderUri, serviceName, gatewayName, cancellationToken)
+                        .Select(api => new JsonObject().AddProperty("name", api.Name))
+                        .ForEachAsync(jsonObject => jsonArray.Add(jsonObject), cancellationToken);
+
+        if (jsonArray.Any())
+        {
+            logger.LogInformation("Exporting apis for gateway {gatewayName}...", gateway.Name);
+            var gatewaysDirectory = GatewaysDirectory.From(serviceDirectory);
+            var gatewayDirectory = GatewayDirectory.From(gatewaysDirectory, gatewayName);
+            var file = GatewayApisFile.From(gatewayDirectory);
+
+            await file.OverwriteWithJson(jsonArray, cancellationToken);
+        }
+    }
+
+    private async ValueTask ExportLoggers(CancellationToken cancellationToken)
+    {
+        var loggers = Logger.List(getResources, serviceProviderUri, serviceName, cancellationToken);
+
+        await Parallel.ForEachAsync(loggers, cancellationToken, ExportLogger);
+    }
+
+    private async ValueTask ExportLogger(common.Models.Logger logger, CancellationToken cancellationToken)
+    {
+        await ExportLoggerInformation(logger, cancellationToken);
+    }
+
+    private async ValueTask ExportLoggerInformation(common.Models.Logger loggerModel, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting information for logger {loggerName}...", loggerModel.Name);
+
+        var loggersDirectory = LoggersDirectory.From(serviceDirectory);
+        var loggerName = LoggerName.From(loggerModel.Name);
+        var loggerDirectory = LoggerDirectory.From(loggersDirectory, loggerName);
+        var file = LoggerInformationFile.From(loggerDirectory);
+        var json = Logger.Serialize(loggerModel);
+
+        await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportNamedValues(CancellationToken cancellationToken)
+    {
+        var namedValues = NamedValue.List(getResources, serviceProviderUri, serviceName, cancellationToken);
+
+        await Parallel.ForEachAsync(namedValues, cancellationToken, ExportNamedValue);
+    }
+
+    private async ValueTask ExportNamedValue(common.Models.NamedValue namedValue, CancellationToken cancellationToken)
+    {
+        await ExportNamedValueInformation(namedValue, cancellationToken);
+    }
+
+    private async ValueTask ExportNamedValueInformation(common.Models.NamedValue namedValue, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting information for named value {namedValueName}...", namedValue.Name);
+
+        var namedValuesDirectory = NamedValuesDirectory.From(serviceDirectory);
+        var namedValueDisplayName = NamedValueDisplayName.From(namedValue.Properties.DisplayName);
+        var namedValueDirectory = NamedValueDirectory.From(namedValuesDirectory, namedValueDisplayName);
+        var file = NamedValueInformationFile.From(namedValueDirectory);
+        var json = NamedValue.Serialize(namedValue);
+
+        await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportProducts(CancellationToken cancellationToken)
+    {
+        var products = Product.List(getResources, serviceProviderUri, serviceName, cancellationToken);
+
+        await Parallel.ForEachAsync(products, cancellationToken, ExportProduct);
+    }
+
+    private async ValueTask ExportProduct(common.Models.Product product, CancellationToken cancellationToken)
+    {
+        await ExportProductInformation(product, cancellationToken);
+        await ExportProductPolicy(product, cancellationToken);
+        await ExportProductApis(product, cancellationToken);
+    }
+
+    private async ValueTask ExportProductInformation(common.Models.Product product, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting information for product {productName}...", product.Name);
+
+        var productsDirectory = ProductsDirectory.From(serviceDirectory);
+        var productDisplayName = ProductDisplayName.From(product.Properties.DisplayName);
+        var productDirectory = ProductDirectory.From(productsDirectory, productDisplayName);
+        var file = ProductInformationFile.From(productDirectory);
+        var json = Product.Serialize(product);
+
+        await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportProductPolicy(common.Models.Product product, CancellationToken cancellationToken)
+    {
+        var productName = ProductName.From(product.Name);
+        var policyText = await ProductPolicy.TryGet(tryGetResource, serviceProviderUri, serviceName, productName, cancellationToken);
+
+        if (policyText is not null)
+        {
+            logger.LogInformation("Exporting policy for product {productName}...", product.Name);
+
+            var productsDirectory = ProductsDirectory.From(serviceDirectory);
+            var productDisplayName = ProductDisplayName.From(product.Properties.DisplayName);
+            var productDirectory = ProductDirectory.From(productsDirectory, productDisplayName);
+            var file = ProductPolicyFile.From(productDirectory);
+
+            await file.OverwriteWithText(policyText, cancellationToken);
+        }
+    }
+
+    private async ValueTask ExportProductApis(common.Models.Product product, CancellationToken cancellationToken)
+    {
+        var productName = ProductName.From(product.Name);
+
+        var jsonArray = new JsonArray();
+        await ProductApi.List(getResources, serviceProviderUri, serviceName, productName, cancellationToken)
+                        .Select(api => new JsonObject().AddProperty("name", api.Name))
+                        .ForEachAsync(jsonObject => jsonArray.Add(jsonObject), cancellationToken);
+
+        if (jsonArray.Any())
+        {
+            logger.LogInformation("Exporting apis for product {productName}...", product.Name);
+            var productsDirectory = ProductsDirectory.From(serviceDirectory);
+            var productDisplayName = ProductDisplayName.From(product.Properties.DisplayName);
+            var productDirectory = ProductDirectory.From(productsDirectory, productDisplayName);
+            var file = ProductApisFile.From(productDirectory);
+
+            await file.OverwriteWithJson(jsonArray, cancellationToken);
+        }
+    }
+
+    private async ValueTask ExportDiagnostics(CancellationToken cancellationToken)
+    {
+        var diagnostics = Diagnostic.List(getResources, serviceProviderUri, serviceName, cancellationToken);
+
+        await Parallel.ForEachAsync(diagnostics, cancellationToken, ExportDiagnostic);
+    }
+
+    private async ValueTask ExportDiagnostic(common.Models.Diagnostic diagnostic, CancellationToken cancellationToken)
+    {
+        await ExportDiagnosticInformation(diagnostic, cancellationToken);
+    }
+
+    private async ValueTask ExportDiagnosticInformation(common.Models.Diagnostic diagnostic, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting information for diagnostic {diagnosticName}...", diagnostic.Name);
+
+        var diagnosticsDirectory = DiagnosticsDirectory.From(serviceDirectory);
+        var diagnosticName = DiagnosticName.From(diagnostic.Name);
+        var diagnosticDirectory = DiagnosticDirectory.From(diagnosticsDirectory, diagnosticName);
+        var file = DiagnosticInformationFile.From(diagnosticDirectory);
+        var json = Diagnostic.Serialize(diagnostic);
+
+        await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportApis(CancellationToken cancellationToken)
+    {
+        var apis = Api.List(getResources, serviceProviderUri, serviceName, cancellationToken);
+
+        await Parallel.ForEachAsync(apis, cancellationToken, ExportApi);
+    }
+
+    private async ValueTask ExportApi(common.Models.Api api, CancellationToken cancellationToken)
+    {
+        await ExportApiInformation(api, cancellationToken);
+        await ExportApiPolicy(api, cancellationToken);
+        await ExportApiSpecification(api, cancellationToken);
+        await ExportApiDiagnostics(api, cancellationToken);
+        await ExportApiOperations(api, cancellationToken);
+    }
+
+    private async ValueTask ExportApiInformation(common.Models.Api api, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting information for api {apiName}...", api.Name);
+
+        var apisDirectory = ApisDirectory.From(serviceDirectory);
+        var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
+        var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+        var file = ApiInformationFile.From(apiDirectory);
+        var json = Api.Serialize(api);
+
+        await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportApiPolicy(common.Models.Api api, CancellationToken cancellationToken)
+    {
+        var apiName = ApiName.From(api.Name);
+        var policyText = await ApiPolicy.TryGet(tryGetResource, serviceProviderUri, serviceName, apiName, cancellationToken);
+
+        if (policyText is not null)
+        {
+            logger.LogInformation("Exporting policy for api {apiName}...", api.Name);
+
+            var apisDirectory = ApisDirectory.From(serviceDirectory);
+            var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
+            var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+            var file = ApiPolicyFile.From(apiDirectory);
+
+            await file.OverwriteWithText(policyText, cancellationToken);
+        }
+    }
+
+    private async ValueTask ExportApiSpecification(common.Models.Api api, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting specification for api {apiName}...", api.Name);
+
+        var apisDirectory = ApisDirectory.From(serviceDirectory);
+        var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
+        var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+        var file = ApiSpecificationFile.From(apiDirectory, specificationFormat);
+
+        var apiName = ApiName.From(api.Name);
+        var downloader = nonAuthenticatedHttpClient.GetSuccessfulResponseStream;
+        using var specificationStream = await ApiSpecification.Get(getResource, downloader, serviceProviderUri, serviceName, apiName, specificationFormat, cancellationToken);
+        await file.OverwriteWithStream(specificationStream, cancellationToken);
+    }
+
+    private async ValueTask ExportApiDiagnostics(common.Models.Api api, CancellationToken cancellationToken)
+    {
+        var apiName = ApiName.From(api.Name);
+        var diagnostics = ApiDiagnostic.List(getResources, serviceProviderUri, serviceName, apiName, cancellationToken);
+
+        await Parallel.ForEachAsync(diagnostics,
+                                    cancellationToken,
+                                    (diagnostic, cancellationToken) => ExportApiDiagnostic(api, diagnostic, cancellationToken));
+    }
+
+    private async ValueTask ExportApiDiagnostic(common.Models.Api api, common.Models.ApiDiagnostic diagnostic, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting diagnostic {apiDiagnostic}for api {apiName}...", diagnostic.Name, api.Name);
+
+        var apisDirectory = ApisDirectory.From(serviceDirectory);
+        var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
+        var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+        var apiDiagnosticsDirectory = ApiDiagnosticsDirectory.From(apiDirectory);
+        var apiDiagnosticName = ApiDiagnosticName.From(diagnostic.Name); ;
+        var apiDiagnosticDirectory = ApiDiagnosticDirectory.From(apiDiagnosticsDirectory, apiDiagnosticName);
+        var file = ApiDiagnosticInformationFile.From(apiDiagnosticDirectory);
+        var json = ApiDiagnostic.Serialize(diagnostic);
+
+        await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportApiOperations(common.Models.Api api, CancellationToken cancellationToken)
+    {
+        var apiName = ApiName.From(api.Name);
+        var apiOperations = ApiOperation.List(getResources, serviceProviderUri, serviceName, apiName, cancellationToken);
+
+        await Parallel.ForEachAsync(apiOperations,
+                                    cancellationToken,
+                                    (apiOperation, cancellationToken) => ExportApiOperation(api, apiOperation, cancellationToken));
+    }
+
+    private async ValueTask ExportApiOperation(common.Models.Api api, common.Models.ApiOperation apiOperation, CancellationToken cancellationToken)
+    {
+        await ExportApiOperationPolicy(api, apiOperation, cancellationToken);
+    }
+
+    private async ValueTask ExportApiOperationPolicy(common.Models.Api api, common.Models.ApiOperation apiOperation, CancellationToken cancellationToken)
+    {
+        var apiName = ApiName.From(api.Name);
+        var apiOperationName = ApiOperationName.From(apiOperation.Name);
+        var policyText = await ApiOperationPolicy.TryGet(tryGetResource, serviceProviderUri, serviceName, apiName, apiOperationName, cancellationToken);
+
+        if (policyText is not null)
+        {
+            logger.LogInformation("Exporting policy for apiOperation {apiOperationName} in api {apiName}...", apiOperation.Name, api.Name);
+
+            var apisDirectory = ApisDirectory.From(serviceDirectory);
+            var apiDisplayName = ApiDisplayName.From(api.Properties.DisplayName);
+            var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName);
+            var apiOperationsDirectory = ApiOperationsDirectory.From(apiDirectory);
+            var apiOperationDisplayName = ApiOperationDisplayName.From(apiOperation.Properties.DisplayName);
+            var apiOperationDirectory = ApiOperationDirectory.From(apiOperationsDirectory, apiOperationDisplayName);
+            var file = ApiOperationPolicyFile.From(apiOperationDirectory);
+
+            await file.OverwriteWithText(policyText, cancellationToken);
+        }
     }
 }

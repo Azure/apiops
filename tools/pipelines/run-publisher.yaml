@@ -1,0 +1,54 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+    - tools/*
+
+parameters:
+  - name: API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH
+    type: string
+    displayName: Folder where the artifacts reside
+    default: "artifacts"
+
+variables:
+  - group: apim-automation
+  - name: System.Debug
+    value: true
+
+stages:
+  - stage: push_changes_to_Dev_APIM
+    displayName: Push changes to Dev APIM
+    jobs:
+      - job: push_changes_to_Dev_APIM
+        displayName: Push changes to Dev APIM
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - template: apim-stage.yaml
+            parameters:
+              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+              RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME)
+              ENVIRONMRNT: "Dev"
+  - stage: push_changes_to_Prod_APIM
+    displayName: Push changes to Prod APIM
+    jobs:
+      - deployment: push_changes_to_Prod_APIM
+        displayName: Push changes to Prod APIM
+        pool:
+          vmImage: ubuntu-latest
+        # creates an environment if it doesn't exist
+        environment: 'Prod'
+        strategy:
+          # default deployment strategy, more coming...
+          runOnce:
+            deploy:
+               steps:
+                 - template: apim-stage.yaml
+                   parameters:
+                     API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+                     RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME_Prod)
+                     CONFIGURATION_YAML_PATH:  $(Build.SourcesDirectory)/configuration.prod.yaml
+                     ENVIRONMRNT: "Prod"
+              

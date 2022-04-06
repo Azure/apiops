@@ -1,0 +1,75 @@
+parameters:
+  - name: API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH
+    type: string
+    displayName: Folder where the artifacts reside
+  - name: ENVIRONMRNT
+    type: string
+    displayName: Environment to display
+  - name: RESOURCE_GROUP_NAME
+    type: string
+    displayName: Resource Group Name
+  - name: CONFIGURATION_YAML_PATH
+    type: string
+    displayName: Optional configuration file
+    default : ""
+
+steps:
+- script: echo Provided configuration was ${{ parameters.CONFIGURATION_YAML_PATH }}
+
+- task: Npm@1
+  displayName: 'Installing Stoplight Spectral.'
+  inputs:
+    command: custom   
+    verbose: false
+    customCommand: 'install -g @stoplight/spectral'
+
+- script: spectral lint "$(Build.Repository.Name)\${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
+  displayName: 'Lint API definition' 
+
+- checkout: self
+- task: UniversalPackages@0
+  displayName: Download publisher
+  inputs:
+    downloadDirectory: '$(Pipeline.Workspace)/publisher'
+    vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
+    vstsFeedPackage: 'publisher'
+    vstsPackageVersion: '*'
+- task: AzureCLI@2
+  displayName: Set publishing variables
+  inputs:
+    azureSubscription: "$(SERVICE_CONNECTION_NAME)"
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      echo "##vso[task.setvariable issecret=true;variable=AZURE_BEARER_TOKEN]$(az account get-access-token --query "accessToken" --output tsv)"
+      echo "##vso[task.setvariable issecret=true;variable=AZURE_CLIENT_ID]$servicePrincipalId"
+      echo "##vso[task.setvariable issecret=true;variable=AZURE_CLIENT_SECRET]$servicePrincipalKey"
+      echo "##vso[task.setvariable issecret=true;variable=AZURE_TENANT_ID]$tenantId"
+      echo "##vso[task.setvariable issecret=true;variable=AZURE_SUBSCRIPTION_ID]$(az account show --query "id" --output tsv)"
+    addSpnToEnvironment: true
+    failOnStandardError: true
+- task: AzureCLI@2
+  displayName: Run publisher for ${{ parameters.ENVIRONMRNT}} environment
+  inputs:
+    azureSubscription: "$(SERVICE_CONNECTION_NAME)"
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      chmod u+x $(Pipeline.Workspace)/publisher/publisher
+      $(Pipeline.Workspace)/publisher/publisher
+      result=$?
+      echo "Exit code is $result"
+      exit $result
+    addSpnToEnvironment: true
+    failOnStandardError: true
+  env:
+    AZURE_BEARER_TOKEN: $(AZURE_BEARER_TOKEN)
+    AZURE_CLIENT_ID: $(AZURE_CLIENT_ID)
+    AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+    AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+    AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
+    AZURE_RESOURCE_GROUP_NAME: ${{ parameters.RESOURCE_GROUP_NAME }}
+    API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH:  $(Build.SourcesDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+    COMMIT_ID: $(Build.SourceVersion)
+    ${{ if ne( parameters['CONFIGURATION_YAML_PATH'], '' ) }}:
+      CONFIGURATION_YAML_PATH:  ${{ parameters.CONFIGURATION_YAML_PATH }}
