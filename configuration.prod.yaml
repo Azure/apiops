@@ -1,5 +1,30 @@
 apimServiceName: [your prod apim instance name goes here]
 namedValues:
-  - name: environment
-    displayName: environment
-    value: prod
+  - name: [name goes here. e.g. environment or SearchEngineBackendURL]
+    displayName: [display name  goes here]
+    value: [replacement value in the target environment. e.g. name value can be dev in dev environment and prod in the prod environment]
+loggers:
+    - name: [suorce environment app insight name goes here. e.g. apim-lab-insights]
+      loggerType: applicationInsights
+      description: [app insight description goes here]
+      resourceId: "/subscriptions/[Azure subscription id for the target environment goes here]/resourceGroups/
+                   [resource group name for the target environment goes here]/providers/microsoft.insights/components/
+                   [suorce environment app insight name goes here. e.g. apim-lab-prod-insights]"
+      credentials:
+        instrumentationKey: "{{destination environment namevalue key for the application insights goes here. e.g. Logger-Credentials--62390d98217d201158b4bfb3}}"
+      isBuffered: true
+diagnostics:
+   - name: applicationinsights
+     verbosity: Error
+apis:
+  - name: "[target api to apply application insights to]"
+    diagnostics:
+      - name: applicationinsights
+        verbosity: Error
+        loggerId: "/subscriptions/[Azure subscription id for the target environment goes here]/resourceGroups/[resource group name for the target environment goes here]/
+                   providers/Microsoft.ApiManagement/service/[apim instance name for the target environment goes here]/loggers/[suorce environment app insight name goes here]"
+        
+
+
+
+        
