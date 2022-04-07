@@ -70,16 +70,6 @@ internal static class Git
             : throw new InvalidOperationException($"Failed to get root Git directory for {directory.FullName}. Error message is '{commandResult.StandardError}'.");
     }
 
-    private static async Task<string> GetGitRootDirectoryPath(DirectoryInfo directory)
-    {
-        var command = Command.Run("git", "-C", directory.FullName, "rev-parse", "--show-toplevel");
-        var commandResult = await command.Task;
-
-        return commandResult.Success
-            ? commandResult.StandardOutput.Trim()
-            : throw new InvalidOperationException($"Failed to get root Git directory for {directory.FullName}. Error message is '{commandResult.StandardError}'.");
-    }
-
     private static async Task<string> GetDiffTreeOutput(CommitId commitId, DirectoryInfo baseDirectory)
     {
         var command = Command.Run("git", "-C", baseDirectory.FullName, "diff-tree", "--no-commit-id", "--name-status", "--relative", "-r", $"{commitId}^", $"{commitId}");
