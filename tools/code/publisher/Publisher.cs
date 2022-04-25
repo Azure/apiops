@@ -239,9 +239,9 @@ internal class Publisher : BackgroundService
         }
 
         await PutServiceInformationFile(serviceInformationFiles, cancellationToken);
+        await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
         await PutServicePolicyFile(servicePolicyFiles, cancellationToken);
         await PutLoggerInformationFiles(loggerInformationFiles, cancellationToken);
-        await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
         await PutDiagnosticInformationFiles(diagnosticInformationFiles, cancellationToken);
         await PutGatewayInformationFiles(gatewayInformationFiles, cancellationToken);
         await PutProductInformationFiles(productInformationFiles, cancellationToken);
