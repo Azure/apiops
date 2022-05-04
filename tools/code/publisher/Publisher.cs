@@ -154,6 +154,7 @@ internal class Publisher : BackgroundService
         var productPolicyFiles = new List<ProductPolicyFile>();
         var productApisFiles = new List<ProductApisFile>();
         var diagnosticInformationFiles = new List<DiagnosticInformationFile>();
+        var apiVersionSetInformationFiles = new List<ApiVersionSetInformationFile>();
         var apiInformationFiles = new List<ApiInformationFile>();
         var apiDiagnosticInformationFiles = new List<ApiDiagnosticInformationFile>();
         var apiPolicyFiles = new List<ApiPolicyFile>();
@@ -172,6 +173,7 @@ internal class Publisher : BackgroundService
                 case ProductPolicyFile fileRecord: productPolicyFiles.Add(fileRecord); break;
                 case ProductApisFile fileRecord: productApisFiles.Add(fileRecord); break;
                 case DiagnosticInformationFile fileRecord: diagnosticInformationFiles.Add(fileRecord); break;
+                case ApiVersionSetInformationFile fileRecord: apiVersionSetInformationFiles.Add(fileRecord); break;
                 case ApiInformationFile fileRecord: apiInformationFiles.Add(fileRecord); break;
                 case ApiDiagnosticInformationFile fileRecord: apiDiagnosticInformationFiles.Add(fileRecord); break;
                 case ApiPolicyFile fileRecord: apiPolicyFiles.Add(fileRecord); break;
@@ -184,6 +186,7 @@ internal class Publisher : BackgroundService
         await DeleteApiDiagnostics(apiDiagnosticInformationFiles, cancellationToken);
         await DeleteApiPolicies(apiPolicyFiles, cancellationToken);
         await DeleteApis(apiInformationFiles, cancellationToken);
+        await DeleteApiVersionSets(apiVersionSetInformationFiles, cancellationToken);
         await DeleteLoggers(loggerInformationFiles, cancellationToken);
         await DeleteGatewayApis(gatewayApisFiles, cancellationToken);
         await DeleteGateways(gatewayInformationFiles, cancellationToken);
@@ -209,6 +212,7 @@ internal class Publisher : BackgroundService
         var gatewayApisFiles = new List<GatewayApisFile>();
         var productApisFiles = new List<ProductApisFile>();
         var diagnosticInformationFiles = new List<DiagnosticInformationFile>();
+        var apiVersionSetInformationFiles = new List<ApiVersionSetInformationFile>();
         var apiInformationFiles = new List<ApiInformationFile>();
         var apiSpecificationFiles = new List<ApiSpecificationFile>();
         var apiDiagnosticInformationFiles = new List<ApiDiagnosticInformationFile>();
@@ -229,6 +233,7 @@ internal class Publisher : BackgroundService
                 case ProductPolicyFile fileRecord: productPolicyFiles.Add(fileRecord); break;
                 case ProductApisFile fileRecord: productApisFiles.Add(fileRecord); break;
                 case DiagnosticInformationFile fileRecord: diagnosticInformationFiles.Add(fileRecord); break;
+                case ApiVersionSetInformationFile fileRecord: apiVersionSetInformationFiles.Add(fileRecord); break;
                 case ApiInformationFile fileRecord: apiInformationFiles.Add(fileRecord); break;
                 case ApiSpecificationFile fileRecord: apiSpecificationFiles.Add(fileRecord); break;
                 case ApiDiagnosticInformationFile fileRecord: apiDiagnosticInformationFiles.Add(fileRecord); break;
@@ -237,7 +242,7 @@ internal class Publisher : BackgroundService
                 default: break;
             }
         }
-
+        logger.LogInformation($"Found {apiVersionSetInformationFiles.Count} version set files");
         await PutServiceInformationFile(serviceInformationFiles, cancellationToken);
         await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
         await PutServicePolicyFile(servicePolicyFiles, cancellationToken);
@@ -246,6 +251,7 @@ internal class Publisher : BackgroundService
         await PutGatewayInformationFiles(gatewayInformationFiles, cancellationToken);
         await PutProductInformationFiles(productInformationFiles, cancellationToken);
         await PutProductPolicyFiles(productPolicyFiles, cancellationToken);
+        await PutApiVersionSetInformationFiles(apiVersionSetInformationFiles, cancellationToken);
         await PutApiInformationAndSpecificationFiles(apiInformationFiles, apiSpecificationFiles, cancellationToken);
         await PutApiPolicyFiles(apiPolicyFiles, cancellationToken);
         await PutApiDiagnosticInformationFiles(apiDiagnosticInformationFiles, cancellationToken);
@@ -265,6 +271,7 @@ internal class Publisher : BackgroundService
         ?? ProductPolicyFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ProductApisFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? DiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? ApiVersionSetInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiSpecificationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiDiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
@@ -372,6 +379,28 @@ internal class Publisher : BackgroundService
         var name = GatewayName.From(Gateway.Deserialize(json).Name);
 
         await Gateway.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
+    }
+
+
+    private async ValueTask DeleteApiVersionSets(IReadOnlyCollection<ApiVersionSetInformationFile> files, CancellationToken cancellationToken)
+    {
+        await Parallel.ForEachAsync(files, cancellationToken, DeleteApiVersionSet);
+    }
+
+    private async ValueTask DeleteApiVersionSet(ApiVersionSetInformationFile file, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("File {apiVersionSetInformationFile} was removed, deleting api version set...", file.Path);
+
+        if (commitId is null)
+        {
+            throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
+        }
+
+        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        var id = ApiVersionSetId.From(ApiVersionSet.Deserialize(json).Name);
+
+        await ApiVersionSet.Delete(deleteResource, serviceProviderUri, serviceName, id, cancellationToken);
     }
 
     private async ValueTask PutGatewayApisFiles(IReadOnlyCollection<GatewayApisFile> files, CancellationToken cancellationToken)
@@ -765,13 +794,27 @@ internal class Publisher : BackgroundService
 
     private async ValueTask PutApiInformationAndSpecificationFiles(IReadOnlyCollection<ApiInformationFile> informationFiles, IReadOnlyCollection<ApiSpecificationFile> specificationFiles, CancellationToken cancellationToken)
     {
-        var groups = informationFiles.LeftJoin(specificationFiles,
+        var filePairs = informationFiles.LeftJoin(specificationFiles,
                                                informationFile => informationFile.ApiDirectory,
                                                specificationFile => specificationFile.ApiDirectory,
                                                informationFile => (InformationFile: informationFile, SpecificationFile: null as ApiSpecificationFile),
                                                (informationFile, specificationFile) => (InformationFile: informationFile, SpecificationFile: specificationFile));
 
-        await Parallel.ForEachAsync(groups, cancellationToken, (group, cancellationToken) => PutApiInformationFile(group.InformationFile, group.SpecificationFile, cancellationToken));
+        await Parallel.ForEachAsync(filePairs, cancellationToken, (filePair, cancellationToken) => PutApiInformationFile(filePair.InformationFile, filePair.SpecificationFile, cancellationToken));
+    }
+
+    private async ValueTask PutApiVersionSetInformationFiles(IEnumerable<ApiVersionSetInformationFile> files, CancellationToken cancellationToken)
+    {
+        await Parallel.ForEachAsync(files, cancellationToken, PutApiVersionSetInformationFile);
+    }
+
+    private async ValueTask PutApiVersionSetInformationFile(ApiVersionSetInformationFile informationFile, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Putting api version set information file {apiInformationFile}...", informationFile.Path);
+
+        var json = informationFile.ReadAsJsonObject();
+        var versionSet = ApiVersionSet.Deserialize(json);
+        await ApiVersionSet.Put(putResource, serviceProviderUri, serviceName, versionSet, cancellationToken);
     }
 
     private async ValueTask PutApiInformationFile(ApiInformationFile informationFile, ApiSpecificationFile? specificationFile, CancellationToken cancellationToken)
@@ -780,6 +823,7 @@ internal class Publisher : BackgroundService
 
         var json = informationFile.ReadAsJsonObject();
         var api = Api.Deserialize(json);
+
         if (specificationFile is not null)
         {
             logger.LogInformation("Updating api with specification file {specificationFile}...", specificationFile.Path);
