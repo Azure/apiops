@@ -17,7 +17,7 @@ diagnostics:
    - name: applicationinsights
      verbosity: Error
 apis:
-  - name: "[target api to apply application insights to]"
+  - name: "[target api version & revision to apply application insights to e.g. 'my-api', 'my-api-v2', 'my-api-v2;rev=2']"
     diagnostics:
       - name: applicationinsights
         verbosity: Error

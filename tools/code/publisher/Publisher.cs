@@ -821,10 +821,9 @@ internal class Publisher : BackgroundService
             var api = Api.Deserialize(apiJson);
             return (Api: api, SpecificationFile: files.SpecificationFile);
         }).GroupBy(x => x.Api.Properties.IsCurrent == true)
-        .ToDictionary(x => x.Key ? "Current" : "OldRevisions", x => x.ToList());
-
-        await Parallel.ForEachAsync(splitCurrentRevisions["Current"], cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
-        await Parallel.ForEachAsync(splitCurrentRevisions["OldRevisions"], cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
+        .ToDictionary(x => x.Key ? "Current" : "NonCurrentRevisions", x => x.ToList());
+        if (splitCurrentRevisions.TryGetValue("Current", out var currentRevisions)) await Parallel.ForEachAsync(currentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
+        if (splitCurrentRevisions.TryGetValue("NonCurrentRevisions", out var nonCurrentRevisions)) await Parallel.ForEachAsync(nonCurrentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
     }
 
     private async ValueTask PutApi(common.Models.Api api, ApiSpecificationFile? specificationFile, CancellationToken cancellationToken)
