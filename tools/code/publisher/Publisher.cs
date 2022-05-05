@@ -792,17 +792,6 @@ internal class Publisher : BackgroundService
         await ProductPolicy.Delete(deleteResource, serviceProviderUri, serviceName, productName, cancellationToken);
     }
 
-    private async ValueTask PutApiInformationAndSpecificationFiles(IReadOnlyCollection<ApiInformationFile> informationFiles, IReadOnlyCollection<ApiSpecificationFile> specificationFiles, CancellationToken cancellationToken)
-    {
-        var filePairs = informationFiles.LeftJoin(specificationFiles,
-                                               informationFile => informationFile.ApiDirectory,
-                                               specificationFile => specificationFile.ApiDirectory,
-                                               informationFile => (InformationFile: informationFile, SpecificationFile: null as ApiSpecificationFile),
-                                               (informationFile, specificationFile) => (InformationFile: informationFile, SpecificationFile: specificationFile));
-
-        await Parallel.ForEachAsync(filePairs, cancellationToken, (filePair, cancellationToken) => PutApiInformationFile(filePair.InformationFile, filePair.SpecificationFile, cancellationToken));
-    }
-
     private async ValueTask PutApiVersionSetInformationFiles(IEnumerable<ApiVersionSetInformationFile> files, CancellationToken cancellationToken)
     {
         await Parallel.ForEachAsync(files, cancellationToken, PutApiVersionSetInformationFile);
@@ -817,12 +806,31 @@ internal class Publisher : BackgroundService
         await ApiVersionSet.Put(putResource, serviceProviderUri, serviceName, versionSet, cancellationToken);
     }
 
-    private async ValueTask PutApiInformationFile(ApiInformationFile informationFile, ApiSpecificationFile? specificationFile, CancellationToken cancellationToken)
+    private async ValueTask PutApiInformationAndSpecificationFiles(IReadOnlyCollection<ApiInformationFile> informationFiles, IReadOnlyCollection<ApiSpecificationFile> specificationFiles, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Putting api information file {apiInformationFile}...", informationFile.Path);
+        var filePairs = informationFiles.LeftJoin(specificationFiles,
+                                               informationFile => informationFile.ApiDirectory,
+                                               specificationFile => specificationFile.ApiDirectory,
+                                               informationFile => (InformationFile: informationFile, SpecificationFile: null as ApiSpecificationFile),
+                                               (informationFile, specificationFile) => (InformationFile: informationFile, SpecificationFile: specificationFile));
 
-        var json = informationFile.ReadAsJsonObject();
-        var api = Api.Deserialize(json);
+        // Current revisions need to be processed first or else there's an error.
+        var splitCurrentRevisions = filePairs.Select(files =>
+        {
+            var apiJson = files.InformationFile.ReadAsJsonObject();
+            var api = Api.Deserialize(apiJson);
+            return (Api: api, SpecificationFile: files.SpecificationFile);
+        }).GroupBy(x => x.Api.Properties.IsCurrent == true)
+        .ToDictionary(x => x.Key ? "Current" : "OldRevisions", x => x.ToList());
+
+        await Parallel.ForEachAsync(splitCurrentRevisions["Current"], cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
+        await Parallel.ForEachAsync(splitCurrentRevisions["OldRevisions"], cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
+    }
+
+    private async ValueTask PutApi(common.Models.Api api, ApiSpecificationFile? specificationFile, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Putting api {api}...", api.Name);
+
 
         if (specificationFile is not null)
         {
