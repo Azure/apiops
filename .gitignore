@@ -359,3 +359,5 @@ MigrationBackup/
 # VSCode
 .vscode/*
 appsettings.json
+/tools/code/extractor/Properties/launchSettings.json
+/tools/code/publisher/Properties/launchSettings.json

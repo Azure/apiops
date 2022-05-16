@@ -107,7 +107,7 @@ internal class Publisher : BackgroundService
             logger.LogInformation("Deleting files...");
             await DeleteFiles(filesToDelete, cancellationToken);
         }
-        else if (dictionary.TryGetValue(Action.Put, out var filesToPut))
+        if (dictionary.TryGetValue(Action.Put, out var filesToPut))
         {
             logger.LogInformation("Putting files...");
             await PutFiles(filesToPut, cancellationToken);
