@@ -550,6 +550,7 @@ internal class Publisher : BackgroundService
             {
                 Properties = diagnostic.Properties with
                 {
+                    LoggerId = configurationDiagnostic.LoggerId ?? diagnostic.Properties.LoggerId,
                     Verbosity = configurationDiagnostic.Verbosity ?? diagnostic.Properties.Verbosity
                 }
             };

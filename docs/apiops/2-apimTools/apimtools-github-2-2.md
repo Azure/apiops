@@ -27,4 +27,5 @@ nav_order: 2
 6. Here are the two completed environments: ![github environment](../../assets/images/Github_Environments.png)
 
 7. Next head to the actions section within your repository and manually run the "Publish - Publisher" and "Publish - Extractor" workflows. This will generate the binaires which will be utilized later on by the Extractor and Publisher runners. ![pipeline variable group](../../assets/images/GithubActionsPublishers.png)
-
+    >Note that Github build pipeline agents don't have permission by default to contribute to a repo, create a branch or update a pr. Set the security settings to allow Workflows to have write permissions.
+You need to grant that permission as discussed [here](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#setting-the-permissions-of-the-github_token-for-your-repository)

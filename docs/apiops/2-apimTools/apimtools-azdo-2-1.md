@@ -29,6 +29,8 @@ nav_order: 1
 7. Here we are adding a single approver but in an enterprise setting its recommended that you add two or more approvers. ![prod environment approver](../../assets/images/ado_prod_environment_approver.png)
 8. Create a new pipeline based on [**publish-extractor.yaml**](https://github.com/Azure/apiops/blob/main/tools/pipelines/publish-extractor.yaml). This pipeline will compile the extractor tool whenever it's updated and publish it as a package in Azure DevOps Artifacts.
 ![extractor pipeline](../../assets/images/extractor_pipeline.png)
-9. Run the pipeline.
+9. Run the pipeline. 
+    >Note that Azure DevOps build pipeline agents don't have permission by default to contribute to a repo, create a branch or update a pr.
+You need to grant that permission as discussed [here](https://docs.microsoft.com/en-us/azure/devops/pipelines/policies/set-permissions?toc=%2Fazure%2Fdevops%2Forganizations%2Fsecurity%2Ftoc.json&bc=%2Fazure%2Fdevops%2Forganizations%2Fsecurity%2Fbreadcrumb%2Ftoc.json&view=azure-devops)
 10. Create a new pipeline based on [**publish-publisher.yaml**](https://github.com/Azure/apiops/blob/main/tools/pipelines/publish-publisher.yaml). This pipeline will compile the publisher tool whenever it's updated and publish it as a package in Azure DevOps Artifacts.
 11. Run the pipeline.
