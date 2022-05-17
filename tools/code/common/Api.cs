@@ -28,6 +28,24 @@ public sealed record ApiDisplayName : NonEmptyString
     public static ApiDisplayName From(string value) => new(value);
 }
 
+public sealed record ApiVersion : NonEmptyString
+{
+    private ApiVersion(string? value) : base(value ?? "Original")
+    {
+    }
+
+    public static ApiVersion From(string? value) => new(value);
+}
+
+public sealed record ApiRevision : NonEmptyString
+{
+    private ApiRevision(string? value) : base(value ?? "1")
+    {
+    }
+
+    public static ApiRevision From(string? value) => new(value);
+}
+
 public sealed record ApisDirectory : DirectoryRecord
 {
     private static readonly string name = "apis";
@@ -52,22 +70,30 @@ public sealed record ApiDirectory : DirectoryRecord
     public ApisDirectory ApisDirectory { get; }
     public ApiDisplayName ApiDisplayName { get; }
 
-    private ApiDirectory(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName) : base(apisDirectory.Path.Append(apiDisplayName))
+    public ApiVersion? ApiVersion { get; }
+    public ApiRevision? ApiRevision { get; }
+
+    private ApiDirectory(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName, ApiVersion? apiVersion, ApiRevision? apiRevision) : base(apisDirectory.Path.Append(apiDisplayName).Append(apiVersion ?? "").Append(apiRevision ?? ""))
     {
         ApisDirectory = apisDirectory;
         ApiDisplayName = apiDisplayName;
+        ApiVersion = apiVersion;
+        ApiRevision = apiRevision;
     }
 
-    public static ApiDirectory From(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName) => new(apisDirectory, apiDisplayName);
+    public static ApiDirectory From(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName, ApiVersion? apiVersion, ApiRevision? apiRevision) => new(apisDirectory, apiDisplayName, apiVersion, apiRevision);
 
     public static ApiDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
     {
-        var parentDirectory = directory?.Parent;
-        if (parentDirectory is not null)
+        // apis/<api-name>/<version>/<revision>
+        var versionDir = directory?.Parent;
+        var apiDir = versionDir?.Parent;
+        var apisDir = apiDir?.Parent;
+        if (apisDir is not null)
         {
-            var apisDirectory = ApisDirectory.TryFrom(serviceDirectory, parentDirectory);
+            var apisDirectory = ApisDirectory.TryFrom(serviceDirectory, apisDir);
 
-            return apisDirectory is null ? null : From(apisDirectory, ApiDisplayName.From(directory!.Name));
+            return apisDirectory is null ? null : From(apisDirectory, ApiDisplayName.From(apiDir!.Name), ApiVersion.From(versionDir!.Name), ApiRevision.From(directory!.Name));
         }
         else
         {
