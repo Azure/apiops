@@ -170,6 +170,13 @@ public static class Api
         return getResources(uri, cancellationToken).Select(Deserialize);
     }
 
+    public static IAsyncEnumerable<Models.Api> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ICollection<string> displayNamesToInclude, CancellationToken cancellationToken)
+    {
+        var filters = displayNamesToInclude.Select(displayName => $"properties/displayName eq '{displayName}'");
+        var uri = ListUri(serviceProviderUri, serviceName).SetQueryParameter("$filter", string.Join(" or ", filters));
+        return getResources(uri, cancellationToken).Select(Deserialize);
+    }
+
     public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Api api, CancellationToken cancellationToken)
     {
         var name = ApiName.From(api.Name);
