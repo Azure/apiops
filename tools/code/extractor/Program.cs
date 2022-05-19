@@ -9,7 +9,6 @@ using Polly;
 using Polly.Contrib.WaitAndRetry;
 using Polly.Extensions.Http;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
@@ -34,6 +33,13 @@ public static class Program
     private static void ConfigureConfiguration(IConfigurationBuilder builder)
     {
         builder.AddUserSecrets(typeof(Program).Assembly);
+        var configuration = builder.Build();
+        var yamlPath = configuration.TryGetValue("CONFIGURATION_YAML_PATH");
+
+        if (yamlPath is not null)
+        {
+            builder.AddYamlFile(yamlPath);
+        };
     }
 
     private static void ConfigureServices(IServiceCollection services)

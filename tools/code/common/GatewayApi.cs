@@ -62,6 +62,13 @@ public static class GatewayApi
         return getResources(uri, cancellationToken).Select(Api.Deserialize);
     }
 
+    public static IAsyncEnumerable<Models.Api> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, ICollection<string> apiDisplayNamesToInclude, CancellationToken cancellationToken)
+    {
+        // The REST API doesn't allow filtering by display name, so we have to retrieve all APIs and then filter
+        return List(getResources, serviceProviderUri, serviceName, gatewayName, cancellationToken)
+            .Where(api => apiDisplayNamesToInclude.Any(apiDisplayName => api.Properties.DisplayName.Equals(apiDisplayName, StringComparison.OrdinalIgnoreCase)));
+    }
+
     public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, ApiName apiName, CancellationToken cancellationToken)
     {
         var uri = GetUri(serviceProviderUri, serviceName, gatewayName, apiName);

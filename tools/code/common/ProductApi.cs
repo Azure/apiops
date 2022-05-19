@@ -62,6 +62,13 @@ public static class ProductApi
         return getResources(uri, cancellationToken).Select(Api.Deserialize);
     }
 
+    public static IAsyncEnumerable<Models.Api> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, ICollection<string> apiDisplayNamesToInclude, CancellationToken cancellationToken)
+    {
+        var filters = apiDisplayNamesToInclude.Select(displayName => $"properties/displayName eq '{displayName}'");
+        var uri = ListUri(serviceProviderUri, serviceName, productName).SetQueryParameter("$filter", string.Join(" or ", filters));
+        return getResources(uri, cancellationToken).Select(Api.Deserialize);
+    }
+
     public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, ApiName apiName, CancellationToken cancellationToken)
     {
         var uri = GetUri(serviceProviderUri, serviceName, productName, apiName);
