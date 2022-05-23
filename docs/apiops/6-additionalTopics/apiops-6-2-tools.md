@@ -19,8 +19,8 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | AZURE_BEARER_TOKEN | Token for authentication to Azure. If this is not specified, the tool authenticate with  the [``DefaultAzureCredential``](https://docs.microsoft.com/en-us/dotnet/api/azure.identity.defaultazurecredential?view=azure-dotnet). |
 | API_MANAGEMENT_SERVICE_NAME | Name of the APIM instance to be extracted |
 | API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH | Folder where the APIM artifacts will be saved |
-| API_SPECIFICATION_FORMAT | OpenAPI specification format. Valid options are **JSON** or **YAML**. If the variable is missing or invalid, **YAML** will be used by default. |
-| CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to specify select apis to extract. You only need to specify a single extractor configuration file and reference it in the lowest environment. For more details on how to utilize the configuration file with the extractor refer to the [**extractor specific apis section under additional topics**](https://github.com/Azure/apiops/blob/main/docs/apiops/6-additionalTopics/apiops-6-5-supportingIndependentAPITeams.md)
+| API_SPECIFICATION_FORMAT | OpenAPI specification format. Valid options are **JSON** or **YAML**. If the variable is missing or invalid, **YAML** will be used by default |
+| CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to specify select apis to extract. You only need to specify a single extractor configuration file and reference it in the lowest environment
 
 ### Artifacts
 The extractor will export the artifacts listed below.
