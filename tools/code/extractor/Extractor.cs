@@ -323,7 +323,10 @@ internal class Extractor : BackgroundService
 
     private async ValueTask ExportVersionSets(CancellationToken cancellationToken)
     {
-        var versionSets = ApiVersionSet.List(getResources, serviceProviderUri, serviceName, cancellationToken);
+        var versionSets =
+            configurationModel.ApiDisplayNames is not null
+            ? ApiVersionSet.List(getResources, serviceProviderUri, serviceName, configurationModel.ApiDisplayNames, cancellationToken)
+            : ApiVersionSet.List(getResources, serviceProviderUri, serviceName, cancellationToken);
 
         await Parallel.ForEachAsync(versionSets, cancellationToken, ExportVersionSet);
     }
