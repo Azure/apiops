@@ -13,9 +13,9 @@ In this section we discuss the different scenarios that the Apiops tool supports
 
 In this scenario the Operators and developers of the APIM instance prefer to use the Azure portal. The workflow looks like this: 
 
- ```
+ 
 Carry all the changes in the API Portal -> Manually run the extractor pipeline within your Devops Environment (e.g. Github or Azure Devops) which will automatically create a PR including all the changes -> Manually approve and merge the PR into the main branch -> The merging process will automatically trigger the publisher pipeline which in turn will publish the changes to the current environment as well as the higher environments. There will be manual approvals when promoting across different environments to protect against accidental promotions.
- ```
+ 
 
 There are couple gotchas that you need to be aware here:
 - In this scenario you will utilize the extractor tool to generate the artifacts which will then be promoted across different environments using the publisher tool. 
@@ -26,9 +26,8 @@ There are couple gotchas that you need to be aware here:
 
 In this scenario the Operators and developers of the APIM instance prefer a code first approach. The workflow looks like this:
 
-```
 Create all the different artifacts from an IDE (e.g. VS Code) -> commit the changes to a dev branch -> manually create a PR to the main branch -> manually approve the PR and merge to the main branch -> the merging process will automatically trigger the publisher pipeline which in turn will publish the changes to the current environment as well as the higher environments. There will be manual approvals when promoting across different environments to protect against accidental promotions.. 
-```
+
 
 In this scenario you don't need to utilize the extractor tool to generate the artifacts as the artifacts will be created in the IDE. Having said that, nothing prevents you from utilizing the extractor tool to generate the initial artifacts if you are introducing the tool to an existing APIM instance.
 
