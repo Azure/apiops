@@ -2,7 +2,7 @@
 title: Tools
 parent: Configure APIM tools
 has_children: false
-nav_order: 0
+nav_order: 1
 ---
 
 This section describes the extractor and publisher components which form the core tools used to deploy and publish changes using APIOps.
@@ -37,7 +37,12 @@ The extractor will export the artifacts listed below.
 | Authorization server information | ./authorizationServers/``authorization_server_name``/authorizationServerInformation.json |
 | Diagnostic information | ./diagnostics/``diagnostic_name``/diagnosticInformation.json |
 | Logger information | ./loggers/``logger_name``/loggerInformation.json |
-| API information | ./apis/``api_display_name``/apiInformation.json |
+| Non Versioned/revisioned API information | ./apis/``api_display_name``/Original/1/apiInformation.json |
+| Non Versioned/revisioned specification information | ./apis/``api_display_name``/Original/1/specification.yaml |
+| Versioned API information | ./apis/``api_display_name``/``Original serves as v1 in addition to folders for each version``/1/apiInformation.json |
+| Versioned specification information | ./apis/``api_display_name``/``Original serves as v1 in addition to folders for each version``/1/specification.yaml |
+| revisioned API information | ./apis/``api_display_name``/``Original\[revision number]``/apiinformation.json |
+| revisioned specification information | ./apis/``api_display_name``/``Original\[revision number]``/specification.yaml |
 | OpenAPI specification | ./apis/``api_display_name``/specification.{yaml\|json} |
 | API policy | ./apis/``api_display_name``/policy.xml |
 | Operation policy | ./apis/``api_display_name``/operations/``operation_display_name``/policy.xml |
