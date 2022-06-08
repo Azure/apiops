@@ -1,4 +1,3 @@
-#The apimServiceName is always required. All other fields are optional
 apimServiceName: [your target environment apim instance name goes here]
 namedValues:
   - name: [name goes here. e.g. environment or SearchEngineBackendURL. It doesn't have to exist in the target environment]
