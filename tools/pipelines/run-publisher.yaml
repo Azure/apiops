@@ -13,11 +13,11 @@ parameters:
     default: "artifacts"
   - name: COMMIT_ID
     type: string
-    displayName: Choose "Publish without Commit ID" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "Publish with Commit ID"
-    default: Publish-With-Commit-ID
+    displayName: Choose "publish-all-artifacts-in-repo" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "publish-extracted-artifacts-in-last-commit"
+    default: publish-extracted-artifacts-in-last-commit
     values:
-      - Publish-With-Commit-ID
-      - Publish-Without-Commit-ID
+      - publish-extracted-artifacts-in-last-commit
+      - publish-all-artifacts-in-repo
 
 variables:
   - group: apim-automation

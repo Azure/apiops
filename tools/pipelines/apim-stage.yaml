@@ -14,7 +14,7 @@ parameters:
     default : ""
   - name: COMMIT_ID
     type: string
-    default: Publish-With-Commit-ID
+    default: publish-extracted-artifacts-in-last-commit
 
 steps:
 - script: echo Provided configuration was ${{ parameters.CONFIGURATION_YAML_PATH }}
@@ -73,7 +73,7 @@ steps:
     AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
     AZURE_RESOURCE_GROUP_NAME: ${{ parameters.RESOURCE_GROUP_NAME }}
     API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH:  $(Build.SourcesDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
-    ${{ if eq( parameters['COMMIT_ID'], 'Publish-With-Commit-ID' ) }}:
+    ${{ if eq( parameters['COMMIT_ID'], 'publish-extracted-artifacts-in-last-commit' ) }}:
       COMMIT_ID: $(Build.SourceVersion)
     ${{ if ne( parameters['CONFIGURATION_YAML_PATH'], '' ) }}:
       CONFIGURATION_YAML_PATH:  ${{ parameters.CONFIGURATION_YAML_PATH }}
