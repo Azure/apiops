@@ -12,7 +12,7 @@ on:
         type: string     
       COMMIT_ID:
         required: false
-        type: string       
+        type: string
       API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: 
         required: true
         type: string          
@@ -40,12 +40,13 @@ jobs:
           node-version: '14'
       - run: npm install -g @stoplight/spectral
       - run: spectral lint "${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
-      
+     
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v2
         with:
           fetch-depth: 2
-          
+
+
       # Download the Publisher binary
       - name: Download artifact
         uses: dawidd6/action-download-artifact@v2
@@ -54,8 +55,8 @@ jobs:
           workflow: publish-publisher.yaml
           name: publisher         
 
-      - name: Run publisher without Config Yaml
-        if: ${{ inputs.CONFIGURATION_YAML_PATH == '' }}
+      - name: Run publisher without Config Yaml but with Commit ID
+        if: ( inputs.CONFIGURATION_YAML_PATH == '' &&  inputs.COMMIT_ID != '')
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -68,8 +69,21 @@ jobs:
           chmod +x ./publisher
           ./publisher        
           
-      - name: Run publisher with Config Yaml
-        if: ${{ inputs.CONFIGURATION_YAML_PATH != '' }}
+      - name: Run publisher without Config Yaml or Commit ID
+        if: ( inputs.CONFIGURATION_YAML_PATH == '' &&  inputs.COMMIT_ID == '')
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+        run: |
+          chmod +x ./publisher
+          ./publisher        
+      
+      - name: Run publisher with Config Yaml and Commit id
+        if: ( inputs.CONFIGURATION_YAML_PATH != '' &&  inputs.COMMIT_ID != '')
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -79,6 +93,21 @@ jobs:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
           CONFIGURATION_YAML_PATH:  ${{ GITHUB.WORKSPACE }}/${{ inputs.CONFIGURATION_YAML_PATH }}
           COMMIT_ID: ${{ inputs.COMMIT_ID }}
+        run: |
+          chmod +x ./publisher
+          ./publisher             
+     
+          
+      - name: Run publisher with Config Yaml but without Commit id
+        if: ( inputs.CONFIGURATION_YAML_PATH != '' &&  inputs.COMMIT_ID == '')
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+          CONFIGURATION_YAML_PATH:  ${{ GITHUB.WORKSPACE }}/${{ inputs.CONFIGURATION_YAML_PATH }}
         run: |
           chmod +x ./publisher
           ./publisher             

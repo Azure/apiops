@@ -6,6 +6,19 @@ on:
     branches: [ main ]
     types: [closed]
     
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      COMMIT_ID_CHOICE:
+        description: 'Choose "Publish without Commit ID" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "Publish with Commit ID"'     
+        required: true
+        type: choice
+        default: 'Publish-With-Commit-ID'
+        options:
+        - 'Publish-With-Commit-ID'
+        - 'Publish-Without-Commit-ID'
+        
+        
 jobs:
   get-commit:
     runs-on: ubuntu-latest
@@ -17,7 +30,9 @@ jobs:
           echo "::set-output name=commit_id::${GITHUB_SHA}"
     outputs:
           commit_id: ${{ steps.commit.outputs.commit_id }}
-  create-dev:
+  #Publish with Commit ID
+  Push-Changes-To-APIM-Dev-With-Commit-ID:
+    if: (github.event.inputs.COMMIT_ID_CHOICE == 'Publish-With-Commit-ID' || github.event.inputs.COMMIT_ID_CHOICE == '')
     needs: get-commit
     uses: ./.github/workflows/run-publisher-with-env.yaml
     with:
@@ -31,14 +46,45 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}   
       AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
       API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
-  create-prod:
-    needs: [get-commit, create-dev]
+  #Publish without Commit ID. Publishes all artifacts that reside in the artifacts forlder
+  Push-Changes-To-APIM-Dev-Without-Commit-ID:
+    if: github.event.inputs.COMMIT_ID_CHOICE == 'Publish-Without-Commit-ID'
+    needs: get-commit
+    uses: ./.github/workflows/run-publisher-with-env.yaml
+    with:
+      API_MANAGEMENT_ENVIRONMENT: dev # change this to match the dev environment created in settings
+      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}   
+      AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+      API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
+  Push-Changes-To-APIM-Prod-With-Commit-ID:
+    if:  (github.event.inputs.COMMIT_ID_CHOICE == 'Publish-With-Commit-ID' || github.event.inputs.COMMIT_ID_CHOICE == '')
+    needs: [get-commit, Push-Changes-To-APIM-Dev-With-Commit-ID]
     uses: ./.github/workflows/run-publisher-with-env.yaml
     with:
       API_MANAGEMENT_ENVIRONMENT: prod # change this to match the prod environment created in settings
       CONFIGURATION_YAML_PATH: configuration.prod.yaml # make sure the file is available at the root
       API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder
-      COMMIT_ID: ${{ needs.get-commit.outputs.commit_id }}
+      COMMIT_ID: ${{ needs.get-commit.outputs.commit_id }} 
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+      API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }} 
+  Push-Changes-To-APIM-Prod-Without-Commit-ID:
+    if: ${{ github.event.inputs.COMMIT_ID_CHOICE == 'Publish-Without-Commit-ID' }}
+    needs: [get-commit, Push-Changes-To-APIM-Dev-Without-Commit-ID]
+    uses: ./.github/workflows/run-publisher-with-env.yaml
+    with:
+      API_MANAGEMENT_ENVIRONMENT: prod # change this to match the prod environment created in settings
+      CONFIGURATION_YAML_PATH: configuration.prod.yaml # make sure the file is available at the root
+      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
