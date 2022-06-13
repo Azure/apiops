@@ -35,7 +35,7 @@ internal class Extractor : BackgroundService
         this.getResources = azureHttpClient.GetResourcesAsJsonObjects;
         this.serviceDirectory = GetServiceDirectory(configuration);
         this.serviceProviderUri = GetServiceProviderUri(configuration, azureHttpClient);
-        this.serviceName = ServiceName.From(configuration.GetValue("API_MANAGEMENT_SERVICE_NAME"));
+        this.serviceName = GetServiceName(configuration);
         this.specificationFormat = GetSpecificationFormat(configuration);
         this.configurationModel = configuration.Get<ConfigurationModel>();
     }
@@ -49,6 +49,13 @@ internal class Extractor : BackgroundService
         var resourceGroupName = configuration.GetValue("AZURE_RESOURCE_GROUP_NAME");
 
         return ServiceProviderUri.From(azureHttpClient.ResourceManagerEndpoint, subscriptionId, resourceGroupName);
+    }
+
+    private static ServiceName GetServiceName(IConfiguration configuration)
+    {
+        var serviceName = configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME") ?? configuration.TryGetValue("apimServiceName");
+
+        return ServiceName.From(serviceName ?? throw new InvalidOperationException("Could not find service name in configuration. Either specify it in key 'apimServiceName' or 'API_MANAGEMENT_SERVICE_NAME'."));
     }
 
     private static ApiSpecificationFormat GetSpecificationFormat(IConfiguration configuration)
@@ -90,7 +97,6 @@ internal class Extractor : BackgroundService
 
     private async ValueTask Run(CancellationToken cancellationToken)
     {
-        await ExportServiceInformation(cancellationToken);
         await ExportServicePolicy(cancellationToken);
         await ExportNamedValues(cancellationToken);
         await ExportGateways(cancellationToken);
@@ -99,16 +105,6 @@ internal class Extractor : BackgroundService
         await ExportApis(cancellationToken);
         await ExportVersionSets(cancellationToken);
         await ExportDiagnostics(cancellationToken);
-    }
-
-    private async ValueTask ExportServiceInformation(CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Exporting service information...");
-
-        var file = ServiceInformationFile.From(serviceDirectory);
-        var service = await Service.Get(getResource, serviceProviderUri, serviceName, cancellationToken);
-        var json = Service.Serialize(service);
-        await file.OverwriteWithJson(json, cancellationToken);
     }
 
     private async ValueTask ExportServicePolicy(CancellationToken cancellationToken)

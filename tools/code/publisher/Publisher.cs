@@ -38,7 +38,7 @@ internal class Publisher : BackgroundService
         this.serviceDirectory = GetServiceDirectory(configuration);
         this.configurationModel = configuration.Get<ConfigurationModel>();
         this.serviceProviderUri = GetServiceProviderUri(configuration, azureHttpClient);
-        this.serviceName = GetServiceName(configuration, serviceDirectory, configurationModel);
+        this.serviceName = GetServiceName(configuration);
         this.commitId = TryGetCommitId(configuration);
     }
 
@@ -53,14 +53,11 @@ internal class Publisher : BackgroundService
         return ServiceProviderUri.From(azureHttpClient.ResourceManagerEndpoint, subscriptionId, resourceGroupName);
     }
 
-    private static ServiceName GetServiceName(IConfiguration configuration, ServiceDirectory serviceDirectory, ConfigurationModel configurationModel)
+    private static ServiceName GetServiceName(IConfiguration configuration)
     {
-        var configurationServiceName = configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME");
-        var serviceInformationFile = ServiceInformationFile.From(serviceDirectory);
-        var jsonServiceName = serviceInformationFile.Exists() ? Service.GetNameFromFile(serviceInformationFile) : null;
-        var configurationModelServiceName = configurationModel.ApimServiceName;
+        var serviceName = configuration.TryGetValue("apimServiceName") ?? configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME");
 
-        return ServiceName.From(configurationModelServiceName ?? jsonServiceName ?? configurationServiceName ?? throw new InvalidOperationException($"Could not find service name."));
+        return ServiceName.From(serviceName ?? throw new InvalidOperationException("Could not find service name in configuration. Either specify it in key 'apimServiceName' or 'API_MANAGEMENT_SERVICE_NAME'."));
     }
 
     private static CommitId? TryGetCommitId(IConfiguration configuration)
@@ -202,7 +199,6 @@ internal class Publisher : BackgroundService
 
     private async ValueTask PutFiles(IReadOnlyCollection<FileInfo> files, CancellationToken cancellationToken)
     {
-        var serviceInformationFiles = new List<ServiceInformationFile>();
         var servicePolicyFiles = new List<ServicePolicyFile>();
         var gatewayInformationFiles = new List<GatewayInformationFile>();
         var namedValueInformationFiles = new List<NamedValueInformationFile>();
@@ -223,7 +219,6 @@ internal class Publisher : BackgroundService
         {
             switch (TryClassifyFile(file))
             {
-                case ServiceInformationFile fileRecord: serviceInformationFiles.Add(fileRecord); break;
                 case ServicePolicyFile fileRecord: servicePolicyFiles.Add(fileRecord); break;
                 case GatewayInformationFile fileRecord: gatewayInformationFiles.Add(fileRecord); break;
                 case NamedValueInformationFile fileRecord: namedValueInformationFiles.Add(fileRecord); break;
@@ -243,7 +238,6 @@ internal class Publisher : BackgroundService
             }
         }
 
-        await PutServiceInformationFile(serviceInformationFiles, cancellationToken);
         await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
         await PutServicePolicyFile(servicePolicyFiles, cancellationToken);
         await PutLoggerInformationFiles(loggerInformationFiles, cancellationToken);
@@ -261,8 +255,7 @@ internal class Publisher : BackgroundService
     }
 
     private FileRecord? TryClassifyFile(FileInfo file) =>
-        ServiceInformationFile.TryFrom(serviceDirectory, file) as FileRecord
-        ?? GatewayInformationFile.TryFrom(serviceDirectory, file) as FileRecord
+        GatewayInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? LoggerInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ServicePolicyFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? NamedValueInformationFile.TryFrom(serviceDirectory, file) as FileRecord
@@ -277,25 +270,6 @@ internal class Publisher : BackgroundService
         ?? ApiDiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiPolicyFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiOperationPolicyFile.TryFrom(serviceDirectory, file) as FileRecord;
-
-    private async ValueTask PutServiceInformationFile(IReadOnlyCollection<ServiceInformationFile> files, CancellationToken cancellationToken)
-    {
-        var serviceInformationFile = files.SingleOrDefault();
-
-        if (serviceInformationFile is not null)
-        {
-            await PutServiceInformationFile(serviceInformationFile, cancellationToken);
-        }
-    }
-
-    private async ValueTask PutServiceInformationFile(ServiceInformationFile file, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting service information file {serviceInformationFile}...", file.Path);
-
-        var json = file.ReadAsJsonObject();
-        var service = Service.Deserialize(json) with { Name = serviceName };
-        await Service.Put(putResource, serviceProviderUri, service, cancellationToken);
-    }
 
     private async ValueTask PutServicePolicyFile(IReadOnlyCollection<ServicePolicyFile> files, CancellationToken cancellationToken)
     {
