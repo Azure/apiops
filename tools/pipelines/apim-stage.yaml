@@ -8,6 +8,10 @@ parameters:
   - name: RESOURCE_GROUP_NAME
     type: string
     displayName: Resource Group Name
+  - name: API_MANAGEMENT_SERVICE_NAME
+    type: string
+    displayName: APIM Instance Name
+    default : ""
   - name: CONFIGURATION_YAML_PATH
     type: string
     displayName: Optional configuration file
@@ -16,9 +20,13 @@ parameters:
     type: string
     default: publish-extracted-artifacts-in-last-commit
 
+     
+
 steps:
 - script: echo Provided configuration was ${{ parameters.CONFIGURATION_YAML_PATH }}
-
+  displayName: Print the name of the yaml configuration file if provided
+- script: echo Provided app service name was ${{ parameters.API_MANAGEMENT_SERVICE_NAME }}
+  displayName: Print the name of the apim service name if provided
 - task: Npm@1
   displayName: 'Installing Stoplight Spectral.'
   inputs:
@@ -73,6 +81,8 @@ steps:
     AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
     AZURE_RESOURCE_GROUP_NAME: ${{ parameters.RESOURCE_GROUP_NAME }}
     API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH:  $(Build.SourcesDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+    ${{ if ne( parameters['API_MANAGEMENT_SERVICE_NAME'], '' ) }}:
+      API_MANAGEMENT_SERVICE_NAME :  ${{ parameters.API_MANAGEMENT_SERVICE_NAME }}
     ${{ if eq( parameters['COMMIT_ID'], 'publish-extracted-artifacts-in-last-commit' ) }}:
       COMMIT_ID: $(Build.SourceVersion)
     ${{ if ne( parameters['CONFIGURATION_YAML_PATH'], '' ) }}:
