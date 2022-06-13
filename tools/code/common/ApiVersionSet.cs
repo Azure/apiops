@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -115,6 +116,25 @@ public static class ApiVersionSet
     {
         var uri = ListUri(serviceProviderUri, serviceName);
         return getResources(uri, cancellationToken).Select(Deserialize);
+    }
+
+    /// <summary>
+    /// Only return version sets associated with APIs in <paramref name="apiDisplayNamesToInclude"/>.
+    /// </summary>
+    public static async IAsyncEnumerable<Models.ApiVersionSet> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ICollection<string> apiDisplayNamesToInclude, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // Get version set names from apis to include
+        var filteredVersionNames = await Api.List(getResources, serviceProviderUri, serviceName, apiDisplayNamesToInclude, cancellationToken)
+                                            .Select(api => api.Properties.ApiVersionSetId?.Split("/").LastOrDefault())
+                                            .ToListAsync(cancellationToken);
+
+        var versionSets = List(getResources, serviceProviderUri, serviceName, cancellationToken)
+                            .Where(versionSet => filteredVersionNames.Contains(versionSet.Name));
+
+        await foreach (var versionSet in versionSets)
+        {
+            yield return versionSet;
+        }
     }
 
     public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.ApiVersionSet apiVersionSet, CancellationToken cancellationToken)
