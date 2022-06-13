@@ -29,7 +29,6 @@ The extractor will export the artifacts listed below.
 
 | Type | Path |
 | - | - |
-| APIM instance information | ./serviceInformation.json |
 | APIM instance global policy | ./policy.xml |
 | Product information | ./products/``product_display_name``/productInformation.json |
 | Product policy | ./products/``product_display_name``/policy.xml |
