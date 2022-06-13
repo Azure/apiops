@@ -11,7 +11,7 @@ nav_order: 2
 
 | Configuration | Purpose |
 | - | - |
-| apimServiceName | Name of the destination APIM instance   |
+| apimServiceName | Name of the destination APIM instance.Note that if you provide both the apimServiceName and the API_MANAGEMENT_SERVICE_NAME then the former will take precedence    |
 | namedValues | List of named value pairs to override |
 | loggers | Information for the application insights instance to utilize in the destination environment APIM instance |
 | diagnostics | Configuration for the verbosity setting of the application insights instance to utilize in the destination environment APIM instance  |
