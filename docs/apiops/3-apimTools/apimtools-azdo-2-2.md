@@ -22,7 +22,7 @@ nav_order: 2
 4. [Create a pipeline variable group](https://docs.microsoft.com/en-us/azure/devops/pipelines/library/variable-groups?view=azure-devops&tabs=classic#create-a-variable-group) called **apim-automation**. In that group, add these variables:
     - **ARTIFACTS_FEED_NAME** and for its value, enter the name of the artifacts feed you just created.
     - **SERVICE_CONNECTION_NAME** and for its value, enter the name of your [Azure service connection](https://docs.microsoft.com/en-us/azure/devops/pipelines/library/service-endpoints?view=azure-devops&tabs=yaml).
-    - **API_MANAGEMENT_SERVICE_NAME** and for its value, enter the name of lower environment apim instance name.
+    - **APIM_NAME** and for its value, enter the name of lower environment apim instance name.
     - **RESOURCE_GROUP_NAME** and for its value, enter the resource group name of your Azure APIM instance. In this workshop we have two apim instances representing both the dev and prod environments so make sure you have two resource group entries representing both as shown in the image below.
 ![pipeline variable group](../../assets/images/variable_groups.png)
 5. Create a target [**environment**](https://docs.microsoft.com/en-us/azure/devops/pipelines/process/environments?view=azure-devops) called prod as shown below. The environment will allow us to require a manual approval between stages in a yaml based release pipeline. Choose Prod as the name and for the resource type choose None. ![prod environment](../../assets/images/ado_prod_environment.png)
