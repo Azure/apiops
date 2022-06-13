@@ -11,6 +11,13 @@ parameters:
     type: string
     displayName: Folder where the artifacts reside
     default: "artifacts"
+  - name: COMMIT_ID
+    type: string
+    displayName: Choose "publish-all-artifacts-in-repo" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "publish-extracted-artifacts-in-last-commit"
+    default: publish-extracted-artifacts-in-last-commit
+    values:
+      - publish-extracted-artifacts-in-last-commit
+      - publish-all-artifacts-in-repo
 
 variables:
   - group: apim-automation
@@ -31,6 +38,7 @@ stages:
               API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
               RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME)
               ENVIRONMRNT: "Dev"
+              COMMIT_ID: ${{ parameters.COMMIT_ID }}
   - stage: push_changes_to_Prod_APIM
     displayName: Push changes to Prod APIM
     jobs:
@@ -51,4 +59,5 @@ stages:
                      RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME_Prod)
                      CONFIGURATION_YAML_PATH:  $(Build.SourcesDirectory)/configuration.prod.yaml
                      ENVIRONMRNT: "Prod"
+                     COMMIT_ID: ${{ parameters.COMMIT_ID }}
               

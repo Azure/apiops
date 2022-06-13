@@ -1,13 +1,14 @@
 ---
 title: Make changes in code and create a PR
-parent: Operations by Pull Request
+parent: Publish APIM artifacts
 has_children: false
-nav_order: 3
+nav_order: 2
 ---
 
 
 ### Make changes in code and create a PR
 
+```Note: Make sure you have completed "Publish APIM artifacts in Azure DevOps utilizing the publisher tool" section before completing this section as you need the publisher pipeline to be in place before you start pushing code changes.```
 1. Clone the apim-artifacts repo on your local machine. This is the repo the extractor pipeline pulls in the APIM artifacts.
 2. Open the folder in Visual Studio Code. Create a new branch to make your changes in.
    -  ```
