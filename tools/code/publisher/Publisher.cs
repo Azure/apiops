@@ -38,7 +38,7 @@ internal class Publisher : BackgroundService
         this.serviceDirectory = GetServiceDirectory(configuration);
         this.configurationModel = configuration.Get<ConfigurationModel>();
         this.serviceProviderUri = GetServiceProviderUri(configuration, azureHttpClient);
-        this.serviceName = GetServiceName(configuration, serviceDirectory, configurationModel);
+        this.serviceName = GetServiceName(configuration);
         this.commitId = TryGetCommitId(configuration);
     }
 
@@ -53,9 +53,9 @@ internal class Publisher : BackgroundService
         return ServiceProviderUri.From(azureHttpClient.ResourceManagerEndpoint, subscriptionId, resourceGroupName);
     }
 
-    private static ServiceName GetServiceName(IConfiguration configuration, ServiceDirectory serviceDirectory, ConfigurationModel configurationModel)
+    private static ServiceName GetServiceName(IConfiguration configuration)
     {
-        var serviceName = configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME") ?? configuration.TryGetValue("apimServiceName");
+        var serviceName = configuration.TryGetValue("apimServiceName") ?? configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME");
 
         return ServiceName.From(serviceName ?? throw new InvalidOperationException("Could not find service name in configuration. Either specify it in key 'apimServiceName' or 'API_MANAGEMENT_SERVICE_NAME'."));
     }
