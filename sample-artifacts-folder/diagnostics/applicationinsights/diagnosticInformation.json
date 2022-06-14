@@ -1,11 +1,8 @@
 {
   "name": "applicationinsights",
   "properties": {
+    "loggerId": "/subscriptions/77fadbdc-74f1-4ce8-8962-b34400a1f170/resourceGroups/rg-apim-lab/providers/Microsoft.ApiManagement/service/apim-wk-05102022/loggers/apim-lab-insights",
     "alwaysLog": "allErrors",
-    "httpCorrelationProtocol": "Legacy",
-    "logClientIp": true,
-    "loggerId": "/subscriptions/***/resourceGroups/rg-apim-demo/providers/Microsoft.ApiManagement/service/apim-demo/loggers/tst",
-    "verbosity": "information",
     "backend": {
       "request": {
         "body": {
@@ -23,7 +20,7 @@
     "frontend": {
       "request": {
         "body": {
-          "bytes": 3
+          "bytes": 0
         },
         "headers": []
       },
@@ -34,9 +31,12 @@
         "headers": []
       }
     },
+    "httpCorrelationProtocol": "Legacy",
+    "logClientIp": true,
     "sampling": {
-      "percentage": 100.0,
+      "percentage": 100,
       "samplingType": "fixed"
-    }
+    },
+    "verbosity": "information"
   }
 }

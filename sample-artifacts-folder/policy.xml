@@ -9,8 +9,20 @@
     - Policies are applied in the order of their appearance, from the top down.
 -->
 <policies>
-  <inbound>
-    <!--Extract token from cookie header and save it to cookieJwt variable-->
-    <set-variable name="cookieJwt" value="abc" />
-  </inbound>
+	<inbound>
+		<cors allow-credentials="false">
+			<allowed-origins>
+				<origin>{{environment}}</origin>
+			</allowed-origins>
+			<allowed-methods>
+				<method>GET</method>
+				<method>POST</method>
+			</allowed-methods>
+		</cors>
+	</inbound>
+	<backend>
+		<forward-request />
+	</backend>
+	<outbound />
+	<on-error />
 </policies>

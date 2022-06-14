@@ -1,0 +1,15 @@
+{
+  "name": "testapi",
+  "properties": {
+    "path": "test",
+    "displayName": "testapi",
+    "apiRevision": "1",
+    "description": "",
+    "isCurrent": true,
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://www.bing.com",
+    "subscriptionRequired": true
+  }
+}

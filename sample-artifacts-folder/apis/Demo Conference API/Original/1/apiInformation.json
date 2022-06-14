@@ -1,0 +1,15 @@
+{
+  "name": "demo-conference-api",
+  "properties": {
+    "path": "",
+    "displayName": "Demo Conference API",
+    "apiRevision": "1",
+    "description": "A sample API with information related to a technical conference.  The available resources  include *Speakers*, *Sessions* and *Topics*.  A single write operation is available to provide  feedback on a session.",
+    "isCurrent": true,
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://conferenceapi.azurewebsites.net",
+    "subscriptionRequired": true
+  }
+}
