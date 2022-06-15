@@ -71,8 +71,9 @@ stages:
               inlineScript: |
                 chmod u+x $(Pipeline.Workspace)/extractor/extractor
                 $(Pipeline.Workspace)/extractor/extractor
-                echo "Exit code is $?"
-                exit $?
+                result=$?
+                echo "Exit code is $result"
+                exit $result
               addSpnToEnvironment: true
               failOnStandardError: true
             env:
