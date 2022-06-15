@@ -2,7 +2,7 @@
 title: Rerunning Failed Builds
 parent: Additional Topics
 has_children: false
-nav_order: 3
+nav_order: 2
 ---
 
 ## Recovering from failed builds

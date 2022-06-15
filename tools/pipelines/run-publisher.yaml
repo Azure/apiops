@@ -13,10 +13,10 @@ parameters:
     default: "artifacts"
   - name: COMMIT_ID
     type: string
-    displayName: Choose "publish-all-artifacts-in-repo" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "publish-extracted-artifacts-in-last-commit"
-    default: publish-extracted-artifacts-in-last-commit
+    displayName: Choose "publish-all-artifacts-in-repo" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "publish-artifacts-in-last-commit"
+    default: publish-artifacts-in-last-commit
     values:
-      - publish-extracted-artifacts-in-last-commit
+      - publish-artifacts-in-last-commit
       - publish-all-artifacts-in-repo
 
 variables:

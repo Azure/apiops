@@ -10,12 +10,12 @@ on:
   workflow_dispatch:
     inputs:
       COMMIT_ID_CHOICE:
-        description: 'Choose "publish-all-artifacts-in-repo" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "publish-extracted-artifacts-in-last-commit"'     
+        description: 'Choose "publish-all-artifacts-in-repo" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "publish-artifacts-in-last-commit"'     
         required: true
         type: choice
-        default: 'publish-extracted-artifacts-in-last-commit'
+        default: 'publish-artifacts-in-last-commit'
         options:
-        - 'publish-extracted-artifacts-in-last-commit'
+        - 'publish-artifacts-in-last-commit'
         - 'publish-all-artifacts-in-repo'
         
         
@@ -32,7 +32,7 @@ jobs:
           commit_id: ${{ steps.commit.outputs.commit_id }}
   #Publish with Commit ID
   Push-Changes-To-APIM-Dev-With-Commit-ID:
-    if: (github.event.inputs.COMMIT_ID_CHOICE == 'publish-extracted-artifacts-in-last-commit' || github.event.inputs.COMMIT_ID_CHOICE == '')
+    if: (github.event.inputs.COMMIT_ID_CHOICE == 'publish-artifacts-in-last-commit' || github.event.inputs.COMMIT_ID_CHOICE == '')
     needs: get-commit
     uses: ./.github/workflows/run-publisher-with-env.yaml
     with:
@@ -62,7 +62,7 @@ jobs:
       AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
       API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
   Push-Changes-To-APIM-Prod-With-Commit-ID:
-    if:  (github.event.inputs.COMMIT_ID_CHOICE == 'publish-extracted-artifacts-in-last-commit' || github.event.inputs.COMMIT_ID_CHOICE == '')
+    if:  (github.event.inputs.COMMIT_ID_CHOICE == 'publish-artifacts-in-last-commit' || github.event.inputs.COMMIT_ID_CHOICE == '')
     needs: [get-commit, Push-Changes-To-APIM-Dev-With-Commit-ID]
     uses: ./.github/workflows/run-publisher-with-env.yaml
     with:

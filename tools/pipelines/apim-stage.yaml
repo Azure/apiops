@@ -18,7 +18,7 @@ parameters:
     default : ""
   - name: COMMIT_ID
     type: string
-    default: publish-extracted-artifacts-in-last-commit
+    default: publish-artifacts-in-last-commit
 
      
 
@@ -83,7 +83,7 @@ steps:
     API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH:  $(Build.SourcesDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
     ${{ if ne( parameters['API_MANAGEMENT_SERVICE_NAME'], '' ) }}:
       API_MANAGEMENT_SERVICE_NAME :  ${{ parameters.API_MANAGEMENT_SERVICE_NAME }}
-    ${{ if eq( parameters['COMMIT_ID'], 'publish-extracted-artifacts-in-last-commit' ) }}:
+    ${{ if eq( parameters['COMMIT_ID'], 'publish-artifacts-in-last-commit' ) }}:
       COMMIT_ID: $(Build.SourceVersion)
     ${{ if ne( parameters['CONFIGURATION_YAML_PATH'], '' ) }}:
       CONFIGURATION_YAML_PATH:  ${{ parameters.CONFIGURATION_YAML_PATH }}
