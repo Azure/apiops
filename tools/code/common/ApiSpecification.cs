@@ -1,6 +1,7 @@
 ﻿using Microsoft.OpenApi.Readers;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -16,7 +17,7 @@ public sealed record ApiSpecificationFile : FileRecord
     public ApiDirectory ApiDirectory { get; }
 
     private ApiSpecificationFile(ApiDirectory apiDirectory, ApiSpecificationFormat format)
-        : base(apiDirectory.Path.Append(GetNameFromFormat(format)))
+        : base(apiDirectory.Path.Append(format.FileName))
     {
         Format = format;
 
@@ -27,41 +28,46 @@ public sealed record ApiSpecificationFile : FileRecord
 
     public static ApiSpecificationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        if (Enum.TryParse<ApiSpecificationFormat>(string.Concat(file.Extension.Skip(1)), ignoreCase: true, out var format))
-        {
-            if (GetNameFromFormat(format).Equals(file?.Name))
-            {
-                var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
+        var specificationFiles = from specificationFormat in ApiSpecificationFormat.List
+                                 where specificationFormat.FileName.Equals(file.Name, StringComparison.OrdinalIgnoreCase)
+                                 let apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory)
+                                 where apiDirectory is not null
+                                 select new ApiSpecificationFile(apiDirectory, specificationFormat);
 
-                return apiDirectory is null ? null : new(apiDirectory, format);
-            }
-            else
-            {
-                return null;
-            }
-        }
-        else
-        {
-            return null;
-        }
+        return specificationFiles.FirstOrDefault();
     }
-
-    private static string GetNameFromFormat(ApiSpecificationFormat format) =>
-        TryGetNameFromFormat(format) ?? throw new InvalidOperationException($"File format {format} is invalid.");
-
-    internal static string? TryGetNameFromFormat(ApiSpecificationFormat format) =>
-        format switch
-        {
-            ApiSpecificationFormat.Json => "specification.json",
-            ApiSpecificationFormat.Yaml => "specification.yaml",
-            _ => null
-        };
 }
 
-public enum ApiSpecificationFormat
+public abstract record ApiSpecificationFormat
 {
-    Json,
-    Yaml
+    private ApiSpecificationFormat(string formatName, string fileName)
+    {
+        FormatName = formatName;
+        FileName = fileName;
+    }
+
+    public string FormatName { get; }
+    public string FileName { get; }
+
+    public record OpenApi2Json : ApiSpecificationFormat
+    {
+        public OpenApi2Json() : base(formatName: nameof(OpenApi2Json), fileName: "specification.json") { }
+    }
+
+    public record OpenApi3Json : ApiSpecificationFormat
+    {
+        public OpenApi3Json() : base(formatName: nameof(OpenApi3Json), fileName: "specification.json") { }
+    }
+
+    public record OpenApi3Yaml : ApiSpecificationFormat
+    {
+        public OpenApi3Yaml() : base(formatName: nameof(OpenApi3Yaml), fileName: "specification.yaml") { }
+    }
+
+    public static ImmutableList<ApiSpecificationFormat> List { get; } =
+        ImmutableList.Create<ApiSpecificationFormat>(new OpenApi2Json(),
+                                                     new OpenApi3Json(),
+                                                     new OpenApi3Yaml());
 }
 
 public static class ApiSpecification
@@ -74,17 +80,19 @@ public static class ApiSpecification
     internal static string FormatToExportString(ApiSpecificationFormat format) =>
         format switch
         {
-            ApiSpecificationFormat.Json => "openapi+json-link",
-            ApiSpecificationFormat.Yaml => "openapi-link",
-            _ => throw new InvalidOperationException($"File format {format} is invalid. Only OpenAPI YAML & JSON are supported.")
+            ApiSpecificationFormat.OpenApi3Json => "openapi+json-link",
+            ApiSpecificationFormat.OpenApi3Yaml => "openapi-link",
+            ApiSpecificationFormat.OpenApi2Json => "swagger-link-json",
+            _ => throw new NotImplementedException()
         };
 
     public static string FormatToString(ApiSpecificationFormat format) =>
         format switch
         {
-            ApiSpecificationFormat.Json => "openapi+json",
-            ApiSpecificationFormat.Yaml => "openapi",
-            _ => throw new InvalidOperationException($"File format {format} is invalid. Only OpenAPI YAML & JSON are supported.")
+            ApiSpecificationFormat.OpenApi3Json => "openapi+json",
+            ApiSpecificationFormat.OpenApi3Yaml => "openapi",
+            ApiSpecificationFormat.OpenApi2Json => "swagger-json",
+            _ => throw new NotImplementedException()
         };
 
     public static async ValueTask<Stream> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, Func<Uri, CancellationToken, ValueTask<Stream>> downloader, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiSpecificationFormat format, CancellationToken cancellationToken)
@@ -105,15 +113,17 @@ public static class ApiSpecification
             ? new DirectoryInfo(apiDirectory.Path).EnumerateFiles().Select(file => file.Name).ToList()
             : new List<string>();
 
-        return
-            Enum.GetValues<ApiSpecificationFormat>()
-                .Where(format =>
-                {
-                    var formatFileName = ApiSpecificationFile.TryGetNameFromFormat(format);
-                    return formatFileName is not null && directoryFileNames.Contains(formatFileName);
-                })
-                .Select(format => ApiSpecificationFile.From(apiDirectory, format))
-                .FirstOrDefault();
+        var specificationFormats = new List<ApiSpecificationFormat>
+        {
+            new ApiSpecificationFormat.OpenApi2Json(),
+            new ApiSpecificationFormat.OpenApi3Json(),
+            new ApiSpecificationFormat.OpenApi3Yaml(),
+        };
+
+        return ApiSpecificationFormat.List
+                                     .Where(format => directoryFileNames.Contains(format.FileName, StringComparer.OrdinalIgnoreCase))
+                                     .Select(format => ApiSpecificationFile.From(apiDirectory, format))
+                                     .FirstOrDefault();
     }
 
     public static async Task<ApiOperationName?> TryFindApiOperationName(ApiSpecificationFile file, ApiOperationDisplayName displayName)

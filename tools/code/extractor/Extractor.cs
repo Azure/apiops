@@ -63,10 +63,10 @@ internal class Extractor : BackgroundService
         var configurationFormat = configuration.TryGetValue("API_SPECIFICATION_FORMAT");
 
         return configurationFormat is null
-            ? ApiSpecificationFormat.Yaml
-            : Enum.TryParse<ApiSpecificationFormat>(configurationFormat, ignoreCase: true, out var format)
-              ? format
-              : throw new InvalidOperationException("API specification format in configuration is invalid. Accepted values are 'json' and 'yaml'");
+            ? new ApiSpecificationFormat.OpenApi3Yaml()
+            : ApiSpecificationFormat.List
+                                    .Where(format => format.FormatName.Equals(configurationFormat, StringComparison.OrdinalIgnoreCase))
+                                    .FirstOrDefault() ?? throw new InvalidOperationException($"API specification format in configuration is invalid. Accepted values are {(string.Join(", ", ApiSpecificationFormat.List.Select(format => format.FormatName)))}.");
     }
 
     protected override async Task ExecuteAsync(CancellationToken cancellationToken)

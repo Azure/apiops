@@ -104,6 +104,7 @@ internal class Publisher : BackgroundService
             logger.LogInformation("Deleting files...");
             await DeleteFiles(filesToDelete, cancellationToken);
         }
+
         if (dictionary.TryGetValue(Action.Put, out var filesToPut))
         {
             logger.LogInformation("Putting files...");
@@ -354,7 +355,6 @@ internal class Publisher : BackgroundService
 
         await Gateway.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
-
 
     private async ValueTask DeleteApiVersionSets(IReadOnlyCollection<ApiVersionSetInformationFile> files, CancellationToken cancellationToken)
     {
@@ -804,7 +804,6 @@ internal class Publisher : BackgroundService
     private async ValueTask PutApi(common.Models.Api api, ApiSpecificationFile? specificationFile, CancellationToken cancellationToken)
     {
         logger.LogInformation("Putting api {api}...", api.Name);
-
 
         if (specificationFile is not null)
         {
