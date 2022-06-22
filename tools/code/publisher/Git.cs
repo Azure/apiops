@@ -85,7 +85,7 @@ internal static class Git
         var getFileFromOutputLine = (string outputLine) => new FileInfo(Path.Combine(baseDirectory.FullName, outputLine[1..].Trim()));
 
         return
-            from outputLine in output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            from outputLine in output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             let commitStatus = TryGetCommitStatusFromOutputLine(outputLine)
             where commitStatus is not null
             let nonNullCommitStatus = commitStatus ?? throw new NullReferenceException() // Shouldn't be null here, adding to satisfy nullable compiler check

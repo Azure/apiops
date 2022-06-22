@@ -112,6 +112,7 @@ internal class Publisher : BackgroundService
             logger.LogInformation("Deleting files...");
             await DeleteFiles(filesToDelete, cancellationToken);
         }
+
         if (dictionary.TryGetValue(Action.Put, out var filesToPut))
         {
             logger.LogInformation("Putting files...");
@@ -138,11 +139,16 @@ internal class Publisher : BackgroundService
                 logger.LogInformation("Configuration file was modified in commit ID, will include its contents.");
 
                 var configurationFileRecords = GetFileRecordsFromServiceDirectory()
-                                                .Where(IsFileRecordInConfiguration);
+                                                .Where(IsFileRecordInConfiguration)
+                                                .ToImmutableList();
 
-                return commitIdFileRecords.SetItem(Action.Put,
-                                                   commitIdFileRecords[Action.Put].Union(configurationFileRecords)
-                                                                                  .ToImmutableList());
+                return configurationFileRecords.Any()
+                        // If the commit included artifacts to put, merge them with configuration records.
+                        ? commitIdFileRecords.SetItem(Action.Put,
+                                                      commitIdFileRecords.TryGetValue(Action.Put, out var existingCommitIdArtifacts)
+                                                      ? existingCommitIdArtifacts.Union(configurationFileRecords).ToImmutableList()
+                                                      : configurationFileRecords)
+                        : commitIdFileRecords;
             }
             else
             {
@@ -838,7 +844,6 @@ internal class Publisher : BackgroundService
     private async ValueTask PutApi(common.Models.Api api, ApiSpecificationFile? specificationFile, CancellationToken cancellationToken)
     {
         logger.LogInformation("Putting api {api}...", api.Name);
-
 
         if (specificationFile is not null)
         {
