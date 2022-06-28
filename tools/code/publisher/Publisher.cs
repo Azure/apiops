@@ -823,11 +823,12 @@ internal class Publisher : BackgroundService
 
     private async ValueTask PutApiInformationAndSpecificationFiles(IReadOnlyCollection<ApiInformationFile> informationFiles, IReadOnlyCollection<ApiSpecificationFile> specificationFiles, CancellationToken cancellationToken)
     {
-        var filePairs = informationFiles.LeftJoin(specificationFiles,
-                                               informationFile => informationFile.ApiDirectory,
-                                               specificationFile => specificationFile.ApiDirectory,
-                                               informationFile => (InformationFile: informationFile, SpecificationFile: null as ApiSpecificationFile),
-                                               (informationFile, specificationFile) => (InformationFile: informationFile, SpecificationFile: specificationFile));
+        var filePairs = informationFiles.FullJoin(specificationFiles,
+                                                  informationFile => informationFile.ApiDirectory,
+                                                  specificationFile => specificationFile.ApiDirectory,
+                                                  informationFile => (InformationFile: informationFile, SpecificationFile: null as ApiSpecificationFile),
+                                                  specificationFile => (InformationFile: ApiInformationFile.From(specificationFile.ApiDirectory), SpecificationFile: specificationFile),
+                                                  (informationFile, specificationFile) => (InformationFile: informationFile, SpecificationFile: specificationFile));
 
         // Current revisions need to be processed first or else there's an error.
         var splitCurrentRevisions = filePairs.Select(files =>
