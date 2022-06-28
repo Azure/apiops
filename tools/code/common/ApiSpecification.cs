@@ -1,7 +1,8 @@
-﻿using Microsoft.OpenApi.Readers;
+﻿using Microsoft.OpenApi;
+using Microsoft.OpenApi.Extensions;
+using Microsoft.OpenApi.Readers;
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -12,121 +13,182 @@ namespace common;
 
 public sealed record ApiSpecificationFile : FileRecord
 {
-    public ApiSpecificationFormat Format { get; }
+    public OpenApiSpecification Specification { get; }
 
     public ApiDirectory ApiDirectory { get; }
 
-    private ApiSpecificationFile(ApiDirectory apiDirectory, ApiSpecificationFormat format)
-        : base(apiDirectory.Path.Append(format.FileName))
+    private ApiSpecificationFile(ApiDirectory apiDirectory, OpenApiSpecification specification)
+        : base(apiDirectory.Path.Append(specification.FileName))
     {
-        Format = format;
+        Specification = specification;
 
         ApiDirectory = apiDirectory;
     }
 
-    public static ApiSpecificationFile From(ApiDirectory apiDirectory, ApiSpecificationFormat format) => new(apiDirectory, format);
+    public static ApiSpecificationFile From(ApiDirectory apiDirectory, OpenApiSpecification specification) => new(apiDirectory, specification);
 
     public static ApiSpecificationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
     {
-        var specificationFiles = from specificationFormat in ApiSpecificationFormat.List
-                                 where specificationFormat.FileName.Equals(file.Name, StringComparison.OrdinalIgnoreCase)
-                                 let apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory)
-                                 where apiDirectory is not null
-                                 select new ApiSpecificationFile(apiDirectory, specificationFormat);
+        var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
+        if (apiDirectory is null)
+        {
+            return null;
+        }
 
-        return specificationFiles.FirstOrDefault();
+        if (file.Name == OpenApiSpecification.V2Json.FileName
+            || file.Name == OpenApiSpecification.V2Yaml.FileName
+            || file.Name == OpenApiSpecification.V3Json.FileName
+            || file.Name == OpenApiSpecification.V3Yaml.FileName)
+        {
+            var specification = OpenApiSpecification.TryFromFile(file);
+
+            return specification is null
+                ? null
+                : new ApiSpecificationFile(apiDirectory, specification);
+        }
+        else
+        {
+            return null;
+        }
     }
 }
 
-public abstract record ApiSpecificationFormat
+public record OpenApiSpecification
 {
-    private ApiSpecificationFormat(string formatName, string fileName)
+    private OpenApiSpecification(OpenApiSpecVersion version, OpenApiFormat format)
     {
-        FormatName = formatName;
-        FileName = fileName;
+        Version = version;
+        Format = format;
     }
 
-    public string FormatName { get; }
-    public string FileName { get; }
+    public OpenApiSpecVersion Version { get; }
+    public OpenApiFormat Format { get; }
 
-    public record OpenApi2Json : ApiSpecificationFormat
+    public string FileName => Format switch
     {
-        public OpenApi2Json() : base(formatName: nameof(OpenApi2Json), fileName: "specification.json") { }
+        OpenApiFormat.Json => "specification.json",
+        OpenApiFormat.Yaml => "specification.yaml",
+        _ => throw new NotSupportedException()
+    };
+
+    public static OpenApiSpecification V2Json { get; } = new(OpenApiSpecVersion.OpenApi2_0, OpenApiFormat.Json);
+    public static OpenApiSpecification V2Yaml { get; } = new(OpenApiSpecVersion.OpenApi2_0, OpenApiFormat.Yaml);
+    public static OpenApiSpecification V3Json { get; } = new(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Json);
+    public static OpenApiSpecification V3Yaml { get; } = new(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml);
+
+    public static OpenApiSpecification? TryFromFile(FileInfo file)
+    {
+        var version = TryGetOpenApiSpecVersion(file);
+        if (version is null)
+        {
+            return null;
+        }
+
+        var format = TryGetOpenApiFormat(file);
+        if (format is null)
+        {
+            return null;
+        }
+
+        return new OpenApiSpecification(version.Value, format.Value);
     }
 
-    public record OpenApi3Json : ApiSpecificationFormat
+    private static OpenApiSpecVersion? TryGetOpenApiSpecVersion(FileInfo file)
     {
-        public OpenApi3Json() : base(formatName: nameof(OpenApi3Json), fileName: "specification.json") { }
+        try
+        {
+            var _ = new OpenApiStreamReader().Read(file.OpenRead(), out var diagnostic);
+            return diagnostic.SpecificationVersion;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
-    public record OpenApi3Yaml : ApiSpecificationFormat
+    private static OpenApiFormat? TryGetOpenApiFormat(FileInfo file)
     {
-        public OpenApi3Yaml() : base(formatName: nameof(OpenApi3Yaml), fileName: "specification.yaml") { }
+        return file.Extension switch
+        {
+            ".json" => OpenApiFormat.Json,
+            ".yaml" => OpenApiFormat.Yaml,
+            ".yml" => OpenApiFormat.Yaml,
+            _ => null
+        };
     }
-
-    public static ImmutableList<ApiSpecificationFormat> List { get; } =
-        ImmutableList.Create<ApiSpecificationFormat>(new OpenApi2Json(),
-                                                     new OpenApi3Json(),
-                                                     new OpenApi3Yaml());
 }
 
 public static class ApiSpecification
 {
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiSpecificationFormat format) =>
-        Api.GetUri(serviceProviderUri, serviceName, apiName)
-           .SetQueryParameter("export", "true")
-           .SetQueryParameter("format", FormatToExportString(format));
-
-    internal static string FormatToExportString(ApiSpecificationFormat format) =>
-        format switch
-        {
-            ApiSpecificationFormat.OpenApi3Json => "openapi+json-link",
-            ApiSpecificationFormat.OpenApi3Yaml => "openapi-link",
-            ApiSpecificationFormat.OpenApi2Json => "swagger-link-json",
-            _ => throw new NotImplementedException()
-        };
-
-    public static string FormatToString(ApiSpecificationFormat format) =>
-        format switch
-        {
-            ApiSpecificationFormat.OpenApi3Json => "openapi+json",
-            ApiSpecificationFormat.OpenApi3Yaml => "openapi",
-            ApiSpecificationFormat.OpenApi2Json => "swagger-json",
-            _ => throw new NotImplementedException()
-        };
-
-    public static async ValueTask<Stream> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, Func<Uri, CancellationToken, ValueTask<Stream>> downloader, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiSpecificationFormat format, CancellationToken cancellationToken)
+    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, OpenApiSpecification specification)
     {
-        var uri = GetUri(serviceProviderUri, serviceName, apiName, format);
+        var exportQueryParameter = specification switch
+        {
+            _ when specification == OpenApiSpecification.V3Json => "openapi+json-link",
+            _ when specification == OpenApiSpecification.V3Yaml => "openapi-link",
+            _ when specification == OpenApiSpecification.V2Json => "swagger-link-json",
+            _ => throw new NotImplementedException()
+        };
+
+        return Api.GetUri(serviceProviderUri, serviceName, apiName)
+           .SetQueryParameter("export", "true")
+           .SetQueryParameter("format", exportQueryParameter);
+    }
+
+    public static string GetApiPropertiesFormat(OpenApiSpecification specification) =>
+        specification switch
+        {
+            _ when specification == OpenApiSpecification.V3Json => "openapi+json",
+            _ when specification == OpenApiSpecification.V3Yaml => "openapi",
+            _ when specification == OpenApiSpecification.V2Json => "swagger-json",
+            _ => throw new NotImplementedException()
+        };
+
+    public static async ValueTask<Stream> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, Func<Uri, CancellationToken, ValueTask<Stream>> downloader, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, OpenApiSpecification specification, CancellationToken cancellationToken)
+    {
+        var uri = GetUri(serviceProviderUri,
+                         serviceName,
+                         apiName,
+                         // APIM doesn't support downloading Swagger YAML. We'll convert to Swagger JSON if needed.
+                         specification == OpenApiSpecification.V2Yaml ? OpenApiSpecification.V2Json : specification);
+
         var exportJson = await getResource(uri, cancellationToken);
+
         var downloadUrl = exportJson.GetJsonObjectProperty("value")
                                     .GetStringProperty("link");
-        var downloadUri = new Uri(downloadUrl);
 
-        return await downloader(downloadUri, cancellationToken);
+        var downloadUri = new Uri(downloadUrl);
+        var stream = await downloader(downloadUri, cancellationToken);
+
+        // Convert downloaded stream to Swagger YAML if needed
+        if (specification == OpenApiSpecification.V2Yaml)
+        {
+            var readResult = await new OpenApiStreamReader().ReadAsync(stream);
+            var memoryStream = new MemoryStream();
+            readResult.OpenApiDocument.Serialize(memoryStream, OpenApiSpecVersion.OpenApi2_0, OpenApiFormat.Yaml);
+            memoryStream.Position = 0;
+
+            return memoryStream;
+        }
+        else
+        {
+            return stream;
+        }
     }
 
     public static ApiSpecificationFile? TryFindFile(ApiDirectory apiDirectory)
     {
-        var directoryFileNames =
+        var directoryFiles =
             apiDirectory.Exists()
-            ? new DirectoryInfo(apiDirectory.Path).EnumerateFiles().Select(file => file.Name).ToList()
-            : new List<string>();
+            ? new DirectoryInfo(apiDirectory.Path).EnumerateFiles().ToList()
+            : new List<FileInfo>();
 
-        var specificationFormats = new List<ApiSpecificationFormat>
-        {
-            new ApiSpecificationFormat.OpenApi2Json(),
-            new ApiSpecificationFormat.OpenApi3Json(),
-            new ApiSpecificationFormat.OpenApi3Yaml(),
-        };
-
-        return ApiSpecificationFormat.List
-                                     .Where(format => directoryFileNames.Contains(format.FileName, StringComparer.OrdinalIgnoreCase))
-                                     .Select(format => ApiSpecificationFile.From(apiDirectory, format))
-                                     .FirstOrDefault();
+        return directoryFiles.Choose(file => OpenApiSpecification.TryFromFile(file))
+                             .Select(specification => ApiSpecificationFile.From(apiDirectory, specification))
+                             .FirstOrDefault();
     }
 
-    public static async Task<ApiOperationName?> TryFindApiOperationName(ApiSpecificationFile file, ApiOperationDisplayName displayName)
+    public static async ValueTask<ApiOperationName?> TryFindApiOperationName(ApiSpecificationFile file, ApiOperationDisplayName displayName)
     {
         using var stream = file.ReadAsStream();
         var readResult = await new OpenApiStreamReader().ReadAsync(stream);
@@ -134,5 +196,12 @@ public static class ApiSpecification
                                                                .FirstOrDefault(operation => operation.Summary.Equals((string)displayName, StringComparison.OrdinalIgnoreCase));
 
         return operation is null ? null : ApiOperationName.From(operation.OperationId);
+    }
+
+    public static async ValueTask<string> GetFileContentsAsSpecification(ApiSpecificationFile file, OpenApiSpecification specification)
+    {
+        using var stream = file.ReadAsStream();
+        var readResult = await new OpenApiStreamReader().ReadAsync(stream);
+        return readResult.OpenApiDocument.Serialize(specification.Version, specification.Format);
     }
 }
