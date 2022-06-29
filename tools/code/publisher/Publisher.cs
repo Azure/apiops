@@ -849,12 +849,23 @@ internal class Publisher : BackgroundService
         if (specificationFile is not null)
         {
             logger.LogInformation("Updating api with specification file {specificationFile}...", specificationFile.Path);
+            // APIM doesn't support Swagger YAML format. We'll convert to Swagger JSON if needed.
+            var specification = specificationFile.Specification;
+
+            var format = ApiSpecification.GetApiPropertiesFormat(specification == OpenApiSpecification.V2Yaml
+                                                                    ? OpenApiSpecification.V2Json
+                                                                    : specification);
+
+            var value = specification == OpenApiSpecification.V2Yaml
+                        ? await ApiSpecification.GetFileContentsAsSpecification(specificationFile, OpenApiSpecification.V2Json)
+                        : await specificationFile.ReadAsText(cancellationToken);
+
             api = api with
             {
                 Properties = api.Properties with
                 {
-                    Format = ApiSpecification.FormatToString(specificationFile.Format),
-                    Value = await specificationFile.ReadAsText(cancellationToken)
+                    Format = format,
+                    Value = value
                 }
             };
         }
