@@ -52,3 +52,6 @@ nav_order: 2
 13. Once the pipeline runs successfully the changes should be visible in your APIM instance
      
      ![](../../assets/images/14_VSCode_API_Changes_Extension.png)
+
+### Additional Thoughts
+If you are new to Azure API management and plan on using the code first approach (Scenario B), one suggestion is to start by creating an api on the Azure portal (Scenario A) and enable the different features that you will need (e.g. policies, operations, subscriptions, products, etc.) and then use the extractor to extract the different artifacts. This way you can familiarize yourself with the structure of the specification.yaml and apiInformation.json files and use that as a template for other apis to follow. Also note that when working with apis there are two files that you need to work with which are the specification.yaml and apiInformation.json. In some cases the aforementioned files may include similar information (e.g. display name) in which case the information within the specification.yaml will take precedence if you change the same information in both files. The apiInformation.json will mainly come into play when dealing with APIM specific information like versioning, revisions, subscription requirement, etc..
