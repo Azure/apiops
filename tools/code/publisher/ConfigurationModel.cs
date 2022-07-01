@@ -15,6 +15,13 @@ internal record ConfigurationModel
         public string? Name { get; init; }
         public string? DisplayName { get; init; }
         public string? Value { get; init; }
+        public NamedValueKeyVault? KeyVault { get; init; }
+    }
+
+    public record NamedValueKeyVault
+    {
+        public string? IdentityClientId { get; init; }
+        public string? SecretIdentifier { get; init; }
     }
 
     public record Gateway
