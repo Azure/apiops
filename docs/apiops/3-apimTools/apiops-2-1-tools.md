@@ -21,7 +21,25 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | API_MANAGEMENT_SERVICE_NAME | Name of the APIM instance to be extracted |
 | API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH | Folder where the APIM artifacts will be saved |
 | API_SPECIFICATION_FORMAT | OpenAPI specification format. Valid options are **JSON** or **YAML**. If the variable is missing or invalid, **YAML** will be used by default |
-| CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to specify select apis to extract. A sample yaml exractor configuration file to signal to the extractor to extract select apis. This is an optional parameter and will only come into play if you want different teams to manage different apis. You typically will have one configuration per team. Note: You can call the file whatever you want as long as you reference the right file within your extractor pipeline.
+| CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to specify select apis to extract. A sample yaml extractor configuration file to signal to the extractor to extract select apis. This is an optional parameter and will only come into play if you want different teams to manage different apis. You typically will have one configuration per team. Note: You can call the file whatever you want as long as you reference the right file within your extractor pipeline.
+
+### API_SPECIFICATION_FORMAT
+The specification file format is controlled by the configuration variable ``API_SPECIFICATION_FORMAT``. Here are the options:
+
+| Configuration value | Action |
+|-|-|
+| Not specified | Use OpenAPI v3 YAML |
+| Json | Use OpenAPI v3 JSON (for backward compatibility. Use OpenAPIV3Json instead ) |
+| Yaml | Use OpenAPI v3 YAML (for backward compatibility. Use OpenAPIV3Yaml instead ) |
+| OpenAPIV2Json | Use OpenAPI v2 JSON |
+| OpenAPIV2Yaml | Use OpenAPI v2 YAML |
+| OpenAPIV3Json | Use OpenAPI v3 JSON |
+| OpenAPIV3Yaml | Use OpenAPI v3 YAML |
+
+The configuration values are case-insensitive. 
+
+>APIM doesn't support OpenAPI v2 YAML. If you want to extract OpenAPI v2 YAML, the extractor extracts in JSON and converts to YAML. For publishing, the tool converts the YAML to JSON and pushes it.
+
 
 ### Artifacts
 The extractor will export the artifacts listed below.
