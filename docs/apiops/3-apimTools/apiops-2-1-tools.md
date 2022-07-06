@@ -40,6 +40,11 @@ The configuration values are case-insensitive.
 
 >APIM doesn't support OpenAPI v2 YAML. If you want to extract OpenAPI v2 YAML, the extractor extracts in JSON and converts to YAML. For publishing, the tool converts the YAML to JSON and pushes it.
 
+The figures below demonstrates specifying the the openapi specification format in both Azure Devops and Github Actions.
+
+![openapi_specification_format_azdo](../../assets/images/openapi_specification_format_azdo.png)
+
+![openapi_specification_format_Github](../../assets/images/openapi_specification_format_Github.png)
 
 ### Artifacts
 The extractor will export the artifacts listed below.
