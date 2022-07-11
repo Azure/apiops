@@ -615,7 +615,20 @@ internal class Publisher : BackgroundService
                 Properties = namedValue.Properties with
                 {
                     DisplayName = configurationNamedValue.DisplayName ?? namedValue.Properties.DisplayName,
-                    Value = configurationNamedValue.Value ?? namedValue.Properties.Value
+                    Value = configurationNamedValue.Value ?? namedValue.Properties.Value,
+                    KeyVault = configurationNamedValue.KeyVault is null
+                                ? namedValue.Properties.KeyVault
+                                : namedValue.Properties.KeyVault is null
+                                    ? new common.Models.NamedValue.KeyVaultContractCreateProperties
+                                    {
+                                        IdentityClientId = configurationNamedValue.KeyVault.IdentityClientId,
+                                        SecretIdentifier = configurationNamedValue.KeyVault.SecretIdentifier
+                                    }
+                                    : namedValue.Properties.KeyVault with
+                                    {
+                                        IdentityClientId = configurationNamedValue.KeyVault.IdentityClientId ?? namedValue.Properties.KeyVault.IdentityClientId,
+                                        SecretIdentifier = configurationNamedValue.KeyVault.SecretIdentifier ?? namedValue.Properties.KeyVault.SecretIdentifier
+                                    }
                 }
             };
         }
