@@ -3,6 +3,11 @@ namedValues:
   - name: [name goes here. e.g. environment or SearchEngineBackendURL. It doesn't have to exist in the target environment]
     displayName: [display name  goes here]
     value: [replacement value in the target environment. e.g. name value can be dev in dev environment and prod in the prod environment]
+  - name: mynamedvalue
+    displayName: mynamedvalue
+    keyVault:
+      identityClientId: Set if Key Vault authentication happens through a user-assigned managed identity
+      secretIdentifier: Url for key vault secret (can be versioned if needed).
 loggers:
     - name: [source environment app insight name goes here. e.g. apim-dev-insights]
       loggerType: applicationInsights
