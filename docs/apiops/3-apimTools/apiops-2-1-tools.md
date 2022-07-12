@@ -108,9 +108,15 @@ As mentioned above the publisher supports overriding secret named values. Wherea
 
 If you are trying to override a secret stored in Azure Key Vault then you can simply override the named value in your configuration file as demonstrated in the following [**sample configuration file**](https://github.com/Azure/apiops/blob/main/configuration.prod.yaml).
 
-Also when using Key vault make sure you complete the following steps below. You can either carry them ahead of time or at the time of creating the Key Vault named value within your APIM instance. You need to carry the steps below on every APIM instance (QA, PROD, etc.) that you will be promoting to as infrastructure activities are outside the scope of the APIOPS tool.
+Also when using Key vault make sure you complete the steps below. You can either carry them ahead of time or at the time of creating the Key Vault named value within your APIM instance. You need to carry the steps below on every APIM instance (QA, PROD, etc.) to which you will be promoting to as infrastructure activities are outside the scope of the APIOPS tool.
+
 
 ![configuration Overrides](../../assets/images/APIM-keyvault-access.png)
 
+
+
+```
+Note: You don't have to create the named values in the target APIM environments ahead of time as they will be created by the publisher.
+```
 
 Docs and implementation for supporting the secret named value type is Under Construction. Come back soon. 🚧
