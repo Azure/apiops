@@ -99,7 +99,18 @@ Below is the full list of supported configuration overrides that the publisher t
 | Property | Purpose |
 | - | - |
 | apimServiceName | Name of the destination APIM instance that you would like to promote to. Note that if you provide both the apimServiceName and the API_MANAGEMENT_SERVICE_NAME environment variable then the configuration file will take precedence    |
-| namedValues | List of named value pairs to override.|
+| namedValues | List of named value pairs to override. All three types (Plain - Secret - Key Vault) are supported
 | loggers | Information for the application insights instance to utilize in the destination environment APIM instance |
 | diagnostics | Configuration for the verbosity setting of the application insights instance to utilize in the destination environment APIM instance  |
 | apis | list of apis for you which you would like to override settings like the application insights etc.. If you are utilizing versioning/revisioning in APIM then you need to set the target api version & revision to apply application insights to e.g. 'my-api', 'my-api-v2', 'my-api-v2;rev=2' |
+
+As mentioned above the publisher supports overriding secret named values. Whereas the publisher supports both types of APIM secrets (secret and Azure Key Vault), we recommend using Azure Key Vault whenever possible. 
+
+If you are trying to override a secret stored in Azure Key Vault then you can simply override the named value in your configuration file as demonstrated in the following [**sample configuration file**](https://github.com/Azure/apiops/blob/main/configuration.prod.yaml).
+
+Also when using Key vault make sure you complete the following steps below. You can either carry them ahead of time or at the time of creating the Key Vault named value within your APIM instance. You need to carry the steps below on every APIM instance (QA, PROD, etc.) that you will be promoting to as infrastructure activities are outside the scope of the APIOPS tool.
+
+![configuration Overrides](../../assets/images/APIM-keyvault-access.png)
+
+
+Docs for supporting secrets is  Under Construction :construction:
