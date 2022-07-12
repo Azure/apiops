@@ -113,4 +113,4 @@ Also when using Key vault make sure you complete the following steps below. You 
 ![configuration Overrides](../../assets/images/APIM-keyvault-access.png)
 
 
-Docs for supporting secrets is  Under Construction :construction:
+Docs for supporting secrets is Under Construction. Come back soon. 🚧
