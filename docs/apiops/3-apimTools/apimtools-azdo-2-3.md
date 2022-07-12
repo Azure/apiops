@@ -2,7 +2,7 @@
 title: Configure APIM tools in Azure DevOps
 parent: Configure APIM tools
 has_children: false
-nav_order: 2
+nav_order: 3
 ---
 
 
