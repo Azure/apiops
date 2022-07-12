@@ -1,3 +1,9 @@
+---
+title: Tools - Publisher
+parent: Configure APIM tools
+has_children: false
+nav_order: 2
+---
 
 This section describes the Publisher component which forms the core tool used to publish the updates to the Azure APIM instance.
 
