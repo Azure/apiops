@@ -15,7 +15,7 @@ Slides
 
 Diagrams
 
-- [APIOps Architecture Design Session](apiops/5-additionalTopics/apiops-10-1-architecture.md)
+- [APIOps Basic Concepts](apiops/0-labPrerequisites/apim-basic-concepts-0-2.md)
 
 
 
