@@ -1,74 +1,56 @@
-﻿using System;
-using System.IO;
-using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using Flurl;
+using System;
 
 namespace common;
 
-public sealed record ApiOperationPolicyFile : FileRecord
+public sealed record ApiOperationPoliciesUri : IArtifactUri
 {
-    private static readonly string name = "policy.xml";
+    public Uri Uri { get; }
 
-    public ApiOperationDirectory ApiOperationDirectory { get; }
-
-    private ApiOperationPolicyFile(ApiOperationDirectory apiOperationDirectory) : base(apiOperationDirectory.Path.Append(name))
+    public ApiOperationPoliciesUri(ApiOperationUri apiOperationUri)
     {
-        ApiOperationDirectory = apiOperationDirectory;
-    }
-
-    public static ApiOperationPolicyFile From(ApiOperationDirectory apiOperationDirectory) => new(apiOperationDirectory);
-
-    public static ApiOperationPolicyFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        if (name.Equals(file.Name))
-        {
-            var apiOperationDirectory = ApiOperationDirectory.TryFrom(serviceDirectory, file.Directory);
-
-            return apiOperationDirectory is null ? null : new(apiOperationDirectory);
-        }
-        else
-        {
-            return null;
-        }
+        Uri = apiOperationUri.AppendPath("policies");
     }
 }
 
-public static class ApiOperationPolicy
+public sealed record ApiOperationPolicyName
 {
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName) =>
-        ApiOperation.GetUri(serviceProviderUri, serviceName, apiName, apiOperationName)
-                    .AppendPath("policies")
-                    .AppendPath("policy")
-                    .SetQueryParameter("format", "rawxml");
+    private readonly string value;
 
-    public static async ValueTask<string?> TryGet(Func<Uri, CancellationToken, ValueTask<JsonObject?>> tryGetResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName, CancellationToken cancellationToken)
+    public ApiOperationPolicyName(string value)
     {
-        var uri = GetUri(serviceProviderUri, serviceName, apiName, apiOperationName);
-        var json = await tryGetResource(uri, cancellationToken);
-
-        return json?.GetJsonObjectProperty("properties")
-                    .GetStringProperty("value");
-    }
-
-    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName, string policyText, CancellationToken cancellationToken)
-    {
-        var json = new JsonObject
+        if (string.IsNullOrWhiteSpace(value))
         {
-            ["properties"] = new JsonObject
-            {
-                ["format"] = "rawxml",
-                ["value"] = policyText
-            }
-        };
+            throw new ArgumentException($"API operation policy name cannot be null or whitespace.", nameof(value));
+        }
 
-        var uri = GetUri(serviceProviderUri, serviceName, apiName, apiOperationName);
-        await putResource(uri, json, cancellationToken);
+        this.value = value;
     }
 
-    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiOperationName apiOperationName, CancellationToken cancellationToken)
+    public override string ToString() => value;
+}
+
+public sealed record ApiOperationPolicyUri : IArtifactUri
+{
+    public Uri Uri { get; }
+
+    public ApiOperationPolicyUri(ApiOperationPolicyName policyName, ApiOperationPoliciesUri apiOperationPoliciesUri)
     {
-        var uri = GetUri(serviceProviderUri, serviceName, apiName, apiOperationName);
-        await deleteResource(uri, cancellationToken);
+        Uri = apiOperationPoliciesUri.AppendPath(policyName.ToString())
+                                     .SetQueryParam("format", "rawxml")
+                                     .ToUri();
+    }
+}
+
+public sealed record ApiOperationPolicyFile : IArtifactFile
+{
+    public ArtifactPath Path { get; }
+
+    public ApiOperationDirectory ApiOperationDirectory { get; }
+
+    public ApiOperationPolicyFile(ApiOperationPolicyName policyName, ApiOperationDirectory apiOperationDirectory)
+    {
+        Path = apiOperationDirectory.Path.Append($"{policyName}.xml");
+        ApiOperationDirectory = apiOperationDirectory;
     }
 }

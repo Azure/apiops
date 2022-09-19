@@ -1,151 +1,146 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record GatewayName : NonEmptyString
+public sealed record GatewaysUri : IArtifactUri
 {
-    private GatewayName(string value) : base(value)
-    {
-    }
+    public Uri Uri { get; }
 
-    public static GatewayName From(string value) => new(value);
+    public GatewaysUri(ServiceUri serviceUri)
+    {
+        Uri = serviceUri.AppendPath("gateways");
+    }
 }
 
-public sealed record GatewaysDirectory : DirectoryRecord
+public sealed record GatewaysDirectory : IArtifactDirectory
 {
-    private static readonly string name = "gateways";
+    public static string Name { get; } = "gateways";
+
+    public ArtifactPath Path { get; }
 
     public ServiceDirectory ServiceDirectory { get; }
 
-    private GatewaysDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
+    public GatewaysDirectory(ServiceDirectory serviceDirectory)
     {
+        Path = serviceDirectory.Path.Append(Name);
         ServiceDirectory = serviceDirectory;
     }
-
-    public static GatewaysDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
-
-    public static GatewaysDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
-        ? new(serviceDirectory)
-        : null;
 }
 
-public sealed record GatewayDirectory : DirectoryRecord
+public sealed record GatewayName
 {
+    private readonly string value;
+
+    public GatewayName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException($"Gateway name cannot be null or whitespace.", nameof(value));
+        }
+
+        this.value = value;
+    }
+
+    public override string ToString() => value;
+}
+
+public sealed record GatewayUri : IArtifactUri
+{
+    public Uri Uri { get; }
+
+    public GatewayUri(GatewayName gatewayName, GatewaysUri gatewaysUri)
+    {
+        Uri = gatewaysUri.AppendPath(gatewayName.ToString());
+    }
+}
+
+public sealed record GatewayDirectory : IArtifactDirectory
+{
+    public ArtifactPath Path { get; }
+
     public GatewaysDirectory GatewaysDirectory { get; }
-    public GatewayName GatewayName { get; }
 
-    private GatewayDirectory(GatewaysDirectory gatewaysDirectory, GatewayName gatewayName) : base(gatewaysDirectory.Path.Append(gatewayName))
+    public GatewayDirectory(GatewayName gatewayName, GatewaysDirectory gatewaysDirectory)
     {
+        Path = gatewaysDirectory.Path.Append(gatewayName.ToString());
         GatewaysDirectory = gatewaysDirectory;
-        GatewayName = gatewayName;
-    }
-
-    public static GatewayDirectory From(GatewaysDirectory gatewaysDirectory, GatewayName gatewayName) => new(gatewaysDirectory, gatewayName);
-
-    public static GatewayDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
-    {
-        var parentDirectory = directory?.Parent;
-        if (parentDirectory is not null)
-        {
-            var gatewaysDirectory = GatewaysDirectory.TryFrom(serviceDirectory, parentDirectory);
-
-            return gatewaysDirectory is null ? null : From(gatewaysDirectory, GatewayName.From(directory!.Name));
-        }
-        else
-        {
-            return null;
-        }
     }
 }
 
-public sealed record GatewayInformationFile : FileRecord
+public sealed record GatewayInformationFile : IArtifactFile
 {
-    private static readonly string name = "gatewayInformation.json";
+    public static string Name { get; } = "gatewayInformation.json";
+
+    public ArtifactPath Path { get; }
 
     public GatewayDirectory GatewayDirectory { get; }
 
-    private GatewayInformationFile(GatewayDirectory gatewayDirectory) : base(gatewayDirectory.Path.Append(name))
+    public GatewayInformationFile(GatewayDirectory gatewayDirectory)
     {
+        Path = gatewayDirectory.Path.Append(Name);
         GatewayDirectory = gatewayDirectory;
-    }
-
-    public static GatewayInformationFile From(GatewayDirectory gatewayDirectory) => new(gatewayDirectory);
-
-    public static GatewayInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        if (name.Equals(file.Name))
-        {
-            var gatewayDirectory = GatewayDirectory.TryFrom(serviceDirectory, file.Directory);
-
-            return gatewayDirectory is null ? null : new(gatewayDirectory);
-        }
-        else
-        {
-            return null;
-        }
     }
 }
 
-public static class Gateway
+public sealed record GatewayModel
 {
-    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    public required string Name { get; init; }
 
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("gateways")
-               .AppendPath(gatewayName);
+    public required GatewayContractProperties Properties { get; init; }
 
-    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("gateways");
-
-    public static GatewayName GetNameFromFile(GatewayInformationFile file)
+    public sealed record GatewayContractProperties
     {
-        var jsonObject = file.ReadAsJsonObject();
-        var gateway = Deserialize(jsonObject);
+        public string? Description { get; init; }
+        public ResourceLocationDataContract? LocationData { get; init; }
 
-        return GatewayName.From(gateway.Name);
+        public JsonObject Serialize() =>
+            new JsonObject()
+                .AddPropertyIfNotNull("description", Description)
+                .AddPropertyIfNotNull("locationData", LocationData?.Serialize());
+
+        public static GatewayContractProperties Deserialize(JsonObject jsonObject) =>
+            new()
+            {
+                Description = jsonObject.TryGetStringProperty("description"),
+                LocationData = jsonObject.TryGetJsonObjectProperty("locationData")
+                                         .Map(ResourceLocationDataContract.Deserialize)
+            };
+
+        public sealed record ResourceLocationDataContract
+        {
+            public string? City { get; init; }
+            public string? CountryOrRegion { get; init; }
+            public string? District { get; init; }
+            public string? Name { get; init; }
+
+            public JsonObject Serialize() =>
+                new JsonObject()
+                    .AddPropertyIfNotNull("city", City)
+                    .AddPropertyIfNotNull("countryOrRegion", CountryOrRegion)
+                    .AddPropertyIfNotNull("district", District)
+                    .AddPropertyIfNotNull("name", Name);
+
+            public static ResourceLocationDataContract Deserialize(JsonObject jsonObject) =>
+                new()
+                {
+                    City = jsonObject.TryGetStringProperty("city"),
+                    CountryOrRegion = jsonObject.TryGetStringProperty("countryOrRegion"),
+                    District = jsonObject.TryGetStringProperty("district"),
+                    Name = jsonObject.TryGetStringProperty("name")
+                };
+        }
     }
 
-    public static Models.Gateway Deserialize(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Models.Gateway>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
+    public JsonObject Serialize() =>
+        new JsonObject()
+            .AddProperty("properties", Properties.Serialize());
 
-    public static JsonObject Serialize(Models.Gateway gateway) =>
-        JsonSerializer.SerializeToNode(gateway, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
-
-    public static async ValueTask<Models.Gateway> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName, gatewayName);
-        var json = await getResource(uri, cancellationToken);
-        return Deserialize(json);
-    }
-
-    public static IAsyncEnumerable<Models.Gateway> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var uri = ListUri(serviceProviderUri, serviceName);
-        return getResources(uri, cancellationToken).Select(Deserialize);
-    }
-
-    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Gateway gateway, CancellationToken cancellationToken)
-    {
-        var name = GatewayName.From(gateway.Name);
-        var uri = GetUri(serviceProviderUri, serviceName, name);
-        var json = Serialize(gateway);
-        await putResource(uri, json, cancellationToken);
-    }
-
-    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, GatewayName gatewayName, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName, gatewayName);
-        await deleteResource(uri, cancellationToken);
-    }
+    public static GatewayModel Deserialize(GatewayName name, JsonObject jsonObject) =>
+        new()
+        {
+            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
+            Properties = jsonObject.GetJsonObjectProperty("properties")
+                                   .Map(GatewayContractProperties.Deserialize)!
+        };
 }

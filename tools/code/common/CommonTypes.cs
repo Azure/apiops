@@ -1,4 +1,6 @@
-﻿using System;
+﻿using Flurl;
+using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text.Json;
@@ -8,146 +10,162 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public abstract record NonEmptyString
+public sealed record ArtifactPath
 {
     private readonly string value;
 
-    protected NonEmptyString(string value)
+    public ArtifactPath(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new ArgumentException($"'{nameof(value)}' cannot be null or whitespace.", nameof(value));
+            throw new ArgumentException($"Record path cannot be null or whitespace.", nameof(value));
         }
 
         this.value = value;
     }
 
-    public sealed override string ToString() => value;
-
-    public static implicit operator string(NonEmptyString nonEmptyString) => nonEmptyString.ToString();
-}
-
-public abstract record UriRecord
-{
-    private readonly string value;
-
-    protected UriRecord(Uri value)
-    {
-        this.value = (value.ToString());
-    }
-
     public override string ToString() => value;
-
-    public Uri ToUri() => new(value);
-
-    public static implicit operator Uri(UriRecord record) => record.ToUri();
 }
 
-public sealed record RecordPath : NonEmptyString
+public static class ArtifactPathExtensions
 {
-    public RecordPath(string value) : base(value)
+    public static ArtifactPath Append(this ArtifactPath artifactPath, string pathToAppend)
     {
+        string newPath = Path.Combine(artifactPath.ToString(), pathToAppend);
+        return new ArtifactPath(newPath);
     }
-
-    public RecordPath Append(string path) => new(Path.Combine(this, path));
-
-    public static RecordPath From(string value) => new(value);
 }
 
-public abstract record FileRecord
+public interface IArtifactFile
 {
-    private FileInfo FileInfo => new(Path);
+    ArtifactPath Path { get; }
+}
 
-    public RecordPath Path { get; }
-
-    public string Name => FileInfo.Name;
-
-    protected FileRecord(RecordPath path)
+public static class ArtifactFileExtensions
+{
+    public static string GetNameWithoutExtensions(this IArtifactFile file)
     {
-        Path = path;
+        return Path.GetFileNameWithoutExtension(file.Path.ToString());
     }
 
-    public bool Exists() => FileInfo.Exists;
-
-    public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(Path, path);
-
-    public bool PathEquals([NotNullWhen(true)] FileInfo? file) => PathEquals(file?.FullName);
-
-    public Stream ReadAsStream() => FileInfo.OpenRead();
-
-    public Task<string> ReadAsText(CancellationToken cancellationToken) => File.ReadAllTextAsync(Path, cancellationToken);
-
-    public JsonObject ReadAsJsonObject() => ReadAsJsonNode().AsObject();
-
-    public JsonArray ReadAsJsonArray() => ReadAsJsonNode().AsArray();
-
-    public async Task OverwriteWithJson(JsonNode json, CancellationToken cancellationToken)
+    internal static string GetName(this IArtifactFile file)
     {
-        CreateDirectoryIfNotExists();
+        return file.GetFileInfo().Name;
+    }
 
-        using var stream = FileInfo.Open(FileMode.Create);
+    private static FileInfo GetFileInfo(this IArtifactFile file)
+    {
+        return new FileInfo(file.Path.ToString());
+    }
+
+    public static bool Exists(this IArtifactFile file)
+    {
+        return file.GetFileInfo().Exists;
+    }
+
+    public static async ValueTask<string> ReadAsString(this IArtifactFile file, CancellationToken cancellationToken)
+    {
+        return await File.ReadAllTextAsync(file.Path.ToString(), cancellationToken);
+    }
+
+    public static JsonObject ReadAsJsonObject(this IArtifactFile file)
+    {
+        return file.ReadAsJsonNode()
+                   .AsObject();
+    }
+
+    public static JsonArray ReadAsJsonArray(this IArtifactFile file)
+    {
+        return file.ReadAsJsonNode()
+                   .AsArray();
+    }
+
+    private static JsonNode ReadAsJsonNode(this IArtifactFile file)
+    {
+        using var stream = file.ReadAsStream();
+        var options = new JsonNodeOptions { PropertyNameCaseInsensitive = true };
+
+        return JsonNode.Parse(stream, options)
+                ?? throw new InvalidOperationException($"Could not read JSON from file {file.Path}.");
+    }
+
+    public static Stream ReadAsStream(this IArtifactFile file)
+    {
+        return file.GetFileInfo().OpenRead();
+    }
+
+    public static async ValueTask OverwriteWithJson(this IArtifactFile file, JsonNode json, CancellationToken cancellationToken)
+    {
+        file.CreateDirectoryIfNotExists();
+
+        using var stream = file.GetFileInfo().Open(FileMode.Create);
         var options = new JsonSerializerOptions { WriteIndented = true };
-
         await JsonSerializer.SerializeAsync(stream, json, options, cancellationToken);
     }
 
-    public async Task OverwriteWithText(string text, CancellationToken cancellationToken)
+    private static void CreateDirectoryIfNotExists(this IArtifactFile file)
     {
-        CreateDirectoryIfNotExists();
+        var directory = file.GetFileInfo().Directory
+            ?? throw new InvalidOperationException($"File {file.Path} has a null directory.");
 
-        await File.WriteAllTextAsync(Path, text, cancellationToken);
+        if (directory.Exists is false)
+        {
+            directory.Create();
+        }
     }
 
-    public async Task OverwriteWithStream(Stream stream, CancellationToken cancellationToken)
+    public static async ValueTask OverwriteWithText(this IArtifactFile file, string text, CancellationToken cancellationToken)
     {
-        CreateDirectoryIfNotExists();
+        file.CreateDirectoryIfNotExists();
+        await File.WriteAllTextAsync(file.Path.ToString(), text, cancellationToken);
+    }
 
-        using var fileStream = FileInfo.Open(FileMode.Create);
+    public static async ValueTask OverwriteWithStream(this IArtifactFile file, Stream stream, CancellationToken cancellationToken)
+    {
+        file.CreateDirectoryIfNotExists();
 
+        using var fileStream = file.GetFileInfo().Open(FileMode.Create);
         await stream.CopyToAsync(fileStream, cancellationToken);
     }
-
-    private JsonNode ReadAsJsonNode()
-    {
-        using var stream = FileInfo.OpenRead();
-        var options = new JsonNodeOptions { PropertyNameCaseInsensitive = true };
-        return JsonNode.Parse(stream, options) ?? throw new InvalidOperationException($"Could not read JSON from file ${Path}.");
-    }
-
-    private void CreateDirectoryIfNotExists()
-    {
-        var directory = GetDirectoryInfo();
-
-        directory.Create();
-    }
-
-    private DirectoryInfo GetDirectoryInfo()
-    {
-        return FileInfo.Directory
-               ?? throw new InvalidOperationException($"Cannot find directory associated with file path {Path}.");
-    }
-
-    public static implicit operator FileInfo(FileRecord record) => record.FileInfo;
 }
 
-public abstract record DirectoryRecord
+public interface IArtifactDirectory
 {
-    private DirectoryInfo DirectoryInfo => new(Path);
+    ArtifactPath Path { get; }
+}
 
-    public RecordPath Path { get; }
-
-    public string Name => this.DirectoryInfo.Name;
-
-    protected DirectoryRecord(RecordPath path)
+public static class ArtifactDirectoryExtensions
+{
+    public static bool PathEquals(this IArtifactDirectory directory, [NotNullWhen(true)] DirectoryInfo? directoryInfo)
     {
-        Path = path;
+        return directory.Path.ToString().Equals(directoryInfo?.FullName);
     }
 
-    public bool Exists() => DirectoryInfo.Exists;
+    public static DirectoryInfo GetDirectoryInfo(this IArtifactDirectory directory)
+    {
+        return new DirectoryInfo(directory.Path.ToString());
+    }
 
-    public bool PathEquals([NotNullWhen(true)] string? path) => string.Equals(Path, path);
+    public static string GetName(this IArtifactDirectory directory)
+    {
+        return directory.GetDirectoryInfo().Name;
+    }
 
-    public bool PathEquals([NotNullWhen(true)] DirectoryInfo? file) => PathEquals(file?.FullName);
+    public static IEnumerable<FileInfo> EnumerateFilesRecursively(this IArtifactDirectory directory)
+    {
+        return directory.GetDirectoryInfo()
+                        .EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true });
+    }
+}
 
-    public static implicit operator DirectoryInfo(DirectoryRecord record) => record.DirectoryInfo;
+public interface IArtifactUri
+{
+    public Uri Uri { get; }
+}
+
+public static class ArtifactUriExtensions
+{
+    public static Uri AppendPath(this IArtifactUri artifactUri, string path) =>
+        artifactUri.Uri.AppendPathSegment(path)
+                       .ToUri();
 }

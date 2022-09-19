@@ -1,26 +1,28 @@
 ﻿using common;
 using Medallion.Shell;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal record CommitId : NonEmptyString
+internal record CommitId
 {
-    private CommitId(string value) : base(value)
+    private readonly string value;
+
+    public CommitId(string value)
     {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException($"Commit ID cannot be null or whitespace.", nameof(value));
+        }
+
+        this.value = value;
     }
 
-    public static CommitId From([NotNull] string? value)
-    {
-        return string.IsNullOrWhiteSpace(value)
-            ? throw new ArgumentException("Commit ID cannot be null or whitespace.", nameof(value))
-            : new CommitId(value);
-    }
+    public override string ToString() => value;
 }
 
 internal enum CommitStatus
@@ -38,39 +40,14 @@ internal enum CommitStatus
 
 internal static class Git
 {
-    public static async Task<string> GetPreviousCommitContents(CommitId commitId, FileInfo file, DirectoryInfo baseDirectory)
-    {
-        var gitRootDirectoryPath = await GetGitRootDirectoryPath(baseDirectory);
-        var relativePath = Path.GetRelativePath(gitRootDirectoryPath, file.FullName);
-        var command = Command.Run("git", "-C", gitRootDirectoryPath, "show", $"{commitId}^1:{relativePath}");
-        var commandResult = await command.Task;
-
-        return commandResult.Success
-            ? commandResult.StandardOutput
-            : throw new InvalidOperationException($"Failed to get contents for file {file} in Git commit {commitId}. Error message is '{commandResult.StandardError}'.");
-    }
-
-    public static async IAsyncEnumerable<IGrouping<CommitStatus, FileInfo>> GetFilesFromCommit(CommitId commitId, DirectoryInfo baseDirectory)
+    public static async ValueTask<ImmutableDictionary<CommitStatus, ImmutableList<FileInfo>>> GetFilesFromCommit(CommitId commitId, DirectoryInfo baseDirectory)
     {
         var diffTreeOutput = await GetDiffTreeOutput(commitId, baseDirectory);
 
-        foreach (var grouping in ParseDiffTreeOutput(diffTreeOutput, baseDirectory))
-        {
-            yield return grouping;
-        }
+        return ParseDiffTreeOutput(diffTreeOutput, baseDirectory);
     }
 
-    private static async Task<string> GetGitRootDirectoryPath(DirectoryInfo directory)
-    {
-        var command = Command.Run("git", "-C", directory.FullName, "rev-parse", "--show-toplevel");
-        var commandResult = await command.Task;
-
-        return commandResult.Success
-            ? commandResult.StandardOutput.Trim()
-            : throw new InvalidOperationException($"Failed to get root Git directory for {directory.FullName}. Error message is '{commandResult.StandardError}'.");
-    }
-
-    private static async Task<string> GetDiffTreeOutput(CommitId commitId, DirectoryInfo baseDirectory)
+    private static async ValueTask<string> GetDiffTreeOutput(CommitId commitId, DirectoryInfo baseDirectory)
     {
         var command = Command.Run("git", "-C", baseDirectory.FullName, "diff-tree", "--no-commit-id", "--name-status", "--relative", "-r", $"{commitId}^", $"{commitId}");
         var commandResult = await command.Task;
@@ -80,17 +57,24 @@ internal static class Git
             : throw new InvalidOperationException($"Failed to get files for commit {commitId} in directory {baseDirectory}. Error message is '{commandResult.StandardError}'.");
     }
 
-    private static IEnumerable<IGrouping<CommitStatus, FileInfo>> ParseDiffTreeOutput(string output, DirectoryInfo baseDirectory)
+    private static ImmutableDictionary<CommitStatus, ImmutableList<FileInfo>> ParseDiffTreeOutput(string output, DirectoryInfo baseDirectory)
     {
-        var getFileFromOutputLine = (string outputLine) => new FileInfo(Path.Combine(baseDirectory.FullName, outputLine[1..].Trim()));
-
-        return
-            from outputLine in output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
-            let commitStatus = TryGetCommitStatusFromOutputLine(outputLine)
-            where commitStatus is not null
-            let nonNullCommitStatus = commitStatus ?? throw new NullReferenceException() // Shouldn't be null here, adding to satisfy nullable compiler check
-            let file = getFileFromOutputLine(outputLine)
-            group file by nonNullCommitStatus;
+        return output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+                     .Choose<string, (CommitStatus Status, FileInfo File)>(line =>
+                     {
+                         var commitStatus = TryGetCommitStatusFromOutputLine(line);
+                         if (commitStatus is null)
+                         {
+                             return default;
+                         }
+                         else
+                         {
+                             var file = GetFileFromOutputLine(line, baseDirectory);
+                             return (commitStatus.Value, file);
+                         }
+                     })
+                     .GroupBy(pair => pair.Status, pair => pair.File)
+                     .ToImmutableDictionary(grouping => grouping.Key, grouping => grouping.ToImmutableList());
     }
 
     private static CommitStatus? TryGetCommitStatusFromOutputLine(string diffTreeOutputLine)
@@ -108,5 +92,12 @@ internal static class Git
             'B' => CommitStatus.Broken,
             _ => null
         };
+    }
+
+    private static FileInfo GetFileFromOutputLine(string outputLine, DirectoryInfo baseDirectory)
+    {
+        var outputLinePath = outputLine[1..].Trim();
+        var filePath = Path.Combine(baseDirectory.FullName, outputLinePath);
+        return new FileInfo(filePath);
     }
 }
