@@ -107,6 +107,7 @@ internal class Extractor : BackgroundService
         await ExportServicePolicy(cancellationToken);
         await ExportNamedValues(cancellationToken);
         await ExportGateways(cancellationToken);
+        await ExportBackends(cancellationToken);
         await ExportLoggers(cancellationToken);
         await ExportProducts(cancellationToken);
         await ExportApis(cancellationToken);
@@ -176,6 +177,31 @@ internal class Extractor : BackgroundService
 
             await file.OverwriteWithJson(jsonArray, cancellationToken);
         }
+    }
+
+    private async ValueTask ExportBackends(CancellationToken cancellationToken)
+    {
+        var backends = Backend.List(getResources, serviceProviderUri, serviceName, cancellationToken);
+
+        await Parallel.ForEachAsync(backends, cancellationToken, ExportBackend);
+    }
+
+    private async ValueTask ExportBackend(common.Models.Backend backend, CancellationToken cancellationToken)
+    {
+        await ExportBackendInformation(backend, cancellationToken);
+    }
+
+    private async ValueTask ExportBackendInformation(common.Models.Backend backend, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting information for backend {backendName}...", backend.Name);
+
+        var backendsDirectory = BackendsDirectory.From(serviceDirectory);
+        var backendName = BackendName.From(backend.Name);
+        var backendDirectory = BackendDirectory.From(backendsDirectory, backendName);
+        var file = BackendInformationFile.From(backendDirectory);
+        var json = Backend.Serialize(backend);
+
+        await file.OverwriteWithJson(json, cancellationToken);
     }
 
     private async ValueTask ExportLoggers(CancellationToken cancellationToken)

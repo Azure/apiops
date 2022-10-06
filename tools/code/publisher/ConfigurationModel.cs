@@ -7,6 +7,7 @@ internal record ConfigurationModel
     public Gateway[]? Gateways { get; init; }
     public Product[]? Products { get; init; }
     public Logger[]? Loggers { get; init; }
+    public Backend[]? Backends { get; init; }
     public Diagnostic[]? Diagnostics { get; init; }
     public Api[]? Apis { get; init; }
 
@@ -70,6 +71,12 @@ internal record ConfigurationModel
             public string? ConnectionString { get; init; }
         }
     };
+
+    public record Backend
+    {
+        public string? Name { get; init; }
+        public string? Description { get; init; }
+    }
 
     public record Diagnostic
     {
