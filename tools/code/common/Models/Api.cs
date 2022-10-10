@@ -125,7 +125,7 @@ public sealed record Api([property: JsonPropertyName("name")] string Name,
 
     public sealed record ApiContactInformation
     {
-        [JsonPropertyName("name")]
+        [JsonPropertyName("email")]
         public string? Email { get; init; }
 
         [JsonPropertyName("name")]

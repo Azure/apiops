@@ -109,6 +109,7 @@ internal class Extractor : BackgroundService
         await ExportGateways(cancellationToken);
         await ExportBackends(cancellationToken);
         await ExportLoggers(cancellationToken);
+        await ExportPolicyFragments(cancellationToken);
         await ExportProducts(cancellationToken);
         await ExportApis(cancellationToken);
         await ExportVersionSets(cancellationToken);
@@ -227,6 +228,64 @@ internal class Extractor : BackgroundService
         var json = Logger.Serialize(loggerModel);
 
         await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportPolicyFragments(CancellationToken cancellationToken)
+    {
+        var policyFragments = PolicyFragment.List(getResources, serviceProviderUri, serviceName, cancellationToken);
+
+        await Parallel.ForEachAsync(policyFragments, cancellationToken, ExportPolicyFragment);
+    }
+
+    private async ValueTask ExportPolicyFragment(common.Models.PolicyFragment policyFragment, CancellationToken cancellationToken)
+    {
+        await ExportPolicyFragmentInformation(policyFragment, cancellationToken);
+        await ExportPolicyFragmentPolicy(policyFragment, cancellationToken);
+    }
+
+    private async ValueTask ExportPolicyFragmentInformation(common.Models.PolicyFragment policyFragmentModel, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Exporting information for policy fragment {policyFragmentName}...", policyFragmentModel.Name);
+
+        var policyFragmentsDirectory = PolicyFragmentsDirectory.From(serviceDirectory);
+        var policyFragmentName = PolicyFragmentName.From(policyFragmentModel.Name);
+        var policyFragmentDirectory = PolicyFragmentDirectory.From(policyFragmentsDirectory, policyFragmentName);
+        var file = PolicyFragmentInformationFile.From(policyFragmentDirectory);
+        var json = PolicyFragment.Serialize(policyFragmentModel);
+        
+        // Remove format & XML from JSON
+        if (json.TryGetPropertyValue("properties", out var jsonNode) && jsonNode is JsonObject propertiesJson)
+        {
+            if (propertiesJson.ContainsKey("format"))
+            {
+                propertiesJson.Remove("format");
+            }
+
+            if (propertiesJson.ContainsKey("value"))
+            {
+                propertiesJson.Remove("value");
+            }
+        }
+
+        await file.OverwriteWithJson(json, cancellationToken);
+    }
+
+    private async ValueTask ExportPolicyFragmentPolicy(common.Models.PolicyFragment policyFragment, CancellationToken cancellationToken)
+    {
+        var policyFragmentName = PolicyFragmentName.From(policyFragment.Name);
+        var policyFragmentModel = await PolicyFragment.Get(getResource, serviceProviderUri, serviceName, policyFragmentName, cancellationToken);
+        var policyText = policyFragmentModel.Properties.Value;
+
+        if (policyText is not null)
+        {
+            logger.LogInformation("Exporting policy for policy fragment {policyFragmentName}...", policyFragment.Name);
+
+            var policyFragmentsDirectory = PolicyFragmentsDirectory.From(serviceDirectory);
+            var policyFragmentDirectory = PolicyFragmentDirectory.From(policyFragmentsDirectory, policyFragmentName);
+            var file = PolicyFragmentPolicyFile.From(policyFragmentDirectory);
+
+            await file.OverwriteWithText(policyText, cancellationToken);
+        }
     }
 
     private async ValueTask ExportNamedValues(CancellationToken cancellationToken)
