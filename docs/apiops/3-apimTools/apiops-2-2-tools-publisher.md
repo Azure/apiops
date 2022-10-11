@@ -57,4 +57,11 @@ Also when using Key vault make sure you complete the steps below. You can either
 Note: You don't have to create the named values in the target APIM environments ahead of time as they will be created by the publisher.
 ```
 
-Docs and implementation for supporting the secret named value type is Under Construction. Come back soon. 🚧
+If you are trying to override a secret stored as secret namedvalue type in APIM you can simply override the named value in your configuration file as demonstrated in the following [**sample configuration file**](https://github.com/Azure/apiops/blob/main/configuration.prod.yaml).
+
+The important thing to note here is that the value included in the configuration override needs to be defined as a secret in your Azure Devops (as a variable group secret) and Github (as an environment secret) and then passed as an environment variable in the yaml files. The sample yaml files provided in this repository set a variable name called testSecretValue which is the value that gets set on Azure APIM. Set the list of environments variables as you fit for your scenario.
+
+
+```
+Note: You don't have to create the named values in the target APIM environments ahead of time as they will be created by the publisher.
+```

@@ -29,6 +29,9 @@ on:
         required: true
       AZURE_SUBSCRIPTION_ID:
         required: true   
+env:
+  testSecretValue: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}   
+  
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -46,7 +49,6 @@ jobs:
         with:
           fetch-depth: 2
 
-
       # Download the Publisher binary
       - name: Download artifact
         uses: dawidd6/action-download-artifact@v2
@@ -54,6 +56,13 @@ jobs:
           github_token: ${{secrets.GITHUB_TOKEN}}
           workflow: publish-publisher.yaml
           name: publisher         
+      
+      - name: Perform variable substitution in yaml file
+        uses: cschleiden/replace-tokens@v1.1
+        with:
+          tokenPrefix: '{#'
+          tokenSuffix: '#}'
+          files: '["**/configuration.*.yaml"]'
 
       - name: Run publisher without Config Yaml but with Commit ID
         if: ( inputs.CONFIGURATION_YAML_PATH == '' &&  inputs.COMMIT_ID != '')

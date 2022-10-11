@@ -3,6 +3,9 @@ namedValues:
   - name: [name goes here. e.g. environment or SearchEngineBackendURL. It doesn't have to exist in the target environment]
     displayName: [display name  goes here]
     value: [replacement value in the target environment. e.g. name value can be dev in dev environment and prod in the prod environment]
+  - name: [name of the secret from apim. e.g. testSecret]
+    displayName: [display name from apim goes here]
+    value: "{# name of the environment variable defined within your devops pipeline. Make sure you retain the prefix and suffix here#}"
   - name: mynamedvalue
     displayName: mynamedvalue
     keyVault:

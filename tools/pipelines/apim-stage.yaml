@@ -59,6 +59,18 @@ steps:
       echo "##vso[task.setvariable issecret=true;variable=AZURE_SUBSCRIPTION_ID]$(az account show --query "id" --output tsv)"
     addSpnToEnvironment: true
     failOnStandardError: true
+# replacetokens@3 task will need to be installed to use
+- task: replacetokens@3
+  displayName: 'Perform variable substitution in yaml file'
+  inputs:
+    targetFiles: $(Build.SourcesDirectory)/configuration.*.yaml
+    encoding: "auto"
+    writeBOM: true
+    verbosity: "off"
+    actionOnMissing: "warn"
+    keepToken: false
+    tokenPrefix: "{#"
+    tokenSuffix: "#}"
 - task: AzureCLI@2
   displayName: Run publisher for ${{ parameters.ENVIRONMRNT}} environment
   inputs:
