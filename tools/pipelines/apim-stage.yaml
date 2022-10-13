@@ -65,9 +65,9 @@ steps:
 
 # replacetokens@3 task will need to be installed to use
 - task: replacetokens@3
-  displayName: 'Perform variable substitution in yaml file'
+  displayName: 'Perform namevalue secret substitution in configuration.${{ parameters.ENVIRONMENT}}.yaml'
   inputs:
-    targetFiles: $(Build.SourcesDirectory)/configuration.*.yaml
+    targetFiles: $(Build.SourcesDirectory)/configuration.${{ parameters.ENVIRONMENT}}.yaml
     encoding: "auto"
     writeBOM: true
     verbosity: "off"

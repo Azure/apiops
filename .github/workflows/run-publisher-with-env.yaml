@@ -16,19 +16,6 @@ on:
       API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: 
         required: true
         type: string          
-    secrets:
-      AZURE_RESOURCE_GROUP_NAME:
-        required: true
-      API_MANAGEMENT_SERVICE_NAME: 
-        required: true
-      AZURE_CLIENT_ID:
-        required: true
-      AZURE_CLIENT_SECRET:
-        required: true
-      AZURE_TENANT_ID:
-        required: true
-      AZURE_SUBSCRIPTION_ID:
-        required: true   
         
 jobs:
   build:
@@ -55,12 +42,16 @@ jobs:
           workflow: publish-publisher.yaml
           name: publisher         
       
-      - name: Perform variable substitution in yaml file
+      # Add this step for each APIM environment and pass specific set of secrets that you want replaced in the env section below
+      - name: 'Perform namevalue secret substitution in configuration.${{ inputs.API_MANAGEMENT_ENVIRONMENT}}.yaml'
+        if: (inputs.API_MANAGEMENT_ENVIRONMENT == 'prod' )   
         uses: cschleiden/replace-tokens@v1.1
         with:
           tokenPrefix: '{#'
           tokenSuffix: '#}'
-          files: '["**/configuration.*.yaml"]'
+          files: ${{ format('["**/configuration.{0}.yaml"]', inputs.API_MANAGEMENT_ENVIRONMENT) }}
+        # specify environment specific secrets to be replaced. For example the QA environment could have a different set sercrets to 
+        # replace within the configuration.[environment].yaml file
         env: 
           testSecretValue: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
 
