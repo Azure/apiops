@@ -245,6 +245,9 @@ internal class Publisher : BackgroundService
             case LoggerInformationFile file:
                 var loggerName = Logger.GetNameFromFile(file).ToString();
                 return configurationModel.Loggers?.Any(value => value.Name?.Equals(loggerName) ?? false) ?? false;
+            case BackendInformationFile file:
+                var backendName = Backend.GetNameFromFile(file).ToString();
+                return configurationModel.Backends?.Any(value => value.Name?.Equals(backendName) ?? false) ?? false;
             case ProductInformationFile file:
                 var productName = Product.GetNameFromFile(file).ToString();
                 return configurationModel.Products?.Any(value => value.Name?.Equals(productName) ?? false) ?? false;
@@ -271,6 +274,8 @@ internal class Publisher : BackgroundService
         var gatewayInformationFiles = files.Choose(file => file as GatewayInformationFile).ToList();
         var namedValueInformationFiles = files.Choose(file => file as NamedValueInformationFile).ToList();
         var loggerInformationFiles = files.Choose(file => file as LoggerInformationFile).ToList();
+        var policyFragmentInformationFiles = files.Choose(file => file as PolicyFragmentInformationFile).ToList();
+        var backendInformationFiles = files.Choose(file => file as BackendInformationFile).ToList();
         var gatewayApisFiles = files.Choose(file => file as GatewayApisFile).ToList();
         var productInformationFiles = files.Choose(file => file as ProductInformationFile).ToList();
         var productPolicyFiles = files.Choose(file => file as ProductPolicyFile).ToList();
@@ -288,6 +293,7 @@ internal class Publisher : BackgroundService
         await DeleteApis(apiInformationFiles, cancellationToken);
         await DeleteApiVersionSets(apiVersionSetInformationFiles, cancellationToken);
         await DeleteLoggers(loggerInformationFiles, cancellationToken);
+        await DeleteBackends(backendInformationFiles, cancellationToken);
         await DeleteGatewayApis(gatewayApisFiles, cancellationToken);
         await DeleteGateways(gatewayInformationFiles, cancellationToken);
         await DeleteProductApis(productApisFiles, cancellationToken);
@@ -296,6 +302,7 @@ internal class Publisher : BackgroundService
         await DeleteDiagnostics(diagnosticInformationFiles, cancellationToken);
         await DeleteNamedValues(namedValueInformationFiles, cancellationToken);
         await DeleteServicePolicy(servicePolicyFiles, cancellationToken);
+        await DeletePolicyFragments(policyFragmentInformationFiles, cancellationToken);
     }
 
     private async ValueTask PutFiles(IReadOnlyCollection<FileRecord> files, CancellationToken cancellationToken)
@@ -304,6 +311,9 @@ internal class Publisher : BackgroundService
         var gatewayInformationFiles = files.Choose(file => file as GatewayInformationFile).ToList();
         var namedValueInformationFiles = files.Choose(file => file as NamedValueInformationFile).ToList();
         var loggerInformationFiles = files.Choose(file => file as LoggerInformationFile).ToList();
+        var policyFragmentInformationFiles = files.Choose(file => file as PolicyFragmentInformationFile).ToList();
+        var policyFragmentPolicyFiles = files.Choose(file => file as PolicyFragmentPolicyFile).ToList();
+        var backendInformationFiles = files.Choose(file => file as BackendInformationFile).ToList();
         var productInformationFiles = files.Choose(file => file as ProductInformationFile).ToList();
         var productPolicyFiles = files.Choose(file => file as ProductPolicyFile).ToList();
         var gatewayApisFiles = files.Choose(file => file as GatewayApisFile).ToList();
@@ -317,8 +327,10 @@ internal class Publisher : BackgroundService
         var apiOperationPolicyFiles = files.Choose(file => file as ApiOperationPolicyFile).ToList();
 
         await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
+        await PutPolicyFragments(policyFragmentInformationFiles, policyFragmentPolicyFiles, cancellationToken);
         await PutServicePolicyFile(servicePolicyFiles, cancellationToken);
         await PutLoggerInformationFiles(loggerInformationFiles, cancellationToken);
+        await PutBackendInformationFiles(backendInformationFiles, cancellationToken);
         await PutDiagnosticInformationFiles(diagnosticInformationFiles, cancellationToken);
         await PutGatewayInformationFiles(gatewayInformationFiles, cancellationToken);
         await PutProductInformationFiles(productInformationFiles, cancellationToken);
@@ -335,6 +347,9 @@ internal class Publisher : BackgroundService
     private FileRecord? TryClassifyFile(FileInfo file) =>
         GatewayInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? LoggerInformationFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? PolicyFragmentInformationFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? PolicyFragmentPolicyFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? BackendInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ServicePolicyFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? NamedValueInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ProductInformationFile.TryFrom(serviceDirectory, file) as FileRecord
@@ -579,6 +594,55 @@ internal class Publisher : BackgroundService
         var name = LoggerName.From(Logger.Deserialize(json).Name);
 
         await Logger.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
+    }
+
+    private async ValueTask PutBackendInformationFiles(IReadOnlyCollection<BackendInformationFile> files, CancellationToken cancellationToken)
+    {
+        await Parallel.ForEachAsync(files, cancellationToken, PutBackendInformationFile);
+    }
+
+    private async ValueTask PutBackendInformationFile(BackendInformationFile file, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Putting backend information file {backendInformationFile}...", file.Path);
+
+        var json = file.ReadAsJsonObject();
+        var backendModel = Backend.Deserialize(json);
+
+        var configurationBackend = configurationModel?.Backends?.FirstOrDefault(configurationBackend => configurationBackend.Name == backendModel.Name);
+        if (configurationBackend is not null)
+        {
+            logger.LogInformation("Found backend {backend} in configuration...", backendModel.Name);
+            backendModel = backendModel with
+            {
+                Properties = backendModel.Properties with
+                {
+                    Description = configurationBackend.Description ?? backendModel.Properties.Description
+                }
+            };
+        }
+
+        await Backend.Put(putResource, serviceProviderUri, serviceName, backendModel, cancellationToken);
+    }
+
+    private async ValueTask DeleteBackends(IReadOnlyCollection<BackendInformationFile> files, CancellationToken cancellationToken)
+    {
+        await Parallel.ForEachAsync(files, cancellationToken, DeleteBackend);
+    }
+
+    private async ValueTask DeleteBackend(BackendInformationFile file, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("File {backendInformationFile} was removed, deleting backend...", file.Path);
+
+        if (commitId is null)
+        {
+            throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
+        }
+
+        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        var name = BackendName.From(Backend.Deserialize(json).Name);
+
+        await Backend.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
 
     private async ValueTask PutDiagnosticInformationFiles(IReadOnlyCollection<DiagnosticInformationFile> files, CancellationToken cancellationToken)
@@ -890,6 +954,47 @@ internal class Publisher : BackgroundService
         .ToDictionary(x => x.Key ? "Current" : "NonCurrentRevisions", x => x.ToList());
         if (splitCurrentRevisions.TryGetValue("Current", out var currentRevisions)) await Parallel.ForEachAsync(currentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
         if (splitCurrentRevisions.TryGetValue("NonCurrentRevisions", out var nonCurrentRevisions)) await Parallel.ForEachAsync(nonCurrentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
+    }
+
+    private async ValueTask PutPolicyFragments(IReadOnlyCollection<PolicyFragmentInformationFile> informationFiles, IReadOnlyCollection<PolicyFragmentPolicyFile> policyFiles, CancellationToken cancellationToken)
+    {
+        var filePairs = informationFiles.FullJoin(policyFiles,
+                                                  informationFile => informationFile.PolicyFragmentDirectory,
+                                                  policyFile => policyFile.PolicyFragmentDirectory,
+                                                  informationFile => (InformationFile: informationFile, PolicyFile: PolicyFragmentPolicyFile.From(informationFile.PolicyFragmentDirectory)),
+                                                  policyFile => (InformationFile: PolicyFragmentInformationFile.From(policyFile.PolicyFragmentDirectory), PolicyFile: policyFile),
+                                                  (informationFile, policyFile) => (InformationFile: informationFile, PolicyFile: policyFile));
+
+        await Parallel.ForEachAsync(filePairs,
+                                    cancellationToken,
+                                    (pair, cancellationToken) => PutPolicyFragment(pair.InformationFile, pair.PolicyFile, cancellationToken));
+    }
+
+    private async ValueTask PutPolicyFragment(PolicyFragmentInformationFile informationFile, PolicyFragmentPolicyFile policyFile, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Putting policy fragment in files {informationFilePath} and {policyFilePath}...", informationFile.Path, policyFile.Path);
+
+        var json = informationFile.ReadAsJsonObject();
+        var model = PolicyFragment.Deserialize(json);
+
+        var policyText = await policyFile.ReadAsText(cancellationToken);
+        model = model with { Properties = model.Properties with { Format = "rawxml", Value = policyText } };
+
+        await PolicyFragment.Put(putResource, serviceProviderUri, serviceName, model, cancellationToken);
+    }
+
+    private async ValueTask DeletePolicyFragments(IReadOnlyCollection<PolicyFragmentInformationFile> files, CancellationToken cancellationToken)
+    {
+        await Parallel.ForEachAsync(files, cancellationToken, DeletePolicyFragment);
+    }
+
+    private async ValueTask DeletePolicyFragment(PolicyFragmentInformationFile file, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("File {policyFragmentInformationFile} was removed, deleting policy fragment...", file.Path);
+
+        var name = PolicyFragment.GetNameFromFile(file);
+
+        await PolicyFragment.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
 
     private async ValueTask PutApi(common.Models.Api api, ApiSpecificationFile? specificationFile, CancellationToken cancellationToken)

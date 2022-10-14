@@ -33,7 +33,7 @@ public sealed record ServiceProviderUri : UriRecord
                                          .AppendPath("resourceGroups")
                                          .AppendPath(resourceGroupName)
                                          .AppendPath("providers/Microsoft.ApiManagement/service")
-                                         .SetQueryParameter("api-version", "2021-08-01");
+                                         .SetQueryParameter("api-version", "2021-12-01-preview");
 
         return new(uri);
     }
