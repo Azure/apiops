@@ -1,41 +1,32 @@
-apimServiceName: [your target environment apim instance name goes here]
+apimServiceName: [prod apim instance name goes here]
 namedValues:
-  - name: [name goes here. e.g. environment or SearchEngineBackendURL. It doesn't have to exist in the target environment]
-    displayName: [display name  goes here]
-    value: [replacement value in the target environment. e.g. name value can be dev in dev environment and prod in the prod environment]
-  - name: [name of the secret from apim. e.g. testSecret]
-    displayName: [display name from apim goes here]
-    value: "{# name of the environment variable defined within your devops pipeline. Make sure you retain the prefix and suffix here#}"
-  - name: mynamedvalue
-    displayName: mynamedvalue
+  - name: environment
+    displayName: environment
+    value: "https://www.search.com"
+  - name: mysecretvalue
+    displayName: mysecretvalue
     keyVault:
-      identityClientId: Set if Key Vault authentication happens through a user-assigned managed identity
-      secretIdentifier: Url for key vault secret (can be versioned if needed).
+      identityClientId: [your guid goes here]
+      secretIdentifier: [your url here]
+  - name: testSecret
+    displayName: testSecret
+    value: "{#testSecretValue#}"
 loggers:
-    - name: [source environment app insight name goes here. e.g. apim-dev-insights]
+    - name: apim-lab-insights
       loggerType: applicationInsights
-      description: [app insight description goes here]
-      resourceId: "/subscriptions/[Azure subscription id for the target environment goes here]/resourceGroups/
-                   [resource group name for the target environment goes here]/providers/microsoft.insights/components/
-                   [target environment app insight name goes here. e.g. apim-prod-insights]"
+      description: prod application insights
+      resourceId: "/subscriptions/[your guid here]/resourceGroups/
+                   rg-apim-lab-prod/providers/microsoft.insights/components/apim-lab-prod-insights"
       credentials:
-        instrumentationKey: "destination environment namevalue key for the application insights goes here. You can use the display name to avoid hard coding the key here e.g. {{Logger-Credentials--62390d98217d201158b4bfb3}}. 
-                             The assumption is that the namevalue key is already populated in the target environment. This happens automatically when you associate an application insight to your target apim instance"
-      isBuffered: true
+        instrumentationKey: "{{Logger-Credentials--62825ade46346113589affc1}}"
+        isBuffered: true
 diagnostics:
    - name: applicationinsights
      verbosity: Error
-     loggerId: "/subscriptions/[Azure subscription id for the target environment goes here]/resourceGroups/[resource group name for the target environment goes here]
-        /providers/Microsoft.ApiManagement/service/[apim instance name for the target environment goes here]/loggers/[target environment app insight name goes here. e.g. apim-prod-insights]"
+     loggerId: "/subscriptions/[subscripotion id]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights" 
 apis:
-  - name: "[target api version & revision to apply application insights to e.g. 'my-api', 'my-api-v2', 'my-api-v2;rev=2']"
+  - name: demo-conference-api
     diagnostics:
       - name: applicationinsights
         verbosity: Error
-        loggerId: "/subscriptions/[Azure subscription id for the target environment goes here]/resourceGroups/[resource group name for the target environment goes here]
-        /providers/Microsoft.ApiManagement/service/[apim instance name for the target environment goes here]/loggers/[target environment app insight name goes here. e.g. apim-prod-insights]"
-        
-
-
-
-        
+        loggerId: "/subscriptions/[subscripotion id]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
