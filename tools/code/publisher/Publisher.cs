@@ -28,6 +28,7 @@ internal class Publisher : BackgroundService
     private readonly ServiceName serviceName;
     private readonly CommitId? commitId;
     private readonly FileInfo? configurationFile;
+    private readonly bool shouldPublishConfigurationArtifacts;
 
     public Publisher(IHostApplicationLifetime applicationLifetime, ILogger<Publisher> logger, IConfiguration configuration, AzureHttpClient azureHttpClient)
     {
@@ -42,6 +43,7 @@ internal class Publisher : BackgroundService
         this.serviceName = GetServiceName(configuration);
         this.commitId = TryGetCommitId(configuration);
         this.configurationFile = TryGetConfigurationFile(configuration);
+        this.shouldPublishConfigurationArtifacts = ShouldPublishConfigurationArtifacts(configuration);
     }
 
     private static ServiceDirectory GetServiceDirectory(IConfiguration configuration) =>
@@ -74,6 +76,15 @@ internal class Publisher : BackgroundService
         var filePath = configuration.TryGetValue("CONFIGURATION_YAML_PATH");
 
         return filePath is null ? null : new FileInfo(filePath);
+    }
+
+    private static bool ShouldPublishConfigurationArtifacts(IConfiguration configuration)
+    {
+        var configurationValue = configuration.TryGetValue("PUBLISH_CONFIGURATION_ARTIFACTS");
+
+        return bool.TryParse(configurationValue, out var result)
+            ? result
+            : false;
     }
 
     protected override async Task ExecuteAsync(CancellationToken cancellationToken)
@@ -125,19 +136,44 @@ internal class Publisher : BackgroundService
         if (commitId is null)
         {
             logger.LogInformation("Commit ID was not specified, getting all files from {serviceDirectory}...", serviceDirectory.Path);
-            var fileRecords = GetFileRecordsFromServiceDirectory().ToImmutableList();
-            return Enumerable.Repeat(fileRecords, 1).ToImmutableDictionary(_ => Action.Put);
+            var serviceDirectoryRecords = GetFileRecordsFromServiceDirectory();
+            bool onlyPublishConfigurationArtifacts = false;
+
+            if (shouldPublishConfigurationArtifacts)
+            {
+                logger.LogInformation("Flag set to publish configuration artifacts, will only publish them...");
+                onlyPublishConfigurationArtifacts = true;
+            }
+
+            var filesToPublish = onlyPublishConfigurationArtifacts
+                                    ? serviceDirectoryRecords.Where(IsFileRecordInConfiguration)
+                                                             .ToImmutableList()
+                                    : serviceDirectoryRecords.ToImmutableList();
+
+            var keyValuePair = KeyValuePair.Create(Action.Put, filesToPublish);
+
+            return ImmutableDictionary.CreateRange(new[] { keyValuePair });
         }
         else
         {
             logger.LogInformation("Getting files from commit ID {commitId}...", commitId);
             var commitIdFileRecords = await GetFileRecordsFromCommitId(commitId, cancellationToken);
-            var configurationFileModified = await WasConfigurationFileChangedInCommitId(commitId, cancellationToken);
 
-            if (configurationFileModified)
+            var includeConfigurationArtifacts = false;
+            if (await WasConfigurationFileChangedInCommitId(commitId, cancellationToken))
             {
                 logger.LogInformation("Configuration file was modified in commit ID, will include its contents.");
+                includeConfigurationArtifacts = true;
+            }
 
+            if (shouldPublishConfigurationArtifacts)
+            {
+                logger.LogInformation("Flag set to publish configuration artifacts, will include them.");
+                includeConfigurationArtifacts = true;
+            }
+
+            if (includeConfigurationArtifacts)
+            {
                 var configurationFileRecords = GetFileRecordsFromServiceDirectory()
                                                 .Where(IsFileRecordInConfiguration)
                                                 .ToImmutableList();
@@ -146,7 +182,8 @@ internal class Publisher : BackgroundService
                         // If the commit included artifacts to put, merge them with configuration records.
                         ? commitIdFileRecords.SetItem(Action.Put,
                                                       commitIdFileRecords.TryGetValue(Action.Put, out var existingCommitIdArtifacts)
-                                                      ? existingCommitIdArtifacts.Union(configurationFileRecords).ToImmutableList()
+                                                      ? existingCommitIdArtifacts.Union(configurationFileRecords)
+                                                                                 .ToImmutableList()
                                                       : configurationFileRecords)
                         : commitIdFileRecords;
             }
