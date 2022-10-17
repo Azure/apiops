@@ -579,7 +579,8 @@ internal class Publisher : BackgroundService
             {
                 Properties = backendModel.Properties with
                 {
-                    Description = configurationBackend.Description ?? backendModel.Properties.Description
+                    Description = configurationBackend.Description ?? backendModel.Properties.Description,
+                    Url = configurationBackend.Url ?? backendModel.Properties.Description
                 }
             };
         }
@@ -998,6 +999,7 @@ internal class Publisher : BackgroundService
                 {
                     DisplayName = configurationApi.DisplayName ?? api.Properties.DisplayName,
                     Description = configurationApi.Description ?? api.Properties.Description,
+                    ServiceUrl = configurationApi.ServiceUrl ?? api.Properties.ServiceUrl
                 }
             };
         }
