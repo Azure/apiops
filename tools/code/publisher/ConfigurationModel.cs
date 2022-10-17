@@ -76,6 +76,7 @@ internal record ConfigurationModel
     {
         public string? Name { get; init; }
         public string? Description { get; init; }
+        public string? Url { get; init; }
     }
 
     public record Diagnostic
@@ -90,6 +91,7 @@ internal record ConfigurationModel
         public string? Name { get; init; }
         public string? DisplayName { get; init; }
         public string? Description { get; init; }
+        public string? ServiceUrl { get; init; }
         public Diagnostic[]? Diagnostics { get; init; }
 
         public record Diagnostic
