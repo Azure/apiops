@@ -86,12 +86,12 @@ public sealed record ApiDirectory : DirectoryRecord
     public static ApiDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
     {
         // apis/<api-name>/<version>/<revision>
-        var versionDir = directory?.Parent;
-        var apiDir = versionDir?.Parent;
-        var apisDir = apiDir?.Parent;
+        DirectoryInfo? versionDir = directory?.Parent;
+        DirectoryInfo? apiDir = versionDir?.Parent;
+        DirectoryInfo? apisDir = apiDir?.Parent;
         if (apisDir is not null)
         {
-            var apisDirectory = ApisDirectory.TryFrom(serviceDirectory, apisDir);
+            ApisDirectory? apisDirectory = ApisDirectory.TryFrom(serviceDirectory, apisDir);
 
             return apisDirectory is null ? null : From(apisDirectory, ApiDisplayName.From(apiDir!.Name), ApiVersion.From(versionDir!.Name), ApiRevision.From(directory!.Name));
         }
@@ -119,7 +119,7 @@ public sealed record ApiInformationFile : FileRecord
     {
         if (name.Equals(file.Name))
         {
-            var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
+            ApiDirectory? apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
 
             return apiDirectory is null ? null : new(apiDirectory);
         }
@@ -132,7 +132,11 @@ public sealed record ApiInformationFile : FileRecord
 
 public static class Api
 {
-    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    private static readonly JsonSerializerOptions serializerOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() }
+    };
 
     internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName) =>
         Service.GetUri(serviceProviderUri, serviceName)
@@ -145,8 +149,8 @@ public static class Api
 
     public static ApiName GetNameFromFile(ApiInformationFile file)
     {
-        var jsonObject = file.ReadAsJsonObject();
-        var api = Deserialize(jsonObject);
+        JsonObject jsonObject = file.ReadAsJsonObject();
+        Models.Api api = Deserialize(jsonObject);
 
         return ApiName.From(api.Name);
     }
@@ -159,35 +163,35 @@ public static class Api
 
     public static async ValueTask<Models.Api> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, CancellationToken cancellationToken)
     {
-        var uri = GetUri(serviceProviderUri, serviceName, apiName);
-        var json = await getResource(uri, cancellationToken);
+        Uri uri = GetUri(serviceProviderUri, serviceName, apiName);
+        JsonObject json = await getResource(uri, cancellationToken);
         return Deserialize(json);
     }
 
     public static IAsyncEnumerable<Models.Api> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
     {
-        var uri = ListUri(serviceProviderUri, serviceName);
+        Uri uri = ListUri(serviceProviderUri, serviceName);
         return getResources(uri, cancellationToken).Select(Deserialize);
     }
 
     public static IAsyncEnumerable<Models.Api> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ICollection<string> displayNamesToInclude, CancellationToken cancellationToken)
     {
-        var filters = displayNamesToInclude.Select(displayName => $"properties/displayName eq '{displayName}'");
-        var uri = ListUri(serviceProviderUri, serviceName).SetQueryParameter("$filter", string.Join(" or ", filters));
+        IEnumerable<string> filters = displayNamesToInclude.Select(displayName => $"properties/displayName eq '{displayName}'");
+        Uri uri = ListUri(serviceProviderUri, serviceName).SetQueryParameter("$filter", string.Join(" or ", filters));
         return getResources(uri, cancellationToken).Select(Deserialize);
     }
 
     public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Api api, CancellationToken cancellationToken)
     {
-        var name = ApiName.From(api.Name);
-        var uri = GetUri(serviceProviderUri, serviceName, name);
-        var json = Serialize(api);
+        ApiName name = ApiName.From(api.Name);
+        Uri uri = GetUri(serviceProviderUri, serviceName, name);
+        JsonObject json = Serialize(api);
         await putResource(uri, json, cancellationToken);
     }
 
     public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, CancellationToken cancellationToken)
     {
-        var uri = GetUri(serviceProviderUri, serviceName, apiName);
+        Uri uri = GetUri(serviceProviderUri, serviceName, apiName);
         await deleteResource(uri, cancellationToken);
     }
 }
