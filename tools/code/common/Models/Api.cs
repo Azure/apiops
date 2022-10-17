@@ -167,8 +167,8 @@ public sealed record Api([property: JsonPropertyName("name")] string Name,
 
 public enum ApiType
 {
-    graphql,
-    http,
-    soap,
-    websocket
+    Graphql,
+    Http,
+    Soap,
+    Websocket
 }

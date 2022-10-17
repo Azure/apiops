@@ -417,8 +417,8 @@ internal class Extractor : BackgroundService
 
         return api.Properties.Type switch
         {
-            common.Models.ApiType.graphql => ExportApiSpecification(apiDirectory, apiName, cancellationToken),
-            _ => ExportApiGraphQLSchema(apiDirectory, apiName, cancellationToken)
+            common.Models.ApiType.Graphql => ExportApiGraphQLSchema(apiDirectory, apiName, cancellationToken),
+            _ => ExportApiSpecification(apiDirectory, apiName, cancellationToken)
         };
     }
 
