@@ -51,38 +51,38 @@ internal class Publisher : BackgroundService
 
     private static ServiceProviderUri GetServiceProviderUri(IConfiguration configuration, AzureHttpClient azureHttpClient)
     {
-        var subscriptionId = configuration.GetValue("AZURE_SUBSCRIPTION_ID");
-        var resourceGroupName = configuration.GetValue("AZURE_RESOURCE_GROUP_NAME");
+        string subscriptionId = configuration.GetValue("AZURE_SUBSCRIPTION_ID");
+        string resourceGroupName = configuration.GetValue("AZURE_RESOURCE_GROUP_NAME");
 
         return ServiceProviderUri.From(azureHttpClient.ResourceManagerEndpoint, subscriptionId, resourceGroupName);
     }
 
     private static ServiceName GetServiceName(IConfiguration configuration)
     {
-        var serviceName = configuration.TryGetValue("apimServiceName") ?? configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME");
+        string? serviceName = configuration.TryGetValue("apimServiceName") ?? configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME");
 
         return ServiceName.From(serviceName ?? throw new InvalidOperationException("Could not find service name in configuration. Either specify it in key 'apimServiceName' or 'API_MANAGEMENT_SERVICE_NAME'."));
     }
 
     private static CommitId? TryGetCommitId(IConfiguration configuration)
     {
-        var commitId = configuration.TryGetValue("COMMIT_ID");
+        string? commitId = configuration.TryGetValue("COMMIT_ID");
 
         return commitId is null ? null : CommitId.From(commitId);
     }
 
     private static FileInfo? TryGetConfigurationFile(IConfiguration configuration)
     {
-        var filePath = configuration.TryGetValue("CONFIGURATION_YAML_PATH");
+        string? filePath = configuration.TryGetValue("CONFIGURATION_YAML_PATH");
 
         return filePath is null ? null : new FileInfo(filePath);
     }
 
     private static bool ShouldPublishConfigurationArtifacts(IConfiguration configuration)
     {
-        var configurationValue = configuration.TryGetValue("PUBLISH_CONFIGURATION_ARTIFACTS");
+        string? configurationValue = configuration.TryGetValue("PUBLISH_CONFIGURATION_ARTIFACTS");
 
-        return bool.TryParse(configurationValue, out var result)
+        return bool.TryParse(configurationValue, out bool result)
             ? result
             : false;
     }
@@ -116,15 +116,15 @@ internal class Publisher : BackgroundService
     private async ValueTask Run(CancellationToken cancellationToken)
     {
         logger.LogInformation("Getting files to process...");
-        var dictionary = await GetFilesToProcess(cancellationToken);
+        ImmutableDictionary<Action, ImmutableList<FileRecord>> dictionary = await GetFilesToProcess(cancellationToken);
 
-        if (dictionary.TryGetValue(Action.Delete, out var filesToDelete))
+        if (dictionary.TryGetValue(Action.Delete, out ImmutableList<FileRecord>? filesToDelete))
         {
             logger.LogInformation("Deleting files...");
             await DeleteFiles(filesToDelete, cancellationToken);
         }
 
-        if (dictionary.TryGetValue(Action.Put, out var filesToPut))
+        if (dictionary.TryGetValue(Action.Put, out ImmutableList<FileRecord>? filesToPut))
         {
             logger.LogInformation("Putting files...");
             await PutFiles(filesToPut, cancellationToken);
@@ -136,7 +136,7 @@ internal class Publisher : BackgroundService
         if (commitId is null)
         {
             logger.LogInformation("Commit ID was not specified, getting all files from {serviceDirectory}...", serviceDirectory.Path);
-            var serviceDirectoryRecords = GetFileRecordsFromServiceDirectory();
+            IEnumerable<FileRecord> serviceDirectoryRecords = GetFileRecordsFromServiceDirectory();
             bool onlyPublishConfigurationArtifacts = false;
 
             if (shouldPublishConfigurationArtifacts)
@@ -145,21 +145,21 @@ internal class Publisher : BackgroundService
                 onlyPublishConfigurationArtifacts = true;
             }
 
-            var filesToPublish = onlyPublishConfigurationArtifacts
+            ImmutableList<FileRecord> filesToPublish = onlyPublishConfigurationArtifacts
                                     ? serviceDirectoryRecords.Where(IsFileRecordInConfiguration)
                                                              .ToImmutableList()
                                     : serviceDirectoryRecords.ToImmutableList();
 
-            var keyValuePair = KeyValuePair.Create(Action.Put, filesToPublish);
+            KeyValuePair<Action, ImmutableList<FileRecord>> keyValuePair = KeyValuePair.Create(Action.Put, filesToPublish);
 
             return ImmutableDictionary.CreateRange(new[] { keyValuePair });
         }
         else
         {
             logger.LogInformation("Getting files from commit ID {commitId}...", commitId);
-            var commitIdFileRecords = await GetFileRecordsFromCommitId(commitId, cancellationToken);
+            ImmutableDictionary<Action, ImmutableList<FileRecord>> commitIdFileRecords = await GetFileRecordsFromCommitId(commitId, cancellationToken);
 
-            var includeConfigurationArtifacts = false;
+            bool includeConfigurationArtifacts = false;
             if (await WasConfigurationFileChangedInCommitId(commitId, cancellationToken))
             {
                 logger.LogInformation("Configuration file was modified in commit ID, will include its contents.");
@@ -174,14 +174,14 @@ internal class Publisher : BackgroundService
 
             if (includeConfigurationArtifacts)
             {
-                var configurationFileRecords = GetFileRecordsFromServiceDirectory()
+                ImmutableList<FileRecord> configurationFileRecords = GetFileRecordsFromServiceDirectory()
                                                 .Where(IsFileRecordInConfiguration)
                                                 .ToImmutableList();
 
                 return configurationFileRecords.Any()
                         // If the commit included artifacts to put, merge them with configuration records.
                         ? commitIdFileRecords.SetItem(Action.Put,
-                                                      commitIdFileRecords.TryGetValue(Action.Put, out var existingCommitIdArtifacts)
+                                                      commitIdFileRecords.TryGetValue(Action.Put, out ImmutableList<FileRecord>? existingCommitIdArtifacts)
                                                       ? existingCommitIdArtifacts.Union(configurationFileRecords)
                                                                                  .ToImmutableList()
                                                       : configurationFileRecords)
@@ -202,13 +202,13 @@ internal class Publisher : BackgroundService
 
     private async ValueTask<ImmutableDictionary<Action, ImmutableList<FileRecord>>> GetFileRecordsFromCommitId(CommitId commitId, CancellationToken cancellationToken)
     {
-        var files =
+        IAsyncEnumerable<(Action action, IEnumerable<FileRecord> fileRecords)> files =
             from grouping in Git.GetFilesFromCommit(commitId, serviceDirectory)
             let action = grouping.Key == CommitStatus.Delete ? Action.Delete : Action.Put
             let fileRecords = grouping.Choose(TryClassifyFile)
             select (action, fileRecords);
 
-        var fileList = await files.ToListAsync(cancellationToken);
+        List<(Action action, IEnumerable<FileRecord> fileRecords)> fileList = await files.ToListAsync(cancellationToken);
 
         return fileList.ToImmutableDictionary(pair => pair.action, pair => pair.fileRecords.ToImmutableList());
     }
@@ -220,7 +220,7 @@ internal class Publisher : BackgroundService
             return false;
         }
 
-        var configurationDirectory = configurationFile.Directory;
+        DirectoryInfo? configurationDirectory = configurationFile.Directory;
         if (configurationDirectory is null)
         {
             return false;
@@ -237,27 +237,27 @@ internal class Publisher : BackgroundService
         switch (fileRecord)
         {
             case NamedValueInformationFile file:
-                var namedValueName = NamedValue.GetNameFromFile(file).ToString();
+                string namedValueName = NamedValue.GetNameFromFile(file).ToString();
                 return configurationModel.NamedValues?.Any(value => value.Name?.Equals(namedValueName) ?? false) ?? false;
             case GatewayInformationFile file:
-                var gatewayName = Gateway.GetNameFromFile(file).ToString();
+                string gatewayName = Gateway.GetNameFromFile(file).ToString();
                 return configurationModel.Gateways?.Any(value => value.Name?.Equals(gatewayName) ?? false) ?? false;
             case LoggerInformationFile file:
-                var loggerName = Logger.GetNameFromFile(file).ToString();
+                string loggerName = Logger.GetNameFromFile(file).ToString();
                 return configurationModel.Loggers?.Any(value => value.Name?.Equals(loggerName) ?? false) ?? false;
             case ProductInformationFile file:
-                var productName = Product.GetNameFromFile(file).ToString();
+                string productName = Product.GetNameFromFile(file).ToString();
                 return configurationModel.Products?.Any(value => value.Name?.Equals(productName) ?? false) ?? false;
             case DiagnosticInformationFile file:
-                var diagnosticName = Diagnostic.GetNameFromFile(file).ToString();
+                string diagnosticName = Diagnostic.GetNameFromFile(file).ToString();
                 return configurationModel.Diagnostics?.Any(value => value.Name?.Equals(diagnosticName) ?? false) ?? false;
             case ApiInformationFile file:
-                var apiName = Api.GetNameFromFile(file).ToString();
+                string apiName = Api.GetNameFromFile(file).ToString();
                 return configurationModel.Apis?.Any(value => value.Name?.Equals(apiName) ?? false) ?? false;
             case ApiDiagnosticInformationFile file:
-                var apiDiagnosticName = ApiDiagnostic.GetNameFromFile(file).ToString();
-                var apiInformationFile = ApiInformationFile.From(file.ApiDiagnosticDirectory.ApiDiagnosticsDirectory.ApiDirectory);
-                var apiDiagnosticApiName = Api.GetNameFromFile(apiInformationFile).ToString();
+                string apiDiagnosticName = ApiDiagnostic.GetNameFromFile(file).ToString();
+                ApiInformationFile apiInformationFile = ApiInformationFile.From(file.ApiDiagnosticDirectory.ApiDiagnosticsDirectory.ApiDirectory);
+                string apiDiagnosticApiName = Api.GetNameFromFile(apiInformationFile).ToString();
                 return configurationModel.Apis?.Any(value => (value.Name?.Equals(apiDiagnosticApiName) ?? false)
                                                              && (value.Diagnostics?.Any(value => value.Name?.Equals(apiDiagnosticName) ?? false) ?? false)) ?? false;
             default:
@@ -267,20 +267,20 @@ internal class Publisher : BackgroundService
 
     private async ValueTask DeleteFiles(IReadOnlyCollection<FileRecord> files, CancellationToken cancellationToken)
     {
-        var servicePolicyFiles = files.Choose(file => file as ServicePolicyFile).ToList();
-        var gatewayInformationFiles = files.Choose(file => file as GatewayInformationFile).ToList();
-        var namedValueInformationFiles = files.Choose(file => file as NamedValueInformationFile).ToList();
-        var loggerInformationFiles = files.Choose(file => file as LoggerInformationFile).ToList();
-        var gatewayApisFiles = files.Choose(file => file as GatewayApisFile).ToList();
-        var productInformationFiles = files.Choose(file => file as ProductInformationFile).ToList();
-        var productPolicyFiles = files.Choose(file => file as ProductPolicyFile).ToList();
-        var productApisFiles = files.Choose(file => file as ProductApisFile).ToList();
-        var diagnosticInformationFiles = files.Choose(file => file as DiagnosticInformationFile).ToList();
-        var apiVersionSetInformationFiles = files.Choose(file => file as ApiVersionSetInformationFile).ToList();
-        var apiInformationFiles = files.Choose(file => file as ApiInformationFile).ToList();
-        var apiDiagnosticInformationFiles = files.Choose(file => file as ApiDiagnosticInformationFile).ToList();
-        var apiPolicyFiles = files.Choose(file => file as ApiPolicyFile).ToList();
-        var apiOperationPolicyFiles = files.Choose(file => file as ApiOperationPolicyFile).ToList();
+        List<ServicePolicyFile> servicePolicyFiles = files.Choose(file => file as ServicePolicyFile).ToList();
+        List<GatewayInformationFile> gatewayInformationFiles = files.Choose(file => file as GatewayInformationFile).ToList();
+        List<NamedValueInformationFile> namedValueInformationFiles = files.Choose(file => file as NamedValueInformationFile).ToList();
+        List<LoggerInformationFile> loggerInformationFiles = files.Choose(file => file as LoggerInformationFile).ToList();
+        List<GatewayApisFile> gatewayApisFiles = files.Choose(file => file as GatewayApisFile).ToList();
+        List<ProductInformationFile> productInformationFiles = files.Choose(file => file as ProductInformationFile).ToList();
+        List<ProductPolicyFile> productPolicyFiles = files.Choose(file => file as ProductPolicyFile).ToList();
+        List<ProductApisFile> productApisFiles = files.Choose(file => file as ProductApisFile).ToList();
+        List<DiagnosticInformationFile> diagnosticInformationFiles = files.Choose(file => file as DiagnosticInformationFile).ToList();
+        List<ApiVersionSetInformationFile> apiVersionSetInformationFiles = files.Choose(file => file as ApiVersionSetInformationFile).ToList();
+        List<ApiInformationFile> apiInformationFiles = files.Choose(file => file as ApiInformationFile).ToList();
+        List<ApiDiagnosticInformationFile> apiDiagnosticInformationFiles = files.Choose(file => file as ApiDiagnosticInformationFile).ToList();
+        List<ApiPolicyFile> apiPolicyFiles = files.Choose(file => file as ApiPolicyFile).ToList();
+        List<ApiOperationPolicyFile> apiOperationPolicyFiles = files.Choose(file => file as ApiOperationPolicyFile).ToList();
 
         await DeleteApiOperationPolicies(apiOperationPolicyFiles, cancellationToken);
         await DeleteApiDiagnostics(apiDiagnosticInformationFiles, cancellationToken);
@@ -300,21 +300,22 @@ internal class Publisher : BackgroundService
 
     private async ValueTask PutFiles(IReadOnlyCollection<FileRecord> files, CancellationToken cancellationToken)
     {
-        var servicePolicyFiles = files.Choose(file => file as ServicePolicyFile).ToList();
-        var gatewayInformationFiles = files.Choose(file => file as GatewayInformationFile).ToList();
-        var namedValueInformationFiles = files.Choose(file => file as NamedValueInformationFile).ToList();
-        var loggerInformationFiles = files.Choose(file => file as LoggerInformationFile).ToList();
-        var productInformationFiles = files.Choose(file => file as ProductInformationFile).ToList();
-        var productPolicyFiles = files.Choose(file => file as ProductPolicyFile).ToList();
-        var gatewayApisFiles = files.Choose(file => file as GatewayApisFile).ToList();
-        var productApisFiles = files.Choose(file => file as ProductApisFile).ToList();
-        var diagnosticInformationFiles = files.Choose(file => file as DiagnosticInformationFile).ToList();
-        var apiVersionSetInformationFiles = files.Choose(file => file as ApiVersionSetInformationFile).ToList();
-        var apiInformationFiles = files.Choose(file => file as ApiInformationFile).ToList();
-        var apiSpecificationFiles = files.Choose(file => file as ApiSpecificationFile).ToList();
-        var apiDiagnosticInformationFiles = files.Choose(file => file as ApiDiagnosticInformationFile).ToList();
-        var apiPolicyFiles = files.Choose(file => file as ApiPolicyFile).ToList();
-        var apiOperationPolicyFiles = files.Choose(file => file as ApiOperationPolicyFile).ToList();
+        List<ServicePolicyFile> servicePolicyFiles = files.Choose(file => file as ServicePolicyFile).ToList();
+        List<GatewayInformationFile> gatewayInformationFiles = files.Choose(file => file as GatewayInformationFile).ToList();
+        List<NamedValueInformationFile> namedValueInformationFiles = files.Choose(file => file as NamedValueInformationFile).ToList();
+        List<LoggerInformationFile> loggerInformationFiles = files.Choose(file => file as LoggerInformationFile).ToList();
+        List<ProductInformationFile> productInformationFiles = files.Choose(file => file as ProductInformationFile).ToList();
+        List<ProductPolicyFile> productPolicyFiles = files.Choose(file => file as ProductPolicyFile).ToList();
+        List<GatewayApisFile> gatewayApisFiles = files.Choose(file => file as GatewayApisFile).ToList();
+        List<ProductApisFile> productApisFiles = files.Choose(file => file as ProductApisFile).ToList();
+        List<DiagnosticInformationFile> diagnosticInformationFiles = files.Choose(file => file as DiagnosticInformationFile).ToList();
+        List<ApiVersionSetInformationFile> apiVersionSetInformationFiles = files.Choose(file => file as ApiVersionSetInformationFile).ToList();
+        List<ApiInformationFile> apiInformationFiles = files.Choose(file => file as ApiInformationFile).ToList();
+        List<ApiSpecificationFile> apiSpecificationFiles = files.Choose(file => file as ApiSpecificationFile).ToList();
+        List<GraphQLSchemaFile> apiGraphQLFiles = files.Choose(file => file as GraphQLSchemaFile).ToList();
+        List<ApiDiagnosticInformationFile> apiDiagnosticInformationFiles = files.Choose(file => file as ApiDiagnosticInformationFile).ToList();
+        List<ApiPolicyFile> apiPolicyFiles = files.Choose(file => file as ApiPolicyFile).ToList();
+        List<ApiOperationPolicyFile> apiOperationPolicyFiles = files.Choose(file => file as ApiOperationPolicyFile).ToList();
 
         await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
         await PutServicePolicyFile(servicePolicyFiles, cancellationToken);
@@ -345,13 +346,14 @@ internal class Publisher : BackgroundService
         ?? ApiVersionSetInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiSpecificationFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? GraphQLSchemaFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiDiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiPolicyFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiOperationPolicyFile.TryFrom(serviceDirectory, file) as FileRecord;
 
     private async ValueTask PutServicePolicyFile(IReadOnlyCollection<ServicePolicyFile> files, CancellationToken cancellationToken)
     {
-        var servicePolicyFile = files.SingleOrDefault();
+        ServicePolicyFile? servicePolicyFile = files.SingleOrDefault();
 
         if (servicePolicyFile is not null)
         {
@@ -363,13 +365,13 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting service policy file {servicePolicyFile}...", file.Path);
 
-        var policyText = await file.ReadAsText(cancellationToken);
+        string policyText = await file.ReadAsText(cancellationToken);
         await ServicePolicy.Put(putResource, serviceProviderUri, serviceName, policyText, cancellationToken);
     }
 
     private async ValueTask DeleteServicePolicy(IReadOnlyCollection<ServicePolicyFile> files, CancellationToken cancellationToken)
     {
-        var servicePolicyFile = files.SingleOrDefault();
+        ServicePolicyFile? servicePolicyFile = files.SingleOrDefault();
 
         if (servicePolicyFile is not null)
         {
@@ -393,10 +395,10 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting gateway information file {gatewayInformationFile}...", file.Path);
 
-        var json = file.ReadAsJsonObject();
-        var gateway = Gateway.Deserialize(json);
+        JsonObject json = file.ReadAsJsonObject();
+        common.Models.Gateway gateway = Gateway.Deserialize(json);
 
-        var configurationGateway = configurationModel?.Gateways?.FirstOrDefault(configurationGateway => configurationGateway.Name == gateway.Name);
+        ConfigurationModel.Gateway? configurationGateway = configurationModel?.Gateways?.FirstOrDefault(configurationGateway => configurationGateway.Name == gateway.Name);
         if (configurationGateway is not null)
         {
             logger.LogInformation("Found gateway {gateway} in configuration...", gateway.Name);
@@ -426,9 +428,9 @@ internal class Publisher : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
-        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
-        var name = GatewayName.From(Gateway.Deserialize(json).Name);
+        string fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        JsonObject json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        GatewayName name = GatewayName.From(Gateway.Deserialize(json).Name);
 
         await Gateway.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
@@ -447,9 +449,9 @@ internal class Publisher : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
-        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
-        var id = ApiVersionSetId.From(ApiVersionSet.Deserialize(json).Name);
+        string fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        JsonObject json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        ApiVersionSetId id = ApiVersionSetId.From(ApiVersionSet.Deserialize(json).Name);
 
         await ApiVersionSet.Delete(deleteResource, serviceProviderUri, serviceName, id, cancellationToken);
     }
@@ -463,18 +465,18 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting gateway apis file {gatewayApisFile}...", file.Path);
 
-        var gatewayInformationFile = GatewayInformationFile.From(file.GatewayDirectory);
+        GatewayInformationFile gatewayInformationFile = GatewayInformationFile.From(file.GatewayDirectory);
         if (gatewayInformationFile.Exists() is false)
         {
             throw new InvalidOperationException($"Gateway information file is missing. Expected path is {gatewayInformationFile.Path}. Cannot put gateway APIs file {file.Path}.");
         }
 
-        var gatewayName = Gateway.GetNameFromFile(gatewayInformationFile);
-        var fileApiNames = GatewayApi.ListFromFile(file).ToAsyncEnumerable();
-        var existingApiNames = GatewayApi.List(getResources, serviceProviderUri, serviceName, gatewayName, cancellationToken).Select(api => ApiName.From(api.Name));
+        GatewayName gatewayName = Gateway.GetNameFromFile(gatewayInformationFile);
+        IAsyncEnumerable<ApiName> fileApiNames = GatewayApi.ListFromFile(file).ToAsyncEnumerable();
+        IAsyncEnumerable<ApiName> existingApiNames = GatewayApi.List(getResources, serviceProviderUri, serviceName, gatewayName, cancellationToken).Select(api => ApiName.From(api.Name));
 
-        var apiNamesToAdd = fileApiNames.Except(existingApiNames);
-        var apiNamesToRemove = existingApiNames.Except(fileApiNames);
+        IAsyncEnumerable<ApiName> apiNamesToAdd = fileApiNames.Except(existingApiNames);
+        IAsyncEnumerable<ApiName> apiNamesToRemove = existingApiNames.Except(fileApiNames);
 
         await Parallel.ForEachAsync(apiNamesToAdd, cancellationToken, (apiName, cancellationToken) =>
         {
@@ -498,18 +500,18 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("File {gatewayApisFile} was removed, deleting gateway APIs...", file.Path);
 
-        var gatewayInformationFile = GatewayInformationFile.From(file.GatewayDirectory);
+        GatewayInformationFile gatewayInformationFile = GatewayInformationFile.From(file.GatewayDirectory);
         if (gatewayInformationFile.Exists() is false)
         {
             logger.LogWarning("Gateway information file {gatewayInformationFile} is missing. Cannot get gateway for {gatewayApisFile}.", gatewayInformationFile.Path, file.Path);
             return;
         }
 
-        var gatewayName = Gateway.GetNameFromFile(gatewayInformationFile);
-        var gatewayApis = GatewayApi.List(getResources, serviceProviderUri, serviceName, gatewayName, cancellationToken);
+        GatewayName gatewayName = Gateway.GetNameFromFile(gatewayInformationFile);
+        IAsyncEnumerable<common.Models.Api> gatewayApis = GatewayApi.List(getResources, serviceProviderUri, serviceName, gatewayName, cancellationToken);
         await Parallel.ForEachAsync(gatewayApis, cancellationToken, (gatewayApi, cancellationToken) =>
         {
-            var apiName = ApiName.From(gatewayApi.Name);
+            ApiName apiName = ApiName.From(gatewayApi.Name);
             return GatewayApi.Delete(deleteResource, serviceProviderUri, serviceName, gatewayName, apiName, cancellationToken);
         });
     }
@@ -523,10 +525,10 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting logger information file {loggerInformationFile}...", file.Path);
 
-        var json = file.ReadAsJsonObject();
-        var loggerModel = Logger.Deserialize(json);
+        JsonObject json = file.ReadAsJsonObject();
+        common.Models.Logger loggerModel = Logger.Deserialize(json);
 
-        var configurationLogger = configurationModel?.Loggers?.FirstOrDefault(configurationLogger => configurationLogger.Name == loggerModel.Name);
+        ConfigurationModel.Logger? configurationLogger = configurationModel?.Loggers?.FirstOrDefault(configurationLogger => configurationLogger.Name == loggerModel.Name);
         if (configurationLogger is not null)
         {
             logger.LogInformation("Found logger {logger} in configuration...", loggerModel.Name);
@@ -574,9 +576,9 @@ internal class Publisher : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
-        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
-        var name = LoggerName.From(Logger.Deserialize(json).Name);
+        string fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        JsonObject json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        LoggerName name = LoggerName.From(Logger.Deserialize(json).Name);
 
         await Logger.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
@@ -590,10 +592,10 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting diagnostic information file {diagnosticInformationFile}...", file.Path);
 
-        var json = file.ReadAsJsonObject();
-        var diagnostic = Diagnostic.Deserialize(json);
+        JsonObject json = file.ReadAsJsonObject();
+        common.Models.Diagnostic diagnostic = Diagnostic.Deserialize(json);
 
-        var configurationDiagnostic = configurationModel?.Diagnostics?.FirstOrDefault(configurationDiagnostic => configurationDiagnostic.Name == diagnostic.Name);
+        ConfigurationModel.Diagnostic? configurationDiagnostic = configurationModel?.Diagnostics?.FirstOrDefault(configurationDiagnostic => configurationDiagnostic.Name == diagnostic.Name);
         if (configurationDiagnostic is not null)
         {
             logger.LogInformation("Found diagnostic {diagnostic} in configuration...", diagnostic.Name);
@@ -624,9 +626,9 @@ internal class Publisher : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
-        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
-        var name = DiagnosticName.From(Diagnostic.Deserialize(json).Name);
+        string fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        JsonObject json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        DiagnosticName name = DiagnosticName.From(Diagnostic.Deserialize(json).Name);
 
         await Diagnostic.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
@@ -640,10 +642,10 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting named value information file {namedValueInformationFile}...", file.Path);
 
-        var json = file.ReadAsJsonObject();
-        var namedValue = NamedValue.Deserialize(json);
+        JsonObject json = file.ReadAsJsonObject();
+        common.Models.NamedValue namedValue = NamedValue.Deserialize(json);
 
-        var configurationNamedValue = configurationModel?.NamedValues?.FirstOrDefault(configurationNamedValue => configurationNamedValue.Name == namedValue.Name);
+        ConfigurationModel.NamedValue? configurationNamedValue = configurationModel?.NamedValues?.FirstOrDefault(configurationNamedValue => configurationNamedValue.Name == namedValue.Name);
         if (configurationNamedValue is not null)
         {
             logger.LogInformation("Found named value {namedValue} in configuration...", namedValue.Name);
@@ -695,9 +697,9 @@ internal class Publisher : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
-        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
-        var name = NamedValueName.From(NamedValue.Deserialize(json).Name);
+        string fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        JsonObject json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        NamedValueName name = NamedValueName.From(NamedValue.Deserialize(json).Name);
 
         await NamedValue.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
@@ -711,10 +713,10 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting product information file {productInformationFile}...", file.Path);
 
-        var json = file.ReadAsJsonObject();
-        var product = Product.Deserialize(json);
+        JsonObject json = file.ReadAsJsonObject();
+        common.Models.Product product = Product.Deserialize(json);
 
-        var configurationProduct = configurationModel?.Products?.FirstOrDefault(configurationProduct => configurationProduct.Name == product.Name);
+        ConfigurationModel.Product? configurationProduct = configurationModel?.Products?.FirstOrDefault(configurationProduct => configurationProduct.Name == product.Name);
         if (configurationProduct is not null)
         {
             logger.LogInformation("Found product {product} in configuration...", product.Name);
@@ -750,9 +752,9 @@ internal class Publisher : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
-        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
-        var name = ProductName.From(Product.Deserialize(json).Name);
+        string fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        JsonObject json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        ProductName name = ProductName.From(Product.Deserialize(json).Name);
 
         await Product.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
@@ -766,18 +768,18 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting product apis file {productApisFile}...", file.Path);
 
-        var productInformationFile = ProductInformationFile.From(file.ProductDirectory);
+        ProductInformationFile productInformationFile = ProductInformationFile.From(file.ProductDirectory);
         if (productInformationFile.Exists() is false)
         {
             throw new InvalidOperationException($"Product information file is missing. Expected path is {productInformationFile.Path}. Cannot put product APIs file {file.Path}.");
         }
 
-        var productName = Product.GetNameFromFile(productInformationFile);
-        var fileApiNames = ProductApi.ListFromFile(file).ToAsyncEnumerable();
-        var existingApiNames = ProductApi.List(getResources, serviceProviderUri, serviceName, productName, cancellationToken).Select(api => ApiName.From(api.Name));
+        ProductName productName = Product.GetNameFromFile(productInformationFile);
+        IAsyncEnumerable<ApiName> fileApiNames = ProductApi.ListFromFile(file).ToAsyncEnumerable();
+        IAsyncEnumerable<ApiName> existingApiNames = ProductApi.List(getResources, serviceProviderUri, serviceName, productName, cancellationToken).Select(api => ApiName.From(api.Name));
 
-        var apiNamesToAdd = fileApiNames.Except(existingApiNames);
-        var apiNamesToRemove = existingApiNames.Except(fileApiNames);
+        IAsyncEnumerable<ApiName> apiNamesToAdd = fileApiNames.Except(existingApiNames);
+        IAsyncEnumerable<ApiName> apiNamesToRemove = existingApiNames.Except(fileApiNames);
 
         await Parallel.ForEachAsync(apiNamesToAdd, cancellationToken, (apiName, cancellationToken) =>
         {
@@ -801,18 +803,18 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("File {productApisFile} was removed, deleting product APIs...", file.Path);
 
-        var productInformationFile = ProductInformationFile.From(file.ProductDirectory);
+        ProductInformationFile productInformationFile = ProductInformationFile.From(file.ProductDirectory);
         if (productInformationFile.Exists() is false)
         {
             logger.LogWarning("Product information file {productInformationFile} is missing. Cannot get product for {productApisFile}.", productInformationFile.Path, file.Path);
             return;
         }
 
-        var productName = Product.GetNameFromFile(productInformationFile);
-        var productApis = ProductApi.List(getResources, serviceProviderUri, serviceName, productName, cancellationToken);
+        ProductName productName = Product.GetNameFromFile(productInformationFile);
+        IAsyncEnumerable<common.Models.Api> productApis = ProductApi.List(getResources, serviceProviderUri, serviceName, productName, cancellationToken);
         await Parallel.ForEachAsync(productApis, cancellationToken, (productApi, cancellationToken) =>
         {
-            var apiName = ApiName.From(productApi.Name);
+            ApiName apiName = ApiName.From(productApi.Name);
             return ProductApi.Delete(deleteResource, serviceProviderUri, serviceName, productName, apiName, cancellationToken);
         });
     }
@@ -826,14 +828,14 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting product policy file {productPolicyFile}...", file.Path);
 
-        var productInformationFile = ProductInformationFile.From(file.ProductDirectory);
+        ProductInformationFile productInformationFile = ProductInformationFile.From(file.ProductDirectory);
         if (productInformationFile.Exists() is false)
         {
             throw new InvalidOperationException($"Product information file is missing. Expected path is {productInformationFile.Path}. Cannot put product policy file {file.Path}.");
         }
 
-        var productName = Product.GetNameFromFile(productInformationFile);
-        var policyText = await file.ReadAsText(cancellationToken);
+        ProductName productName = Product.GetNameFromFile(productInformationFile);
+        string policyText = await file.ReadAsText(cancellationToken);
         await ProductPolicy.Put(putResource, serviceProviderUri, serviceName, productName, policyText, cancellationToken);
     }
 
@@ -846,14 +848,14 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("File {productPolicyFile} was removed, deleting product policy...", file.Path);
 
-        var productInformationFile = ProductInformationFile.From(file.ProductDirectory);
+        ProductInformationFile productInformationFile = ProductInformationFile.From(file.ProductDirectory);
         if (productInformationFile.Exists() is false)
         {
             logger.LogWarning("Product information file {productInformationFile} is missing. Cannot get product for {productPolicyFile}.", productInformationFile.Path, file.Path);
             return;
         }
 
-        var productName = Product.GetNameFromFile(productInformationFile);
+        ProductName productName = Product.GetNameFromFile(productInformationFile);
         await ProductPolicy.Delete(deleteResource, serviceProviderUri, serviceName, productName, cancellationToken);
     }
 
@@ -866,14 +868,14 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting api version set information file {apiInformationFile}...", informationFile.Path);
 
-        var json = informationFile.ReadAsJsonObject();
-        var versionSet = ApiVersionSet.Deserialize(json);
+        JsonObject json = informationFile.ReadAsJsonObject();
+        common.Models.ApiVersionSet versionSet = ApiVersionSet.Deserialize(json);
         await ApiVersionSet.Put(putResource, serviceProviderUri, serviceName, versionSet, cancellationToken);
     }
 
     private async ValueTask PutApiInformationAndSpecificationFiles(IReadOnlyCollection<ApiInformationFile> informationFiles, IReadOnlyCollection<ApiSpecificationFile> specificationFiles, CancellationToken cancellationToken)
     {
-        var filePairs = informationFiles.FullJoin(specificationFiles,
+        IEnumerable<(ApiInformationFile InformationFile, ApiSpecificationFile? SpecificationFile)> filePairs = informationFiles.FullJoin(specificationFiles,
                                                   informationFile => informationFile.ApiDirectory,
                                                   specificationFile => specificationFile.ApiDirectory,
                                                   informationFile => (InformationFile: informationFile, SpecificationFile: null as ApiSpecificationFile),
@@ -881,15 +883,15 @@ internal class Publisher : BackgroundService
                                                   (informationFile, specificationFile) => (InformationFile: informationFile, SpecificationFile: specificationFile));
 
         // Current revisions need to be processed first or else there's an error.
-        var splitCurrentRevisions = filePairs.Select(files =>
+        Dictionary<string, List<(common.Models.Api Api, ApiSpecificationFile? SpecificationFile)>> splitCurrentRevisions = filePairs.Select(files =>
         {
-            var apiJson = files.InformationFile.ReadAsJsonObject();
-            var api = Api.Deserialize(apiJson);
+            JsonObject apiJson = files.InformationFile.ReadAsJsonObject();
+            common.Models.Api api = Api.Deserialize(apiJson);
             return (Api: api, SpecificationFile: files.SpecificationFile);
         }).GroupBy(x => x.Api.Properties.IsCurrent == true)
         .ToDictionary(x => x.Key ? "Current" : "NonCurrentRevisions", x => x.ToList());
-        if (splitCurrentRevisions.TryGetValue("Current", out var currentRevisions)) await Parallel.ForEachAsync(currentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
-        if (splitCurrentRevisions.TryGetValue("NonCurrentRevisions", out var nonCurrentRevisions)) await Parallel.ForEachAsync(nonCurrentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
+        if (splitCurrentRevisions.TryGetValue("Current", out List<(common.Models.Api Api, ApiSpecificationFile? SpecificationFile)>? currentRevisions)) await Parallel.ForEachAsync(currentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
+        if (splitCurrentRevisions.TryGetValue("NonCurrentRevisions", out List<(common.Models.Api Api, ApiSpecificationFile? SpecificationFile)>? nonCurrentRevisions)) await Parallel.ForEachAsync(nonCurrentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
     }
 
     private async ValueTask PutApi(common.Models.Api api, ApiSpecificationFile? specificationFile, CancellationToken cancellationToken)
@@ -900,13 +902,13 @@ internal class Publisher : BackgroundService
         {
             logger.LogInformation("Updating api with specification file {specificationFile}...", specificationFile.Path);
             // APIM doesn't support Swagger YAML format. We'll convert to Swagger JSON if needed.
-            var specification = specificationFile.Specification;
+            OpenApiSpecification specification = specificationFile.Specification;
 
-            var format = ApiSpecification.GetApiPropertiesFormat(specification == OpenApiSpecification.V2Yaml
+            string format = ApiSpecification.GetApiPropertiesFormat(specification == OpenApiSpecification.V2Yaml
                                                                     ? OpenApiSpecification.V2Json
                                                                     : specification);
 
-            var value = specification == OpenApiSpecification.V2Yaml
+            string value = specification == OpenApiSpecification.V2Yaml
                         ? await ApiSpecification.GetFileContentsAsSpecification(specificationFile, OpenApiSpecification.V2Json)
                         : await specificationFile.ReadAsText(cancellationToken);
 
@@ -920,7 +922,7 @@ internal class Publisher : BackgroundService
             };
         }
 
-        var configurationApi = configurationModel?.Apis?.FirstOrDefault(configurationApi => configurationApi.Name == api.Name);
+        ConfigurationModel.Api? configurationApi = configurationModel?.Apis?.FirstOrDefault(configurationApi => configurationApi.Name == api.Name);
         if (configurationApi is not null)
         {
             logger.LogInformation("Found api {api} in configuration...", api.Name);
@@ -951,9 +953,9 @@ internal class Publisher : BackgroundService
             throw new InvalidOperationException("Commit ID is null. We need it to get the deleted file contents.");
         }
 
-        var fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
-        var json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
-        var name = ApiName.From(Api.Deserialize(json).Name);
+        string fileText = await Git.GetPreviousCommitContents(commitId, file, serviceDirectory);
+        JsonObject json = JsonNode.Parse(fileText)?.AsObject() ?? throw new InvalidOperationException("Could not deserialize file contents to JSON.");
+        ApiName name = ApiName.From(Api.Deserialize(json).Name);
 
         await Api.Delete(deleteResource, serviceProviderUri, serviceName, name, cancellationToken);
     }
@@ -967,14 +969,14 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting api policy file {apiPolicyFile}...", file.Path);
 
-        var apiInformationFile = ApiInformationFile.From(file.ApiDirectory);
+        ApiInformationFile apiInformationFile = ApiInformationFile.From(file.ApiDirectory);
         if (apiInformationFile.Exists() is false)
         {
             throw new InvalidOperationException($"Api information file is missing. Expected path is {apiInformationFile.Path}. Cannot put api policy file {file.Path}.");
         }
 
-        var apiName = Api.GetNameFromFile(apiInformationFile);
-        var policyText = await file.ReadAsText(cancellationToken);
+        ApiName apiName = Api.GetNameFromFile(apiInformationFile);
+        string policyText = await file.ReadAsText(cancellationToken);
         await ApiPolicy.Put(putResource, serviceProviderUri, serviceName, apiName, policyText, cancellationToken);
     }
 
@@ -987,14 +989,14 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("File {apiPolicyFile} was removed, deleting api policy...", file.Path);
 
-        var apiInformationFile = ApiInformationFile.From(file.ApiDirectory);
+        ApiInformationFile apiInformationFile = ApiInformationFile.From(file.ApiDirectory);
         if (apiInformationFile.Exists() is false)
         {
             logger.LogWarning("Api information file {apiInformationFile} is missing. Cannot get api for {apiPolicyFile}.", apiInformationFile.Path, file.Path);
             return;
         }
 
-        var apiName = Api.GetNameFromFile(apiInformationFile);
+        ApiName apiName = Api.GetNameFromFile(apiInformationFile);
         await ApiPolicy.Delete(deleteResource, serviceProviderUri, serviceName, apiName, cancellationToken);
     }
 
@@ -1007,16 +1009,16 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting api diagnostic information file {apiDiagnosticInformationFile}...", file.Path);
 
-        var apiInformationFile = ApiInformationFile.From(file.ApiDiagnosticDirectory.ApiDiagnosticsDirectory.ApiDirectory);
+        ApiInformationFile apiInformationFile = ApiInformationFile.From(file.ApiDiagnosticDirectory.ApiDiagnosticsDirectory.ApiDirectory);
         if (apiInformationFile.Exists() is false)
         {
             throw new InvalidOperationException($"Api information file is missing. Expected path is {apiInformationFile.Path}. Cannot put api diagnostic file {file.Path}.");
         }
 
-        var apiName = Api.GetNameFromFile(apiInformationFile);
-        var fileJson = file.ReadAsJsonObject();
-        var diagnostic = ApiDiagnostic.Deserialize(fileJson);
-        var configurationDiagnostic = configurationModel.Apis?.FirstOrDefault(configurationApi => string.Equals(configurationApi.Name, apiName))
+        ApiName apiName = Api.GetNameFromFile(apiInformationFile);
+        JsonObject fileJson = file.ReadAsJsonObject();
+        common.Models.ApiDiagnostic diagnostic = ApiDiagnostic.Deserialize(fileJson);
+        ConfigurationModel.Api.Diagnostic? configurationDiagnostic = configurationModel.Apis?.FirstOrDefault(configurationApi => string.Equals(configurationApi.Name, apiName))
                                                              ?.Diagnostics
                                                              ?.FirstOrDefault(configurationDiagnostic => configurationDiagnostic.Name == diagnostic.Name);
 
@@ -1046,15 +1048,15 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("File {apiDiagnosticFile} was removed, deleting api diagnostic...", file.Path);
 
-        var apiInformationFile = ApiInformationFile.From(file.ApiDiagnosticDirectory.ApiDiagnosticsDirectory.ApiDirectory);
+        ApiInformationFile apiInformationFile = ApiInformationFile.From(file.ApiDiagnosticDirectory.ApiDiagnosticsDirectory.ApiDirectory);
         if (apiInformationFile.Exists() is false)
         {
             logger.LogWarning("Api information file {apiInformationFile} is missing. Cannot get api for {apiDiagnosticFile}.", apiInformationFile.Path, file.Path);
             return;
         }
 
-        var apiName = Api.GetNameFromFile(apiInformationFile);
-        var diagnosticName = ApiDiagnostic.GetNameFromFile(file);
+        ApiName apiName = Api.GetNameFromFile(apiInformationFile);
+        ApiDiagnosticName diagnosticName = ApiDiagnostic.GetNameFromFile(file);
         await ApiDiagnostic.Delete(deleteResource, serviceProviderUri, serviceName, apiName, diagnosticName, cancellationToken);
     }
 
@@ -1067,15 +1069,15 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Putting api operation policy file {apiOperationPolicyFile}...", file.Path);
 
-        var apiDirectory = file.ApiOperationDirectory.ApiOperationsDirectory.ApiDirectory;
-        var apiSpecificationFile = ApiSpecification.TryFindFile(apiDirectory)
+        ApiDirectory apiDirectory = file.ApiOperationDirectory.ApiOperationsDirectory.ApiDirectory;
+        ApiSpecificationFile apiSpecificationFile = ApiSpecification.TryFindFile(apiDirectory)
             ?? throw new InvalidOperationException($"Could not find API specification file for operation policy {file.Path}. Specification file is required to get the operation name.");
 
-        var apiOperationDisplayName = file.ApiOperationDirectory.ApiOperationDisplayName;
-        var apiOperationName = await ApiSpecification.TryFindApiOperationName(apiSpecificationFile, apiOperationDisplayName) ?? throw new InvalidOperationException($"Could not find operation with display name {apiOperationDisplayName} in specification file {apiSpecificationFile.Path}.");
-        var apiInformationFile = ApiInformationFile.From(apiDirectory);
-        var apiName = Api.GetNameFromFile(apiInformationFile);
-        var policyText = await file.ReadAsText(cancellationToken);
+        ApiOperationDisplayName apiOperationDisplayName = file.ApiOperationDirectory.ApiOperationDisplayName;
+        ApiOperationName apiOperationName = await ApiSpecification.TryFindApiOperationName(apiSpecificationFile, apiOperationDisplayName) ?? throw new InvalidOperationException($"Could not find operation with display name {apiOperationDisplayName} in specification file {apiSpecificationFile.Path}.");
+        ApiInformationFile apiInformationFile = ApiInformationFile.From(apiDirectory);
+        ApiName apiName = Api.GetNameFromFile(apiInformationFile);
+        string policyText = await file.ReadAsText(cancellationToken);
         await ApiOperationPolicy.Put(putResource, serviceProviderUri, serviceName, apiName, apiOperationName, policyText, cancellationToken);
     }
 
@@ -1088,30 +1090,30 @@ internal class Publisher : BackgroundService
     {
         logger.LogInformation("Deleting api operation policy with file {apiOperationPolicyFile}...", file.Path);
 
-        var apiDirectory = file.ApiOperationDirectory.ApiOperationsDirectory.ApiDirectory;
-        var apiSpecificationFile = ApiSpecification.TryFindFile(apiDirectory);
+        ApiDirectory apiDirectory = file.ApiOperationDirectory.ApiOperationsDirectory.ApiDirectory;
+        ApiSpecificationFile? apiSpecificationFile = ApiSpecification.TryFindFile(apiDirectory);
         if (apiSpecificationFile is null || apiSpecificationFile.Exists() is false)
         {
             logger.LogWarning("Could not find API specification file for operation policy {operationPolicyFile}. Skipping operation policy deletion...", file.Path);
             return;
         }
 
-        var apiOperationDisplayName = file.ApiOperationDirectory.ApiOperationDisplayName;
-        var apiOperationName = await ApiSpecification.TryFindApiOperationName(apiSpecificationFile, apiOperationDisplayName);
+        ApiOperationDisplayName apiOperationDisplayName = file.ApiOperationDirectory.ApiOperationDisplayName;
+        ApiOperationName? apiOperationName = await ApiSpecification.TryFindApiOperationName(apiSpecificationFile, apiOperationDisplayName);
         if (apiOperationName is null)
         {
             logger.LogWarning("Could not find API operation {apiOperationDisplayName} in API specification file {apiSpecificationFile}. Skipping operation policy deletion...", apiOperationDisplayName, apiSpecificationFile.Path);
             return;
         }
 
-        var apiInformationFile = ApiInformationFile.From(apiDirectory);
+        ApiInformationFile apiInformationFile = ApiInformationFile.From(apiDirectory);
         if (apiInformationFile.Exists() is false)
         {
             logger.LogWarning("Could not find API information file for operation policy {operationPolicyFile}. Skipping operation policy deletion...", file.Path);
             return;
         }
 
-        var apiName = Api.GetNameFromFile(apiInformationFile);
+        ApiName apiName = Api.GetNameFromFile(apiInformationFile);
 
         await ApiOperationPolicy.Delete(deleteResource, serviceProviderUri, serviceName, apiName, apiOperationName, cancellationToken);
     }
