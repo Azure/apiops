@@ -41,7 +41,8 @@ Below is the full list of supported configuration overrides that the publisher t
 | namedValues | List of named value pairs to override. All three types (Plain - Secret - Key Vault) are supported
 | loggers | Information for the application insights instance to utilize in the destination environment APIM instance |
 | diagnostics | Configuration for the verbosity setting of the application insights instance to utilize in the destination environment APIM instance  |
-| apis | list of apis for you which you would like to override settings like the application insights etc.. If you are utilizing versioning/revisioning in APIM then you need to set the target api version & revision to apply application insights to e.g. 'my-api', 'my-api-v2', 'my-api-v2;rev=2' |
+| apis | List of apis for you which you would like to override settings like the application insights etc.. You can also override the service url across environments. If you are utilizing versioning/revisioning in APIM then you need to set the target api version & revision to apply application insights to e.g. 'my-api', 'my-api-v2', 'my-api-v2;rev=2' |
+| backends | List of backends which you would like to override. You can override information like the url when promoting across environments  |
 
 As mentioned above the publisher supports overriding secret named values. Whereas the publisher supports both types of APIM secrets (secret and Azure Key Vault), we recommend using Azure Key Vault whenever possible. 
 
