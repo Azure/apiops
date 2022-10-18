@@ -75,8 +75,12 @@ internal record ConfigurationModel
     public record Backend
     {
         public string? Name { get; init; }
+        public string? OverrideName { get; init; }
         public string? Description { get; init; }
         public string? Url { get; init; }
+        public string? ResourceId { get; init; }
+        public string? Title { get; init; }
+
     }
 
     public record Diagnostic

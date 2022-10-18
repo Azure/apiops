@@ -614,10 +614,14 @@ internal class Publisher : BackgroundService
             logger.LogInformation("Found backend {backend} in configuration...", backendModel.Name);
             backendModel = backendModel with
             {
+                Name = configurationBackend.OverrideName ?? backendModel.Name,
                 Properties = backendModel.Properties with
                 {
                     Description = configurationBackend.Description ?? backendModel.Properties.Description,
-                    Url = configurationBackend.Url ?? backendModel.Properties.Description
+                    Url = configurationBackend.Url ?? backendModel.Properties.Url,
+                    ResourceId = configurationBackend.ResourceId ?? backendModel.Properties.ResourceId,
+                    Title = configurationBackend.Title ?? backendModel.Properties.Title
+
                 }
             };
         }
