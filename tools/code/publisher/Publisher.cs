@@ -617,7 +617,10 @@ internal class Publisher : BackgroundService
                 Properties = backendModel.Properties with
                 {
                     Description = configurationBackend.Description ?? backendModel.Properties.Description,
-                    Url = configurationBackend.Url ?? backendModel.Properties.Description
+                    Url = configurationBackend.Url ?? backendModel.Properties.Url,
+                    ResourceId = configurationBackend.ResourceId ?? backendModel.Properties.ResourceId,
+                    Title = configurationBackend.Title ?? backendModel.Properties.Title
+
                 }
             };
         }
