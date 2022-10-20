@@ -21,7 +21,16 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | API_MANAGEMENT_SERVICE_NAME  | Name of the APIM instance to publish to. This can also be parsed from the configuration file |
 | CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to override different configurations (e.g. policy backend value,  namevalue pairs, just to name a few) when promoting across APIM environments (e.g. dev -> qa -> prod). You will need a unique Yaml configuration file per environment  (e.g. configuration.prod.yaml for production) when overriding configurations across environments. More on this later on in the lab.  |
 | COMMIT_ID | Git commit ID. If specified, the tool will only use files that were affected by that commit. New/modified files will be updated in Azure, and deleted artifacts will be removed from the Azure APIM instance. If unspecified, the tool will do a Put operation on the Azure APIM instance with all files in the artifacts folder. |
-| PUBLISH_CONFIGURATION_ARTIFACTS | Set this flag for scenarios where you want the publisher to publish all the artifacts in the configuration file. This is useful in scenarios where you make changes which are beyond the scope of the APIM instance like for example changing a secret in Azure Key Vault which is utilized by Azure APIM |
+| PUBLISH_CONFIGURATION_ARTIFACTS | If set to true, publisher will publish artifacts that are defined in configuration and exist in the artifacts directory.  |
+
+>There are some interesting interactions with cases where we pass a commit ID. Here's the current behavior:
+
+| COMMIT_ID specified | PUBLISH_CONFIGURATION_ARTIFACTS specified | Action |
+| - | - | - |
+| No | No | Put all files in the artifacts directory |
+| No | Yes | Only put files in the artifacts directory that are defined in configuration |
+| Yes | No | Put artifacts that have changed in commit. If configuration YAML was modified in commit, include all artifacts in the configuration YAML that exist in the artifacts directory. |
+| Yes | Yes | Put artifacts that have changed in commit. Also include all artifacts defined in configuration (configuration YAML, environment variables, etc) that exist in the artifacts directory. |
 
 ### Configuration Override Across Environments
  In an enterprise setting you may want to override some configurations as you promote your APIM across environments. For example you may have a policy which points to a backend url which is different across environments. Or you may be using a completely different application insights instance across environments and you would like to point to the correct application insights instance. In order to override these configurations you will need to provide them inside a environment specific configuration file which the publisher tool can pick up and parse when pushing the changes across different APIM instances. For example if you have three different environments (Dev -> QA -> Prod) then you would have two separate configuration files (e.g. configuration.qa.yaml and configuration.prod.yaml). The lowest environment doesn't require a configuration file as its the source environment.
