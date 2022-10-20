@@ -6,7 +6,7 @@ namedValues:
   - name: mysecretvalue
     displayName: mysecretvalue
     keyVault:
-      identityClientId: [your guid goes here]
+      identityClientId: [idnetity client id goes here]
       secretIdentifier: [your url here]
   - name: testSecret
     displayName: testSecret
@@ -23,15 +23,19 @@ loggers:
 diagnostics:
    - name: applicationinsights
      verbosity: Error
-     loggerId: "/subscriptions/[subscripotion id]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights" 
+     loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights" 
 apis:
   - name: demo-conference-api
     diagnostics:
       - name: applicationinsights
         verbosity: Error
-        loggerId: "/subscriptions/[subscripotion id]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
+        loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
   - name: myapi
     serviceUrl: https://mysite.com
 backends:
-  - name: mybackend
-    url: https://myenvironmenturl.com
+  - name: helloworldfromfuncapp
+    url: "https://helloworldfromprodfuncapp.azurewebsites.net/api"
+    resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Web/sites/helloworldfromprodfuncapp"
+  - name: LogicApp_helloworldfromlogicapp_rg-apim-lab_77fadbdc74f14ce88962b34400a1f170
+    url: "https://prod-75.eastus.logic.azure.com/workflows/[guid goes here]/triggers"
+    resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Logic/workflows/helloworldfromprodlogicapp"
