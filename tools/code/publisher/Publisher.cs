@@ -322,6 +322,7 @@ internal class Publisher : BackgroundService
         var apiVersionSetInformationFiles = files.Choose(file => file as ApiVersionSetInformationFile).ToList();
         var apiInformationFiles = files.Choose(file => file as ApiInformationFile).ToList();
         var apiSpecificationFiles = files.Choose(file => file as ApiSpecificationFile).ToList();
+        var apiGraphQLFiles = files.Choose(file => file as GraphQLSchemaFile).ToList();
         var apiDiagnosticInformationFiles = files.Choose(file => file as ApiDiagnosticInformationFile).ToList();
         var apiPolicyFiles = files.Choose(file => file as ApiPolicyFile).ToList();
         var apiOperationPolicyFiles = files.Choose(file => file as ApiOperationPolicyFile).ToList();
@@ -359,6 +360,7 @@ internal class Publisher : BackgroundService
         ?? DiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiVersionSetInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiInformationFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? GraphQLSchemaFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiSpecificationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiDiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiPolicyFile.TryFrom(serviceDirectory, file) as FileRecord
