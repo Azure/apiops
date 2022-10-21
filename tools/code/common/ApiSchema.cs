@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -71,11 +72,13 @@ public static class ApiSchema
     {
         var json = new JsonObject()
         {
-            ["name"] = ApiSchemaName.GraphQLSchemaName().ToString(),
             ["properties"] = new JsonObject
             {
                 ["contentType"] = "application/vnd.ms-azure-apim.graphql.schema",
-                ["value"] = schemaText
+                ["document"] = new JsonObject() 
+                {
+                    ["value"] = schemaText
+                }
             }
         };
 
