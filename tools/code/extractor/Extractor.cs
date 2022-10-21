@@ -448,7 +448,7 @@ internal class Extractor : BackgroundService
     {
         await ExportApiInformation(api, cancellationToken);
         await ExportApiPolicy(api, cancellationToken);
-        await ExportApiSpecification(api, cancellationToken);
+        await ExportApiContractFile(api, cancellationToken);
         await ExportApiDiagnostics(api, cancellationToken);
         await ExportApiOperations(api, cancellationToken);
     }
@@ -489,7 +489,7 @@ internal class Extractor : BackgroundService
         }
     }
 
-    private async ValueTask ExportApiSpecification(common.Models.Api api, CancellationToken cancellationToken)
+    private ValueTask ExportApiContractFile(common.Models.Api api, CancellationToken cancellationToken)
     {
         logger.LogInformation("Exporting specification for api {apiName}...", api.Name);
 
@@ -498,12 +498,34 @@ internal class Extractor : BackgroundService
         var apiVersion = ApiVersion.From(api.Properties.ApiVersion);
         var apiRevision = ApiRevision.From(api.Properties.ApiRevision);
         var apiDirectory = ApiDirectory.From(apisDirectory, apiDisplayName, apiVersion, apiRevision);
-        var file = ApiSpecificationFile.From(apiDirectory, apiSpecification);
 
         var apiName = ApiName.From(api.Name);
-        var downloader = nonAuthenticatedHttpClient.GetSuccessfulResponseStream;
-        using var specificationStream = await ApiSpecification.Get(getResource, downloader, serviceProviderUri, serviceName, apiName, apiSpecification, cancellationToken);
+
+        return api.Properties.Type switch
+        {
+            common.Models.ApiType.Graphql => ExportApiGraphQLSchema(apiDirectory, apiName, cancellationToken),
+            _ => ExportApiSpecification(apiDirectory, apiName, cancellationToken)
+        };
+    }
+
+    private async ValueTask ExportApiSpecification(ApiDirectory apiDirectory, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var file = ApiSpecificationFile.From(apiDirectory, apiSpecification);
+
+        Func<Uri, CancellationToken, ValueTask<System.IO.Stream>> downloader = nonAuthenticatedHttpClient.GetSuccessfulResponseStream;
+        using System.IO.Stream specificationStream = await ApiSpecification.Get(getResource, downloader, serviceProviderUri, serviceName, apiName, apiSpecification, cancellationToken);
         await file.OverwriteWithStream(specificationStream, cancellationToken);
+    }
+
+    private async ValueTask ExportApiGraphQLSchema(ApiDirectory apiDirectory, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var schemaText = await ApiSchema.TryGetGraphQLSchemaContent(tryGetResource, serviceProviderUri, serviceName, apiName, cancellationToken);
+
+        if (schemaText is not null)
+        {
+            GraphQLSchemaFile file = GraphQLSchemaFile.From(apiDirectory);
+            await file.OverwriteWithText(schemaText, cancellationToken);
+        }
     }
 
     private async ValueTask ExportApiDiagnostics(common.Models.Api api, CancellationToken cancellationToken)
