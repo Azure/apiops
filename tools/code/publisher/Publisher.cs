@@ -327,17 +327,17 @@ internal class Publisher : BackgroundService
         var apiPolicyFiles = files.Choose(file => file as ApiPolicyFile).ToList();
         var apiOperationPolicyFiles = files.Choose(file => file as ApiOperationPolicyFile).ToList();
 
-        //await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
-        //await PutPolicyFragments(policyFragmentInformationFiles, policyFragmentPolicyFiles, cancellationToken);
-        //await PutServicePolicyFile(servicePolicyFiles, cancellationToken);
-        //await PutLoggerInformationFiles(loggerInformationFiles, cancellationToken);
-        //await PutBackendInformationFiles(backendInformationFiles, cancellationToken);
-        //await PutDiagnosticInformationFiles(diagnosticInformationFiles, cancellationToken);
-        //await PutGatewayInformationFiles(gatewayInformationFiles, cancellationToken);
-        //await PutProductInformationFiles(productInformationFiles, cancellationToken);
-        //await PutProductPolicyFiles(productPolicyFiles, cancellationToken);
-        //await PutApiVersionSetInformationFiles(apiVersionSetInformationFiles, cancellationToken);
-        //await PutApiInformationAndSpecificationFiles(apiInformationFiles, apiSpecificationFiles, cancellationToken);
+        await PutNamedValueInformationFiles(namedValueInformationFiles, cancellationToken);
+        await PutPolicyFragments(policyFragmentInformationFiles, policyFragmentPolicyFiles, cancellationToken);
+        await PutServicePolicyFile(servicePolicyFiles, cancellationToken);
+        await PutLoggerInformationFiles(loggerInformationFiles, cancellationToken);
+        await PutBackendInformationFiles(backendInformationFiles, cancellationToken);
+        await PutDiagnosticInformationFiles(diagnosticInformationFiles, cancellationToken);
+        await PutGatewayInformationFiles(gatewayInformationFiles, cancellationToken);
+        await PutProductInformationFiles(productInformationFiles, cancellationToken);
+        await PutProductPolicyFiles(productPolicyFiles, cancellationToken);
+        await PutApiVersionSetInformationFiles(apiVersionSetInformationFiles, cancellationToken);
+        await PutApiInformationAndSpecificationFiles(apiInformationFiles, apiSpecificationFiles, cancellationToken);
         await PutApiGraphQLSchemaFiles(apiGraphQLFiles, cancellationToken);
         await PutApiPolicyFiles(apiPolicyFiles, cancellationToken);
         await PutApiDiagnosticInformationFiles(apiDiagnosticInformationFiles, cancellationToken);
