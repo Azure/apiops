@@ -66,7 +66,7 @@ public sealed record Api([property: JsonPropertyName("name")] string Name,
         public string? TermsOfServiceUrl { get; init; }
 
         [JsonPropertyName("type")]
-        public string? Type { get; init; }
+        public ApiType? Type { get; init; }
 
         [JsonPropertyName("value")]
         public string? Value { get; init; }
@@ -161,4 +161,11 @@ public sealed record Api([property: JsonPropertyName("name")] string Name,
         [JsonPropertyName("wsdlServiceName")]
         public string? WsdlServiceName { get; init; }
     }
+}
+public enum ApiType
+{
+    Graphql,
+    Http,
+    Soap,
+    Websocket
 }

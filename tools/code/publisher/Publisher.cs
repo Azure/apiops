@@ -322,6 +322,7 @@ internal class Publisher : BackgroundService
         var apiVersionSetInformationFiles = files.Choose(file => file as ApiVersionSetInformationFile).ToList();
         var apiInformationFiles = files.Choose(file => file as ApiInformationFile).ToList();
         var apiSpecificationFiles = files.Choose(file => file as ApiSpecificationFile).ToList();
+        var apiGraphQLFiles = files.Choose(file => file as GraphQLSchemaFile).ToList();
         var apiDiagnosticInformationFiles = files.Choose(file => file as ApiDiagnosticInformationFile).ToList();
         var apiPolicyFiles = files.Choose(file => file as ApiPolicyFile).ToList();
         var apiOperationPolicyFiles = files.Choose(file => file as ApiOperationPolicyFile).ToList();
@@ -337,6 +338,7 @@ internal class Publisher : BackgroundService
         await PutProductPolicyFiles(productPolicyFiles, cancellationToken);
         await PutApiVersionSetInformationFiles(apiVersionSetInformationFiles, cancellationToken);
         await PutApiInformationAndSpecificationFiles(apiInformationFiles, apiSpecificationFiles, cancellationToken);
+        await PutApiGraphQLSchemaFiles(apiGraphQLFiles, cancellationToken);
         await PutApiPolicyFiles(apiPolicyFiles, cancellationToken);
         await PutApiDiagnosticInformationFiles(apiDiagnosticInformationFiles, cancellationToken);
         await PutApiOperationPolicyFiles(apiOperationPolicyFiles, cancellationToken);
@@ -359,6 +361,7 @@ internal class Publisher : BackgroundService
         ?? DiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiVersionSetInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiInformationFile.TryFrom(serviceDirectory, file) as FileRecord
+        ?? GraphQLSchemaFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiSpecificationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiDiagnosticInformationFile.TryFrom(serviceDirectory, file) as FileRecord
         ?? ApiPolicyFile.TryFrom(serviceDirectory, file) as FileRecord
@@ -959,6 +962,18 @@ internal class Publisher : BackgroundService
         if (splitCurrentRevisions.TryGetValue("Current", out var currentRevisions)) await Parallel.ForEachAsync(currentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
         if (splitCurrentRevisions.TryGetValue("NonCurrentRevisions", out var nonCurrentRevisions)) await Parallel.ForEachAsync(nonCurrentRevisions, cancellationToken, (filePair, cancellationToken) => PutApi(filePair.Api, filePair.SpecificationFile, cancellationToken));
     }
+    
+    private async ValueTask PutApiGraphQLSchemaFiles(IReadOnlyCollection<GraphQLSchemaFile> schemaFiles, CancellationToken cancellationToken)
+    {
+        var apiSchemaPair = schemaFiles.Select(schemaFile => 
+        {
+            var apiJson = ApiInformationFile.From(schemaFile.ApiDirectory).ReadAsJsonObject();
+            var api = Api.Deserialize(apiJson);
+            return (Api: api, SchemaFile: schemaFile);
+        });
+        
+        await Parallel.ForEachAsync(apiSchemaPair, cancellationToken, (apiSchemaPair, cancellationToken) => PutApiGraphQLSchema(apiSchemaPair.Api, apiSchemaPair.SchemaFile, cancellationToken));
+    }
 
     private async ValueTask PutPolicyFragments(IReadOnlyCollection<PolicyFragmentInformationFile> informationFiles, IReadOnlyCollection<PolicyFragmentPolicyFile> policyFiles, CancellationToken cancellationToken)
     {
@@ -1045,6 +1060,15 @@ internal class Publisher : BackgroundService
         }
 
         await Api.Put(putResource, serviceProviderUri, serviceName, api, cancellationToken);
+    }
+
+    private async ValueTask PutApiGraphQLSchema(common.Models.Api api, GraphQLSchemaFile schemaFile, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Putting API GraphQL Schema for {api}...", api.Name);
+        var apiName = ApiName.From(api.Name);
+        var schemaText = await schemaFile.ReadAsText(cancellationToken) ?? throw new InvalidOperationException($"Could not read GraphQL schema file for API {api.Name}.");
+
+        await ApiSchema.PutGraphQL(putResource, serviceProviderUri, serviceName, apiName, schemaText, cancellationToken);
     }
 
     private async ValueTask DeleteApis(IReadOnlyCollection<ApiInformationFile> files, CancellationToken cancellationToken)
