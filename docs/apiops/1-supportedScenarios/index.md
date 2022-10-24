@@ -56,9 +56,9 @@ Below there is a table with all [artifacts extracted and published by APIOps](ht
 |Product API|Provides operations for configuring which APIs associated with a product.|Yes|
 |Product Policy|Provides operations for managing the policy configured at the Product Level of a service instance.|Yes|
 | | | |
-|Backend|Provides operations for managing Backends configured for the APIs|Planned|
-|Policy Fragments| |Planned|
-|GraphQL| |Planned|
+|Backend|Provides operations for managing Backends configured for the APIs|Yes|
+|Policy Fragments| |Yes|
+|GraphQL| |Yes|
 
 
 
