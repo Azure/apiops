@@ -17,7 +17,10 @@ internal static class ProductGroup
                                     .Select(SerializeProductGroup)
                                     .ToJsonArray(cancellationToken);
 
-        await productGroupsFile.OverwriteWithJson(productGroups, cancellationToken);
+        if (productGroups.Any())
+        {
+            await productGroupsFile.OverwriteWithJson(productGroups, cancellationToken);
+        }
     }
 
     private static IAsyncEnumerable<GroupName> List(ProductUri productUri, ListRestResources listRestResources, CancellationToken cancellationToken)

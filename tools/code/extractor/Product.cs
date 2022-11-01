@@ -40,6 +40,7 @@ internal static class Product
         await ExportPolicies(productDirectory, productUri, listRestResources, getRestResource, cancellationToken);
         await ExportApis(productDirectory, productUri, listRestResources, cancellationToken);
         await ExportGroups(productDirectory, productUri, listRestResources, cancellationToken);
+        await ExportTags(productDirectory, productUri, listRestResources, cancellationToken);
     }
 
     private static async ValueTask ExportInformationFile(ProductDirectory productDirectory, ProductUri productUri, ProductName productName, GetRestResource getRestResource, CancellationToken cancellationToken)
@@ -66,5 +67,10 @@ internal static class Product
     private static async ValueTask ExportGroups(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, CancellationToken cancellationToken)
     {
         await ProductGroup.ExportAll(productDirectory, productUri, listRestResources, cancellationToken);
+    }
+
+    private static async ValueTask ExportTags(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    {
+        await ProductTag.ExportAll(productDirectory, productUri, listRestResources, cancellationToken);
     }
 }

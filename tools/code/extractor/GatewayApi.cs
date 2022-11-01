@@ -17,7 +17,10 @@ internal static class GatewayApi
                                     .Select(SerializeGatewayApi)
                                     .ToJsonArray(cancellationToken);
 
-        await gatewayApisFile.OverwriteWithJson(gatewayApis, cancellationToken);
+        if (gatewayApis.Any())
+        {
+            await gatewayApisFile.OverwriteWithJson(gatewayApis, cancellationToken);
+        }
     }
 
     private static IAsyncEnumerable<ApiName> List(GatewayUri gatewayUri, ListRestResources listRestResources, CancellationToken cancellationToken)

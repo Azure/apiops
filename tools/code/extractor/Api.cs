@@ -58,6 +58,7 @@ internal static class Api
 
         await ExportInformationFile(apiDirectory, apiUri, apiName, getRestResource, cancellationToken);
         await ExportSpecificationFile(apiDirectory, apiUri, apiSpecification, getRestResource, downloadResource, cancellationToken);
+        await ExportTags(apiDirectory, apiUri, listRestResources, cancellationToken);
         await ExportPolicies(apiDirectory, apiUri, listRestResources, getRestResource, cancellationToken);
         await ExportOperations(apiDirectory, apiUri, listRestResources, getRestResource, cancellationToken);
     }
@@ -95,6 +96,11 @@ internal static class Api
         memoryStream.Position = 0;
 
         return memoryStream;
+    }
+
+    private static async ValueTask ExportTags(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    {
+        await ApiTag.ExportAll(apiDirectory, apiUri, listRestResources, cancellationToken);
     }
 
     private static async ValueTask ExportPolicies(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)

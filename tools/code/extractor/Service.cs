@@ -13,6 +13,9 @@ internal static class Service
         logger.LogInformation("Exporting named values...");
         await NamedValue.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, cancellationToken);
 
+        logger.LogInformation("Exporting tags...");
+        await Tag.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, cancellationToken);
+
         logger.LogInformation("Exporting version sets...");
         await ApiVersionSet.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, cancellationToken);
 

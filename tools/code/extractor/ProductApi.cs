@@ -17,7 +17,10 @@ internal static class ProductApi
                                     .Select(SerializeProductApi)
                                     .ToJsonArray(cancellationToken);
 
-        await productApisFile.OverwriteWithJson(productApis, cancellationToken);
+        if (productApis.Any())
+        {
+            await productApisFile.OverwriteWithJson(productApis, cancellationToken);
+        }
     }
 
     private static IAsyncEnumerable<ApiName> List(ProductUri productUri, ListRestResources listRestResources, CancellationToken cancellationToken)
