@@ -27,23 +27,22 @@ internal static class ProductGroup
 
     private static IEnumerable<(ProductName ProductName, ImmutableList<GroupName> GroupNames)> GetArtifactProductGroups(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
     {
-        var fileArtifacts = GetProductGroupsFiles(files, serviceDirectory)
-                                 .Select(file =>
-                                 {
-                                     var productName = GetProductName(file);
-                                     var groupNames = file.ReadAsJsonArray()
-                                                          .Choose(node => node as JsonObject)
-                                                          .Choose(groupJsonObject => groupJsonObject.TryGetStringProperty("name"))
-                                                          .Select(name => new GroupName(name))
-                                                          .ToImmutableList();
-                                     return (ProductName: productName, GroupNames: groupNames);
-                                 });
-
         var configurationArtifacts = GetConfigurationProductGroups(configurationJson);
 
-        return fileArtifacts.FullJoin(configurationArtifacts,
-                                      keySelector: artifact => artifact.ProductName,
-                                      bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ProductName, configurationArtifact.GroupNames));
+        return GetProductGroupsFiles(files, serviceDirectory)
+                .Select(file =>
+                {
+                    var productName = GetProductName(file);
+                    var groupNames = file.ReadAsJsonArray()
+                                        .Choose(node => node as JsonObject)
+                                        .Choose(groupJsonObject => groupJsonObject.TryGetStringProperty("name"))
+                                        .Select(name => new GroupName(name))
+                                        .ToImmutableList();
+                    return (ProductName: productName, GroupNames: groupNames);
+                })
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => artifact.ProductName,
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ProductName, configurationArtifact.GroupNames));
     }
 
     private static IEnumerable<ProductGroupsFile> GetProductGroupsFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)

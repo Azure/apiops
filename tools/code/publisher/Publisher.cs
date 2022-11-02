@@ -82,7 +82,6 @@ internal class Publisher : BackgroundService
                                        .ToImmutableList();
 
         await Service.ProcessArtifactsToPut(files,
-                                            putAllConfigurationArtifacts: true,
                                             publisherParameters.ConfigurationJson,
                                             publisherParameters.ServiceDirectory,
                                             publisherParameters.ServiceUri,
@@ -130,35 +129,27 @@ internal class Publisher : BackgroundService
     private async ValueTask ProcessDeletedCommitIdFiles(IReadOnlyCollection<FileInfo> deletedCommitIdFiles, CancellationToken cancellationToken)
     {
         await Service.ProcessDeletedArtifacts(deletedCommitIdFiles,
-                                                           publisherParameters.ConfigurationJson,
-                                                           publisherParameters.ServiceDirectory,
-                                                           publisherParameters.ServiceUri,
-                                                           publisherParameters.ListRestResources,
-                                                           publisherParameters.PutRestResource,
-                                                           publisherParameters.DeleteRestResource,
-                                                           publisherParameters.Logger,
-                                                           cancellationToken);
+                                              publisherParameters.ConfigurationJson,
+                                              publisherParameters.ServiceDirectory,
+                                              publisherParameters.ServiceUri,
+                                              publisherParameters.ListRestResources,
+                                              publisherParameters.PutRestResource,
+                                              publisherParameters.DeleteRestResource,
+                                              publisherParameters.Logger,
+                                              cancellationToken);
     }
 
     private async ValueTask ProcessCommitIdFilesToPut(IReadOnlyCollection<FileInfo> commitIdFilesToPut, CancellationToken cancellationToken)
     {
-        var putAllConfigurationArtifacts = ConfigurationFileWasModifiedInCommit(commitIdFilesToPut);
-
         await Service.ProcessArtifactsToPut(commitIdFilesToPut,
-                                                         putAllConfigurationArtifacts,
-                                                         publisherParameters.ConfigurationJson,
-                                                         publisherParameters.ServiceDirectory,
-                                                         publisherParameters.ServiceUri,
-                                                         publisherParameters.ListRestResources,
-                                                         publisherParameters.PutRestResource,
-                                                         publisherParameters.DeleteRestResource,
-                                                         publisherParameters.Logger,
-                                                         cancellationToken);
-    }
-
-    private bool ConfigurationFileWasModifiedInCommit(IReadOnlyCollection<FileInfo> commitIdFiles)
-    {
-        return commitIdFiles.Any(file => file.FullName.Equals(publisherParameters.ConfigurationFile?.FullName));
+                                            publisherParameters.ConfigurationJson,
+                                            publisherParameters.ServiceDirectory,
+                                            publisherParameters.ServiceUri,
+                                            publisherParameters.ListRestResources,
+                                            publisherParameters.PutRestResource,
+                                            publisherParameters.DeleteRestResource,
+                                            publisherParameters.Logger,
+                                            cancellationToken);
     }
 
     private enum Action

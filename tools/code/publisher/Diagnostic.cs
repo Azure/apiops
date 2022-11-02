@@ -84,27 +84,22 @@ internal static class Diagnostic
         return new DiagnosticUri(diagnosticName, diagnosticsUri);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, putAllConfigurationArtifacts, configurationJson, serviceDirectory)
+        await GetArtifactsToPut(files, configurationJson, serviceDirectory)
                 .ForEachParallel(async artifact => await PutDiagnostic(artifact.Name, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
-    private static IEnumerable<(DiagnosticName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    private static IEnumerable<(DiagnosticName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
     {
-        var fileArtifacts = GetDiagnosticInformationFiles(files, serviceDirectory)
-                                .Select(file => (Name: GetDiagnosticName(file), Json: file.ReadAsJsonObject()));
-
         var configurationArtifacts = GetConfigurationDiagnostics(configurationJson);
 
-        return putAllConfigurationArtifacts
-                ? fileArtifacts.FullJoin(configurationArtifacts,
-                                         keySelector: artifact => artifact.Name,
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)))
-                : fileArtifacts.LeftJoin(configurationArtifacts,
-                                         keySelector: artifact => artifact.Name,
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
+        return GetDiagnosticInformationFiles(files, serviceDirectory)
+                .Select(file => (Name: GetDiagnosticName(file), Json: file.ReadAsJsonObject()))
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => artifact.Name,
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
     }
 
     private static IEnumerable<(DiagnosticName Name, JsonObject Json)> GetConfigurationDiagnostics(JsonObject configurationJson)

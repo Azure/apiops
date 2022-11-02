@@ -84,27 +84,22 @@ internal static class ApiVersionSet
         return new ApiVersionSetUri(apiVersionSetName, apiVersionSetsUri);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, putAllConfigurationArtifacts, configurationJson, serviceDirectory)
+        await GetArtifactsToPut(files, configurationJson, serviceDirectory)
                 .ForEachParallel(async artifact => await PutApiVersionSet(artifact.Name, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
-    private static IEnumerable<(ApiVersionSetName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    private static IEnumerable<(ApiVersionSetName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
     {
-        var fileArtifacts = GetApiVersionSetInformationFiles(files, serviceDirectory)
-                                .Select(file => (Name: GetApiVersionSetName(file), Json: file.ReadAsJsonObject()));
-
         var configurationArtifacts = GetConfigurationApiVersionSets(configurationJson);
 
-        return putAllConfigurationArtifacts
-                ? fileArtifacts.FullJoin(configurationArtifacts,
-                                         keySelector: artifact => artifact.Name,
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)))
-                : fileArtifacts.LeftJoin(configurationArtifacts,
-                                         keySelector: artifact => artifact.Name,
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
+        return GetApiVersionSetInformationFiles(files, serviceDirectory)
+                .Select(file => (Name: GetApiVersionSetName(file), Json: file.ReadAsJsonObject()))
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => artifact.Name,
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
     }
 
     private static IEnumerable<(ApiVersionSetName Name, JsonObject Json)> GetConfigurationApiVersionSets(JsonObject configurationJson)

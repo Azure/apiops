@@ -27,23 +27,22 @@ internal static class ProductTag
 
     private static IEnumerable<(ProductName ProductName, ImmutableList<TagName> TagNames)> GetArtifactProductTags(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
     {
-        var fileArtifacts = GetProductTagsFiles(files, serviceDirectory)
-                                 .Select(file =>
-                                 {
-                                     var productName = GetProductName(file);
-                                     var tagNames = file.ReadAsJsonArray()
-                                                        .Choose(node => node as JsonObject)
-                                                        .Choose(tagJsonObject => tagJsonObject.TryGetStringProperty("name"))
-                                                        .Select(name => new TagName(name))
-                                                        .ToImmutableList();
-                                     return (ProductName: productName, TagNames: tagNames);
-                                 });
-
         var configurationArtifacts = GetConfigurationProductTags(configurationJson);
 
-        return fileArtifacts.FullJoin(configurationArtifacts,
-                                      keySelector: artifact => artifact.ProductName,
-                                      bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ProductName, configurationArtifact.TagNames));
+        return GetProductTagsFiles(files, serviceDirectory)
+                .Select(file =>
+                {
+                    var productName = GetProductName(file);
+                    var tagNames = file.ReadAsJsonArray()
+                                    .Choose(node => node as JsonObject)
+                                    .Choose(tagJsonObject => tagJsonObject.TryGetStringProperty("name"))
+                                    .Select(name => new TagName(name))
+                                    .ToImmutableList();
+                    return (ProductName: productName, TagNames: tagNames);
+                })
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => artifact.ProductName,
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ProductName, configurationArtifact.TagNames));
     }
 
     private static IEnumerable<ProductTagsFile> GetProductTagsFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)

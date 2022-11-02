@@ -20,13 +20,13 @@ internal static class Api
     {
         var configurationApis = GetConfigurationApis(configurationJson);
 
-        await GetInformationAndSpecificationFiles(files, serviceDirectory)
+        await GetApisFromFiles(files, serviceDirectory)
                 .LeftJoin(configurationApis,
-                          firstKeySelector: files => files.ApiName,
+                          firstKeySelector: api => api.ApiName,
                           secondKeySelector: configurationArtifact => configurationArtifact.ApiName,
-                          firstSelector: files => (files.ApiName, files.InformationFile, files.SpecificationFile, ConfigurationApiJson: (JsonObject?)null),
-                          bothSelector: (files, configurationArtifact) => (files.ApiName, files.InformationFile, files.SpecificationFile, ConfigurationApiJson: configurationArtifact.Json))
-                .ForEachParallel(async artifact => await ProcessDeletedArtifacts(artifact.ApiName, artifact.InformationFile, artifact.SpecificationFile, artifact.ConfigurationApiJson, serviceDirectory, serviceUri, putRestResource, deleteRestResource, logger, cancellationToken),
+                          firstSelector: api => (api.ApiName, api.InformationFile, api.Schema, ConfigurationApiJson: (JsonObject?)null),
+                          bothSelector: (file, configurationArtifact) => (file.ApiName, file.InformationFile, file.Schema, ConfigurationApiJson: configurationArtifact.Json))
+                .ForEachParallel(async artifact => await ProcessDeletedApi(artifact.ApiName, artifact.InformationFile, artifact.Schema, artifact.ConfigurationApiJson, serviceDirectory, serviceUri, putRestResource, deleteRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -44,20 +44,20 @@ internal static class Api
                                 });
     }
 
-    private static IEnumerable<(ApiName ApiName, ApiInformationFile? InformationFile, ApiSpecificationFile? SpecificationFile)> GetInformationAndSpecificationFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
+    private static IEnumerable<(ApiName ApiName, ApiInformationFile? InformationFile, Schema? Schema)> GetApisFromFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
     {
         var informationFiles = files.Choose(file => TryGetInformationFile(file, serviceDirectory))
                                     .Select(file => (ApiName: GetApiName(file), File: file));
 
-        var specificationFiles = files.Choose(file => TryGetSpecificationFile(file, serviceDirectory))
-                                      .Select(file => (ApiName: GetApiName(file), File: file));
+        var schemas = files.Choose(file => TryGetSchema(file, serviceDirectory))
+                           .Select(schema => (ApiName: GetApiName(schema), Schema: schema));
 
-        return informationFiles.FullJoin(specificationFiles,
+        return informationFiles.FullJoin(schemas,
                                          firstKeySelector: informationFile => informationFile.ApiName,
-                                         secondKeySelector: specificationFile => specificationFile.ApiName,
-                                         firstSelector: informationFile => (informationFile.ApiName, (ApiInformationFile?)informationFile.File, (ApiSpecificationFile?)null),
-                                         secondSelector: specificationFile => (specificationFile.ApiName, null, specificationFile.File),
-                                         bothSelector: (informationFile, specificationFile) => (informationFile.ApiName, informationFile.File, specificationFile.File));
+                                         secondKeySelector: schema => schema.ApiName,
+                                         firstSelector: informationFile => (informationFile.ApiName, (ApiInformationFile?)informationFile.File, (Schema?)null),
+                                         secondSelector: schema => (schema.ApiName, null, schema.Schema),
+                                         bothSelector: (informationFile, schema) => (informationFile.ApiName, informationFile.File, schema.Schema));
     }
 
     private static ApiInformationFile? TryGetInformationFile(FileInfo? file, ServiceDirectory serviceDirectory)
@@ -101,6 +101,39 @@ internal static class Api
     private static ApiName GetApiName(ApiInformationFile file)
     {
         return new ApiName(file.ApiDirectory.GetName());
+    }
+
+    private static Schema? TryGetSchema(FileInfo file, ServiceDirectory serviceDirectory)
+    {
+        var graphQlSchemaFile = TryGetGraphQlSchemaFile(file, serviceDirectory);
+        if (graphQlSchemaFile is not null)
+        {
+            return new Schema.GraphQl(graphQlSchemaFile);
+        }
+
+        var specificationFile = TryGetSpecificationFile(file, serviceDirectory);
+        if (specificationFile is not null)
+        {
+            return new Schema.OpenApi(specificationFile);
+        }
+
+        return null;
+    }
+
+    private static GraphQlSchemaFile? TryGetGraphQlSchemaFile(FileInfo? file, ServiceDirectory serviceDirectory)
+    {
+        if (file is null || file.Name.Equals(GraphQlSchemaFile.Name) is false)
+        {
+            return null;
+        }
+
+        var apiDirectory = TryGetApiDirectory(file.Directory, serviceDirectory);
+        if (apiDirectory is null)
+        {
+            return null;
+        }
+
+        return new GraphQlSchemaFile(apiDirectory);
     }
 
     private static ApiSpecificationFile? TryGetSpecificationFile(FileInfo? file, ServiceDirectory serviceDirectory)
@@ -174,52 +207,52 @@ internal static class Api
             _ => throw new NotSupportedException()
         };
 
-    private static ApiName GetApiName(ApiSpecificationFile file)
+    private static ApiName GetApiName(Schema schema)
     {
-        return new ApiName(file.ApiDirectory.GetName());
+        return schema switch
+        {
+            Schema.GraphQl graphQl => new(graphQl.File.ApiDirectory.GetName()),
+            Schema.OpenApi openApi => new(openApi.File.ApiDirectory.GetName()),
+            var unsupportedSchema => throw new NotSupportedException($"Cannot get API name from files of type {unsupportedSchema.GetType()}.")
+        };
     }
 
-    private static async ValueTask ProcessDeletedArtifacts(ApiName apiName, ApiInformationFile? deletedApiInformationFile, ApiSpecificationFile? deletedApiSpecificationFile, JsonObject? configurationApiJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask ProcessDeletedApi(ApiName apiName, ApiInformationFile? deletedApiInformationFile, Schema? deletedSchema, JsonObject? configurationApiJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        switch (deletedApiInformationFile, deletedApiSpecificationFile)
+        switch (deletedApiInformationFile, deletedSchema)
         {
             // Nothing was deleted
             case (null, null):
                 return;
-            // Only specification file was deleted. If information file still exists, put its contents; otherwise, delete API.
-            case (null, _):
-                var existingInformationFile = new ApiInformationFile(deletedApiSpecificationFile.ApiDirectory);
-                await (existingInformationFile.Exists()
-                        ? PutArtifacts(apiName, existingInformationFile, null, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken)
-                        : DeleteApi(apiName, serviceUri, deleteRestResource, logger, cancellationToken));
+            // Only schema file was deleted, put API with existing information file
+            case (null, not null):
+                var existingInformationFile = TryGetExistingInformationFile(deletedSchema.GetApiDirectory());
+                if (existingInformationFile is not null)
+                {
+                    await PutApi(apiName, existingInformationFile, specificationFile: null, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken);
+                }
+
                 return;
-            // Only information file was deleted. If specification file still exists, put its contents; otherwise, delete API.
-            case (_, null):
-                var existingSpecificationFile = deletedApiInformationFile.ApiDirectory.EnumerateFilesRecursively()
-                                                                                      .Choose(file => TryGetSpecificationFile(file, serviceDirectory))
-                                                                                      .FirstOrDefault();
-                await (existingSpecificationFile is not null
-                        ? PutArtifacts(apiName, null, existingSpecificationFile, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken)
-                        : DeleteApi(apiName, serviceUri, deleteRestResource, logger, cancellationToken));
+            // Only information file was deleted, put API with existing specification file
+            case (not null, null):
+                var existingSpecificationFile = TryGetExistingSpecificationFile(deletedApiInformationFile.ApiDirectory, serviceDirectory);
+                if (existingSpecificationFile is not null)
+                {
+                    await PutApi(apiName, apiInformationFile: null, existingSpecificationFile, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken);
+                }
+
                 return;
-            // Both were deleted; delete API.
-            case (_, _):
-                await DeleteApi(apiName, serviceUri, deleteRestResource, logger, cancellationToken);
+            // Both information and schema file was deleted, delete API.
+            case (not null, not null):
+                await Delete(apiName, serviceUri, deleteRestResource, logger, cancellationToken);
                 return;
         }
     }
 
-    private static async ValueTask PutArtifacts(ApiName apiName, ApiInformationFile? apiInformationFile, ApiSpecificationFile? apiSpecificationFile, JsonObject? configurationApiJson, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static ApiInformationFile? TryGetExistingInformationFile(ApiDirectory apiDirectory)
     {
-        var apiJson = await GetApiJson(apiInformationFile, apiSpecificationFile, configurationApiJson);
-        if (apiJson is null)
-        {
-            return;
-        }
-
-        logger.LogInformation("Putting API {apiName}...", apiName);
-        var apiUri = GetApiUri(apiName, serviceUri);
-        await putRestResource(apiUri.Uri, apiJson, cancellationToken);
+        var file = new ApiInformationFile(apiDirectory);
+        return file.Exists() ? file : null;
     }
 
     public static ApiUri GetApiUri(ApiName apiName, ServiceUri serviceUri)
@@ -228,20 +261,44 @@ internal static class Api
         return new ApiUri(apiName, apisUri);
     }
 
-    private static async ValueTask<JsonObject?> GetApiJson(ApiInformationFile? apiInformationFile, ApiSpecificationFile? apiSpecificationFile, JsonObject? configurationApiJson)
+    private static ApiSpecificationFile? TryGetExistingSpecificationFile(ApiDirectory apiDirectory, ServiceDirectory serviceDirectory)
     {
-        if (apiInformationFile is null && apiSpecificationFile is null && configurationApiJson is null)
+        return apiDirectory.GetDirectoryInfo()
+                           .EnumerateFiles()
+                           .Choose(file => TryGetSpecificationFile(file, serviceDirectory))
+                           .FirstOrDefault();
+    }
+
+    private static async ValueTask PutApi(ApiName apiName, ApiInformationFile? apiInformationFile, ApiSpecificationFile? specificationFile, JsonObject? configurationApiJson, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    {
+        if (apiInformationFile is null && specificationFile is null && configurationApiJson is null)
         {
-            return null;
+            return;
         }
 
-        var apiJson = apiInformationFile?.ReadAsJsonObject() ?? new JsonObject();
-        if (apiSpecificationFile is not null)
+        logger.LogInformation("Putting API {apiName}...", apiName);
+
+        var apiUri = GetApiUri(apiName, serviceUri);
+
+        var apiJson = new JsonObject();
+
+        if (apiInformationFile is not null)
         {
-            var propertiesJson = apiJson.TryGetJsonObjectProperty("properties") ?? new JsonObject();
-            propertiesJson["format"] = "openapi";
-            propertiesJson["value"] = await GetOpenApiV3SpecificationText(apiSpecificationFile);
-            apiJson["properties"] = propertiesJson;
+            var fileJson = apiInformationFile.ReadAsJsonObject();
+            apiJson = apiJson.Merge(fileJson);
+        }
+
+        if (specificationFile is not null)
+        {
+            var fileJson = new JsonObject
+            {
+                ["properties"] = new JsonObject
+                {
+                    ["format"] = "openapi",
+                    ["value"] = await GetOpenApiV3SpecificationText(specificationFile)
+                }
+            };
+            apiJson = apiJson.Merge(fileJson);
         }
 
         if (configurationApiJson is not null)
@@ -249,7 +306,7 @@ internal static class Api
             apiJson = apiJson.Merge(configurationApiJson);
         }
 
-        return apiJson;
+        await putRestResource(apiUri.Uri, apiJson, cancellationToken);
     }
 
     private static async ValueTask<string> GetOpenApiV3SpecificationText(ApiSpecificationFile specificationFile)
@@ -259,7 +316,7 @@ internal static class Api
         return readResult.OpenApiDocument.Serialize(specificationFile.Version, specificationFile.Format);
     }
 
-    private static async ValueTask DeleteApi(ApiName apiName, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask Delete(ApiName apiName, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         logger.LogInformation("Deleting API {apiName}...", apiName);
 
@@ -267,29 +324,73 @@ internal static class Api
         await deleteRestResource(apiUri.Uri, cancellationToken);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, putAllConfigurationArtifacts, configurationJson, serviceDirectory)
-                .ForEachParallel(async artifact => await PutArtifacts(artifact.ApiName, artifact.InformationFile, artifact.SpecificationFile, artifact.ConfigurationApiJson, serviceUri, putRestResource, logger, cancellationToken),
+        var configurationApis = GetConfigurationApis(configurationJson);
+
+        await GetApisFromFiles(files, serviceDirectory)
+                .LeftJoin(configurationApis,
+                          firstKeySelector: api => api.ApiName,
+                          secondKeySelector: configurationArtifact => configurationArtifact.ApiName,
+                          firstSelector: api => (api.ApiName, api.InformationFile, api.Schema, ConfigurationApiJson: (JsonObject?)null),
+                          bothSelector: (file, configurationArtifact) => (file.ApiName, file.InformationFile, file.Schema, ConfigurationApiJson: configurationArtifact.Json))
+                .ForEachParallel(async artifact => await PutApi(artifact.ApiName, artifact.InformationFile, artifact.Schema, artifact.ConfigurationApiJson, serviceUri, putRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
-    private static IEnumerable<(ApiName ApiName, ApiInformationFile? InformationFile, ApiSpecificationFile? SpecificationFile, JsonObject? ConfigurationApiJson)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    private static async ValueTask PutApi(ApiName apiName, ApiInformationFile? apiInformationFile, Schema? schema, JsonObject? configurationApiJson, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        var fileArtifacts = GetInformationAndSpecificationFiles(files, serviceDirectory);
-        var configurationApis = GetConfigurationApis(configurationJson);
+        switch (apiInformationFile, schema)
+        {
+            case (not null, Schema.OpenApi openApiSchemaFile):
+                await PutApi(apiName, apiInformationFile, openApiSchemaFile.File, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken);
+                return;
+            case (not null, Schema.GraphQl graphQlSchemaFile):
+                await PutApi(apiName, apiInformationFile, specificationFile: null, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken);
+                await PutGraphQlSchema(apiName, graphQlSchemaFile.File, serviceUri, putRestResource, logger, cancellationToken);
+                return;
+            case (null, Schema.OpenApi openApiSchemaFile):
+                await PutApi(apiName, apiInformationFile: null, openApiSchemaFile.File, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken);
+                return;
+        }
+    }
 
-        return putAllConfigurationArtifacts
-                ? fileArtifacts.FullJoin(configurationApis,
-                                         firstKeySelector: files => files.ApiName,
-                                         secondKeySelector: configurationArtifact => configurationArtifact.ApiName,
-                                         firstSelector: files => (files.ApiName, files.InformationFile, files.SpecificationFile, ConfigurationApiJson: (JsonObject?)null),
-                                         secondSelector: configurationArtifact => (configurationArtifact.ApiName, null, null, configurationArtifact.Json),
-                                         bothSelector: (files, configurationArtifact) => (files.ApiName, files.InformationFile, files.SpecificationFile, ConfigurationApiJson: configurationArtifact.Json))
-                : fileArtifacts.LeftJoin(configurationApis,
-                                         firstKeySelector: files => files.ApiName,
-                                         secondKeySelector: configurationArtifact => configurationArtifact.ApiName,
-                                         firstSelector: files => (files.ApiName, files.InformationFile, files.SpecificationFile, ConfigurationApiJson: (JsonObject?)null),
-                                         bothSelector: (files, configurationArtifact) => (files.ApiName, files.InformationFile, files.SpecificationFile, ConfigurationApiJson: configurationArtifact.Json));
+    private static async ValueTask PutGraphQlSchema(ApiName apiName, GraphQlSchemaFile graphQlSchemaFile, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Putting GraphQL schema for API {apiName}...", apiName);
+
+        var apiUri = GetApiUri(apiName, serviceUri);
+        var schemasUri = new ApiSchemasUri(apiUri);
+        var schemaUri = new ApiSchemaUri(ApiSchemaName.GraphQl, schemasUri);
+        var json = new JsonObject()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["contentType"] = "application/vnd.ms-azure-apim.graphql.schema",
+                ["document"] = new JsonObject()
+                {
+                    ["value"] = await graphQlSchemaFile.ReadAsString(cancellationToken)
+                }
+            }
+        };
+
+        await putRestResource(schemaUri.Uri, json, cancellationToken);
+    }
+
+    private abstract record Schema
+    {
+        public record GraphQl(GraphQlSchemaFile File) : Schema { }
+
+        public record OpenApi(ApiSpecificationFile File) : Schema { }
+
+        public ApiDirectory GetApiDirectory()
+        {
+            return this switch
+            {
+                GraphQl file => file.File.ApiDirectory,
+                OpenApi file => file.File.ApiDirectory,
+                _ => throw new NotSupportedException()
+            };
+        }
     }
 }

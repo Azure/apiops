@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using static common.ApiModel.ApiCreateOrUpdateProperties;
 
 namespace extractor;
 
@@ -56,25 +57,52 @@ internal static class Api
         var apisUri = new ApisUri(serviceUri);
         var apiUri = new ApiUri(apiName, apisUri);
 
-        await ExportInformationFile(apiDirectory, apiUri, apiName, getRestResource, cancellationToken);
-        await ExportSpecificationFile(apiDirectory, apiUri, apiSpecification, getRestResource, downloadResource, cancellationToken);
+        var apiResponseJson = await getRestResource(apiUri.Uri, cancellationToken);
+        var apiModel = ApiModel.Deserialize(apiName, apiResponseJson);
+
+        await ExportInformationFile(apiModel, apiDirectory, cancellationToken);
+        await ExportSpecification(apiModel, apiDirectory, apiUri, apiSpecification, getRestResource, downloadResource, cancellationToken);
         await ExportTags(apiDirectory, apiUri, listRestResources, cancellationToken);
         await ExportPolicies(apiDirectory, apiUri, listRestResources, getRestResource, cancellationToken);
         await ExportOperations(apiDirectory, apiUri, listRestResources, getRestResource, cancellationToken);
     }
 
-    private static async ValueTask ExportInformationFile(ApiDirectory apiDirectory, ApiUri apiUri, ApiName apiName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportInformationFile(ApiModel apiModel, ApiDirectory apiDirectory, CancellationToken cancellationToken)
     {
         var apiInformationFile = new ApiInformationFile(apiDirectory);
-
-        var responseJson = await getRestResource(apiUri.Uri, cancellationToken);
-        var apiModel = ApiModel.Deserialize(apiName, responseJson);
         var contentJson = apiModel.Serialize();
 
         await apiInformationFile.OverwriteWithJson(contentJson, cancellationToken);
     }
 
-    private static async ValueTask ExportSpecificationFile(ApiDirectory apiDirectory, ApiUri apiUri, OpenApiSpecification apiSpecification, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportSpecification(ApiModel apiModel, ApiDirectory apiDirectory, ApiUri apiUri, OpenApiSpecification apiSpecification, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
+    {
+        await (apiModel.Properties.Type switch
+        {
+            var apiType when apiType == ApiTypeOption.GraphQl => ExportGraphQlSchema(apiDirectory, apiUri, getRestResource, cancellationToken),
+            var apiType when apiType == ApiTypeOption.Soap => ValueTask.CompletedTask,
+            var apiType when apiType == ApiTypeOption.WebSocket => ValueTask.CompletedTask,
+            _ => ExportOpenApiSpecification(apiDirectory, apiUri, apiSpecification, getRestResource, downloadResource, cancellationToken)
+        });
+    }
+
+    private static async ValueTask ExportGraphQlSchema(ApiDirectory apiDirectory, ApiUri apiUri, GetRestResource getRestResource, CancellationToken cancellationToken)
+    {
+        var schemaName = ApiSchemaName.GraphQl;
+        var schemasUri = new ApiSchemasUri(apiUri);
+        var schemaUri = new ApiSchemaUri(schemaName, schemasUri);
+        var schemaJson = await getRestResource(schemaUri.Uri, cancellationToken);
+        var schemaModel = ApiSchemaModel.Deserialize(schemaName, schemaJson);
+        var schemaText = schemaModel.Properties.Document?.Value;
+
+        if (schemaText is not null)
+        {
+            var schemaFile = new GraphQlSchemaFile(apiDirectory);
+            await schemaFile.OverwriteWithText(schemaText, cancellationToken);
+        }
+    }
+
+    private static async ValueTask ExportOpenApiSpecification(ApiDirectory apiDirectory, ApiUri apiUri, OpenApiSpecification apiSpecification, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
     {
         var specificationFile = new ApiSpecificationFile(apiSpecification.Version, apiSpecification.Format, apiDirectory);
 

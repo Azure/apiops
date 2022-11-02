@@ -41,7 +41,7 @@ internal static class ApiTag
 
         var configurationArtifacts = GetConfigurationApiTags(configurationJson);
 
-        return fileArtifacts.FullJoin(configurationArtifacts,
+        return fileArtifacts.LeftJoin(configurationArtifacts,
                                       keySelector: artifact => artifact.ApiName,
                                       bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ApiName, configurationArtifact.TagNames));
     }

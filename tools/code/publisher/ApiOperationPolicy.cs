@@ -79,24 +79,20 @@ internal static class ApiOperationPolicy
         return new ApiOperationPoliciesUri(operationUri);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, putAllConfigurationArtifacts, configurationJson, serviceDirectory, cancellationToken)
+        await GetArtifactsToPut(files, configurationJson, serviceDirectory, cancellationToken)
                 .ForEachParallel(async artifact => await PutPolicy(artifact.PolicyName, artifact.OperationName, artifact.ApiName, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
-    private static async IAsyncEnumerable<(ApiOperationPolicyName PolicyName, ApiOperationName OperationName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private static async IAsyncEnumerable<(ApiOperationPolicyName PolicyName, ApiOperationName OperationName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var fileArtifacts = await GetFilePolicies(files, serviceDirectory, cancellationToken).ToListAsync(cancellationToken);
         var configurationArtifacts = GetConfigurationPolicies(configurationJson);
-        var artifacts = putAllConfigurationArtifacts
-                        ? fileArtifacts.FullJoin(configurationArtifacts,
-                                                 keySelector: artifact => (artifact.PolicyName, artifact.OperationName, artifact.ApiName),
-                                                 bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.PolicyName, fileArtifact.OperationName, fileArtifact.ApiName, fileArtifact.Json.Merge(configurationArtifact.Json)))
-                        : fileArtifacts.LeftJoin(configurationArtifacts,
-                                                 keySelector: artifact => (artifact.PolicyName, artifact.OperationName, artifact.ApiName),
-                                                 bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.PolicyName, fileArtifact.OperationName, fileArtifact.ApiName, fileArtifact.Json.Merge(configurationArtifact.Json)));
+        var artifacts = fileArtifacts.LeftJoin(configurationArtifacts,
+                                               keySelector: artifact => (artifact.PolicyName, artifact.OperationName, artifact.ApiName),
+                                               bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.PolicyName, fileArtifact.OperationName, fileArtifact.ApiName, fileArtifact.Json.Merge(configurationArtifact.Json)));
 
         foreach (var artifact in artifacts)
         {

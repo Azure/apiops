@@ -93,27 +93,22 @@ internal static class ApiDiagnostic
         return new ApiDiagnosticUri(diagnosticName, diagnosticsUri);
     }
 
-    private static IEnumerable<(ApiDiagnosticName DiagnosticName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        var fileArtifacts = GetDiagnosticInformationFiles(files, serviceDirectory)
-                                .Select(file => (DiagnosticName: GetDiagnosticName(file), ApiName: GetApiName(file), Json: file.ReadAsJsonObject()));
-
-        var configurationArtifacts = GetConfigurationDiagnostics(configurationJson);
-
-        return putAllConfigurationArtifacts
-                ? fileArtifacts.FullJoin(configurationArtifacts,
-                                         keySelector: artifact => (artifact.DiagnosticName, artifact.ApiName),
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.DiagnosticName, fileArtifact.ApiName, fileArtifact.Json.Merge(configurationArtifact.Json)))
-                : fileArtifacts.LeftJoin(configurationArtifacts,
-                                         keySelector: artifact => (artifact.DiagnosticName, artifact.ApiName),
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.DiagnosticName, fileArtifact.ApiName, fileArtifact.Json.Merge(configurationArtifact.Json)));
-    }
-
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await GetArtifactsToPut(files, putAllConfigurationArtifacts, configurationJson, serviceDirectory)
+        await GetArtifactsToPut(files, configurationJson, serviceDirectory)
                 .ForEachParallel(async artifact => await Put(artifact.DiagnosticName, artifact.ApiName, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
                                  cancellationToken);
+    }
+
+    private static IEnumerable<(ApiDiagnosticName DiagnosticName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    {
+        var configurationArtifacts = GetConfigurationDiagnostics(configurationJson);
+
+        return GetDiagnosticInformationFiles(files, serviceDirectory)
+                .Select(file => (DiagnosticName: GetDiagnosticName(file), ApiName: GetApiName(file), Json: file.ReadAsJsonObject()))
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => (artifact.DiagnosticName, artifact.ApiName),
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.DiagnosticName, fileArtifact.ApiName, fileArtifact.Json.Merge(configurationArtifact.Json)));
     }
 
     private static IEnumerable<(ApiDiagnosticName DiagnosticName, ApiName ApiName, JsonObject Json)> GetConfigurationDiagnostics(JsonObject configurationJson)

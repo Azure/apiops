@@ -27,23 +27,22 @@ internal static class ProductApi
 
     private static IEnumerable<(ProductName ProductName, ImmutableList<ApiName> ApiNames)> GetArtifactProductApis(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
     {
-        var fileArtifacts = GetProductApisFiles(files, serviceDirectory)
-                                 .Select(file =>
-                                 {
-                                     var productName = GetProductName(file);
-                                     var apiNames = file.ReadAsJsonArray()
-                                                        .Choose(node => node as JsonObject)
-                                                        .Choose(apiJsonObject => apiJsonObject.TryGetStringProperty("name"))
-                                                        .Select(name => new ApiName(name))
-                                                        .ToImmutableList();
-                                     return (ProductName: productName, ApiNames: apiNames);
-                                 });
-
         var configurationArtifacts = GetConfigurationProductApis(configurationJson);
 
-        return fileArtifacts.FullJoin(configurationArtifacts,
-                                      keySelector: artifact => artifact.ProductName,
-                                      bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ProductName, configurationArtifact.ApiNames));
+        return GetProductApisFiles(files, serviceDirectory)
+                .Select(file =>
+                {
+                    var productName = GetProductName(file);
+                    var apiNames = file.ReadAsJsonArray()
+                                    .Choose(node => node as JsonObject)
+                                    .Choose(apiJsonObject => apiJsonObject.TryGetStringProperty("name"))
+                                    .Select(name => new ApiName(name))
+                                    .ToImmutableList();
+                    return (ProductName: productName, ApiNames: apiNames);
+                })
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => artifact.ProductName,
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ProductName, configurationArtifact.ApiNames));
     }
 
     private static IEnumerable<ProductApisFile> GetProductApisFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)

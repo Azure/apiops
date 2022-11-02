@@ -84,27 +84,22 @@ internal static class Backend
         return new BackendUri(backendName, backendsUri);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, putAllConfigurationArtifacts, configurationJson, serviceDirectory)
+        await GetArtifactsToPut(files, configurationJson, serviceDirectory)
                 .ForEachParallel(async artifact => await PutBackend(artifact.Name, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
-    private static IEnumerable<(BackendName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    private static IEnumerable<(BackendName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
     {
-        var fileArtifacts = GetBackendInformationFiles(files, serviceDirectory)
-                                .Select(file => (Name: GetBackendName(file), Json: file.ReadAsJsonObject()));
-
         var configurationArtifacts = GetConfigurationBackends(configurationJson);
 
-        return putAllConfigurationArtifacts
-                ? fileArtifacts.FullJoin(configurationArtifacts,
-                                         keySelector: artifact => artifact.Name,
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)))
-                : fileArtifacts.LeftJoin(configurationArtifacts,
-                                         keySelector: artifact => artifact.Name,
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
+        return GetBackendInformationFiles(files, serviceDirectory)
+                .Select(file => (Name: GetBackendName(file), Json: file.ReadAsJsonObject()))
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => artifact.Name,
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
     }
 
     private static IEnumerable<(BackendName Name, JsonObject Json)> GetConfigurationBackends(JsonObject configurationJson)

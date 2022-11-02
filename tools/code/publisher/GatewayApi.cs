@@ -27,23 +27,22 @@ internal static class GatewayApi
 
     private static IEnumerable<(GatewayName GatewayName, ImmutableList<ApiName> ApiNames)> GetArtifactGatewayApis(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
     {
-        var fileArtifacts = GetGatewayApisFiles(files, serviceDirectory)
-                                 .Select(file =>
-                                 {
-                                     var gatewayName = GetGatewayName(file);
-                                     var apiNames = file.ReadAsJsonArray()
-                                                        .Choose(node => node as JsonObject)
-                                                        .Choose(apiJsonObject => apiJsonObject.TryGetStringProperty("name"))
-                                                        .Select(name => new ApiName(name))
-                                                        .ToImmutableList();
-                                     return (GatewayName: gatewayName, ApiNames: apiNames);
-                                 });
-
         var configurationArtifacts = GetConfigurationGatewayApis(configurationJson);
 
-        return fileArtifacts.FullJoin(configurationArtifacts,
-                                      keySelector: artifact => artifact.GatewayName,
-                                      bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.GatewayName, configurationArtifact.ApiNames));
+        return GetGatewayApisFiles(files, serviceDirectory)
+                .Select(file =>
+                {
+                    var gatewayName = GetGatewayName(file);
+                    var apiNames = file.ReadAsJsonArray()
+                                    .Choose(node => node as JsonObject)
+                                    .Choose(apiJsonObject => apiJsonObject.TryGetStringProperty("name"))
+                                    .Select(name => new ApiName(name))
+                                    .ToImmutableList();
+                    return (GatewayName: gatewayName, ApiNames: apiNames);
+                })
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => artifact.GatewayName,
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.GatewayName, configurationArtifact.ApiNames));
     }
 
     private static IEnumerable<GatewayApisFile> GetGatewayApisFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)

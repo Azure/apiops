@@ -84,27 +84,22 @@ internal static class Logger
         return new LoggerUri(loggerName, loggersUri);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, putAllConfigurationArtifacts, configurationJson, serviceDirectory)
+        await GetArtifactsToPut(files, configurationJson, serviceDirectory)
                 .ForEachParallel(async artifact => await PutLogger(artifact.Name, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
-    private static IEnumerable<(LoggerName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, bool putAllConfigurationArtifacts, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    private static IEnumerable<(LoggerName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
     {
-        var fileArtifacts = GetLoggerInformationFiles(files, serviceDirectory)
-                                .Select(file => (Name: GetLoggerName(file), Json: file.ReadAsJsonObject()));
-
         var configurationArtifacts = GetConfigurationLoggers(configurationJson);
 
-        return putAllConfigurationArtifacts
-                ? fileArtifacts.FullJoin(configurationArtifacts,
-                                         keySelector: artifact => artifact.Name,
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)))
-                : fileArtifacts.LeftJoin(configurationArtifacts,
-                                         keySelector: artifact => artifact.Name,
-                                         bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
+        return GetLoggerInformationFiles(files, serviceDirectory)
+                .Select(file => (Name: GetLoggerName(file), Json: file.ReadAsJsonObject()))
+                .LeftJoin(configurationArtifacts,
+                          keySelector: artifact => artifact.Name,
+                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
     }
 
     private static IEnumerable<(LoggerName Name, JsonObject Json)> GetConfigurationLoggers(JsonObject configurationJson)
