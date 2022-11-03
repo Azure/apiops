@@ -8,7 +8,12 @@ using System.Threading.Tasks;
 
 namespace extractor;
 
-internal record OpenApiSpecification(OpenApiSpecVersion Version, OpenApiFormat Format);
+internal abstract record DefaultApiSpecification
+{
+    public record Wadl : DefaultApiSpecification { }
+
+    public record OpenApi(OpenApiSpecVersion Version, OpenApiFormat Format) : DefaultApiSpecification { }
+}
 
 internal delegate IAsyncEnumerable<JsonObject> ListRestResources(Uri uri, CancellationToken cancellationToken);
 

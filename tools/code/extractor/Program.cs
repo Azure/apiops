@@ -60,7 +60,7 @@ public static class Program
         return new Extractor.Parameters
         {
             ApiNamesToExport = GetApiNamesToExport(configuration),
-            ApiSpecification = GetApiSpecification(configuration),
+            DefaultApiSpecification = GetApiSpecification(configuration),
             ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
             DownloadResource = GetDownloadResource(),
             GetRestResource = GetGetRestResource(authenticatedPipeline),
@@ -90,21 +90,22 @@ public static class Program
                            ?.Get<IEnumerable<string>>();
     }
 
-    private static OpenApiSpecification GetApiSpecification(IConfiguration configuration)
+    private static DefaultApiSpecification GetApiSpecification(IConfiguration configuration)
     {
         var configurationFormat = configuration.TryGetValue("API_SPECIFICATION_FORMAT")
                                   ?? configuration.TryGetValue("apiSpecificationFormat");
 
         return configurationFormat is null
-            ? new OpenApiSpecification(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml)
+            ? new DefaultApiSpecification.OpenApi(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml) as DefaultApiSpecification
             : configurationFormat switch
             {
-                _ when configurationFormat.Equals("JSON", StringComparison.OrdinalIgnoreCase) => new OpenApiSpecification(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Json),
-                _ when configurationFormat.Equals("YAML", StringComparison.OrdinalIgnoreCase) => new OpenApiSpecification(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml),
-                _ when configurationFormat.Equals("OpenApiV2Json", StringComparison.OrdinalIgnoreCase) => new OpenApiSpecification(OpenApiSpecVersion.OpenApi2_0, OpenApiFormat.Json),
-                _ when configurationFormat.Equals("OpenApiV2Yaml", StringComparison.OrdinalIgnoreCase) => new OpenApiSpecification(OpenApiSpecVersion.OpenApi2_0, OpenApiFormat.Yaml),
-                _ when configurationFormat.Equals("OpenApiV3Json", StringComparison.OrdinalIgnoreCase) => new OpenApiSpecification(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Json),
-                _ when configurationFormat.Equals("OpenApiV3Yaml", StringComparison.OrdinalIgnoreCase) => new OpenApiSpecification(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml),
+                _ when configurationFormat.Equals("Wadl", StringComparison.OrdinalIgnoreCase) => new DefaultApiSpecification.Wadl(),
+                _ when configurationFormat.Equals("JSON", StringComparison.OrdinalIgnoreCase) => new DefaultApiSpecification.OpenApi(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Json),
+                _ when configurationFormat.Equals("YAML", StringComparison.OrdinalIgnoreCase) => new DefaultApiSpecification.OpenApi(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml),
+                _ when configurationFormat.Equals("OpenApiV2Json", StringComparison.OrdinalIgnoreCase) => new DefaultApiSpecification.OpenApi(OpenApiSpecVersion.OpenApi2_0, OpenApiFormat.Json),
+                _ when configurationFormat.Equals("OpenApiV2Yaml", StringComparison.OrdinalIgnoreCase) => new DefaultApiSpecification.OpenApi(OpenApiSpecVersion.OpenApi2_0, OpenApiFormat.Yaml),
+                _ when configurationFormat.Equals("OpenApiV3Json", StringComparison.OrdinalIgnoreCase) => new DefaultApiSpecification.OpenApi(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Json),
+                _ when configurationFormat.Equals("OpenApiV3Yaml", StringComparison.OrdinalIgnoreCase) => new DefaultApiSpecification.OpenApi(OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml),
                 _ => throw new InvalidOperationException($"API specification format '{configurationFormat}' defined in configuration is not supported.")
             };
     }

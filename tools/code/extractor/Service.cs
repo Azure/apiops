@@ -8,7 +8,7 @@ namespace extractor;
 
 internal static class Service
 {
-    public static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, OpenApiSpecification specification, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, DefaultApiSpecification defaultSpecification, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
     {
         logger.LogInformation("Exporting named values...");
         await NamedValue.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, cancellationToken);
@@ -41,6 +41,6 @@ internal static class Service
         await ServicePolicy.ExportAll(serviceUri, serviceDirectory, listRestResources, getRestResource, cancellationToken);
 
         logger.LogInformation("Exporting apis...");
-        await Api.ExportAll(serviceDirectory, serviceUri, specification, apiNamesToExport, listRestResources, getRestResource, downloadResource, cancellationToken);
+        await Api.ExportAll(serviceDirectory, serviceUri, defaultSpecification, apiNamesToExport, listRestResources, getRestResource, downloadResource, cancellationToken);
     }
 }

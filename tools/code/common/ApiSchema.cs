@@ -15,21 +15,6 @@ public sealed record ApiSchemasUri : IArtifactUri
     }
 }
 
-public sealed record ApiSchemasDirectory : IArtifactDirectory
-{
-    public static string Name { get; } = "schemas";
-
-    public ArtifactPath Path { get; }
-
-    public ApiDirectory ApiDirectory { get; }
-
-    public ApiSchemasDirectory(ApiDirectory apiDirectory)
-    {
-        Path = apiDirectory.Path.Append(Name);
-        ApiDirectory = apiDirectory;
-    }
-}
-
 public sealed record ApiSchemaName
 {
     private readonly string value;
@@ -56,21 +41,6 @@ public sealed record ApiSchemaUri : IArtifactUri
     public ApiSchemaUri(ApiSchemaName apiSchemaName, ApiSchemasUri apiSchemasUri)
     {
         Uri = apiSchemasUri.AppendPath(apiSchemaName.ToString());
-    }
-}
-
-public sealed record GraphQlSchemaFile : IArtifactFile
-{
-    public static string Name { get; } = "schema.graphql";
-
-    public ArtifactPath Path { get; }
-
-    public ApiDirectory ApiDirectory { get; }
-
-    public GraphQlSchemaFile(ApiDirectory apiDirectory)
-    {
-        Path = apiDirectory.Path.Append(Name);
-        ApiDirectory = apiDirectory;
     }
 }
 

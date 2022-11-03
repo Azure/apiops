@@ -1,4 +1,5 @@
 ﻿using common;
+using Flurl;
 using Microsoft.OpenApi.Extensions;
 using Microsoft.OpenApi.Readers;
 using System;
@@ -13,7 +14,7 @@ namespace extractor;
 
 internal static class Api
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, OpenApiSpecification specification, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, DefaultApiSpecification defaultSpecification, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
                 // Filter out apis that should not be exported
@@ -22,7 +23,7 @@ internal static class Api
                 .ForEachParallel(async apiName => await Export(serviceDirectory,
                                                                serviceUri,
                                                                apiName,
-                                                               specification,
+                                                               defaultSpecification,
                                                                listRestResources,
                                                                getRestResource,
                                                                downloadResource,
@@ -49,7 +50,7 @@ internal static class Api
                                                                                     StringComparison.OrdinalIgnoreCase));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiName apiName, OpenApiSpecification apiSpecification, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiName apiName, DefaultApiSpecification defaultSpecification, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
     {
         var apisDirectory = new ApisDirectory(serviceDirectory);
         var apiDirectory = new ApiDirectory(apiName, apisDirectory);
@@ -61,7 +62,7 @@ internal static class Api
         var apiModel = ApiModel.Deserialize(apiName, apiResponseJson);
 
         await ExportInformationFile(apiModel, apiDirectory, cancellationToken);
-        await ExportSpecification(apiModel, apiDirectory, apiUri, apiSpecification, getRestResource, downloadResource, cancellationToken);
+        await ExportSpecification(apiModel, apiDirectory, apiUri, defaultSpecification, getRestResource, downloadResource, cancellationToken);
         await ExportTags(apiDirectory, apiUri, listRestResources, cancellationToken);
         await ExportPolicies(apiDirectory, apiUri, listRestResources, getRestResource, cancellationToken);
         await ExportOperations(apiDirectory, apiUri, listRestResources, getRestResource, cancellationToken);
@@ -75,18 +76,18 @@ internal static class Api
         await apiInformationFile.OverwriteWithJson(contentJson, cancellationToken);
     }
 
-    private static async ValueTask ExportSpecification(ApiModel apiModel, ApiDirectory apiDirectory, ApiUri apiUri, OpenApiSpecification apiSpecification, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportSpecification(ApiModel apiModel, ApiDirectory apiDirectory, ApiUri apiUri, DefaultApiSpecification defaultSpecification, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
     {
         await (apiModel.Properties.Type switch
         {
-            var apiType when apiType == ApiTypeOption.GraphQl => ExportGraphQlSchema(apiDirectory, apiUri, getRestResource, cancellationToken),
-            var apiType when apiType == ApiTypeOption.Soap => ValueTask.CompletedTask,
+            var apiType when apiType == ApiTypeOption.GraphQl => ExportGraphQlSpecification(apiDirectory, apiUri, getRestResource, cancellationToken),
+            var apiType when apiType == ApiTypeOption.Soap => ExportWsdlSpecification(apiDirectory, apiUri, getRestResource, downloadResource, cancellationToken),
             var apiType when apiType == ApiTypeOption.WebSocket => ValueTask.CompletedTask,
-            _ => ExportOpenApiSpecification(apiDirectory, apiUri, apiSpecification, getRestResource, downloadResource, cancellationToken)
+            _ => ExportApiSpecification(apiDirectory, apiUri, defaultSpecification, getRestResource, downloadResource, cancellationToken)
         });
     }
 
-    private static async ValueTask ExportGraphQlSchema(ApiDirectory apiDirectory, ApiUri apiUri, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportGraphQlSpecification(ApiDirectory apiDirectory, ApiUri apiUri, GetRestResource getRestResource, CancellationToken cancellationToken)
     {
         var schemaName = ApiSchemaName.GraphQl;
         var schemasUri = new ApiSchemasUri(apiUri);
@@ -97,30 +98,63 @@ internal static class Api
 
         if (schemaText is not null)
         {
-            var schemaFile = new GraphQlSchemaFile(apiDirectory);
-            await schemaFile.OverwriteWithText(schemaText, cancellationToken);
+            var specificationFile = new ApiSpecificationFile.GraphQl(apiDirectory);
+            await specificationFile.OverwriteWithText(schemaText, cancellationToken);
         }
     }
 
-    private static async ValueTask ExportOpenApiSpecification(ApiDirectory apiDirectory, ApiUri apiUri, OpenApiSpecification apiSpecification, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportWsdlSpecification(ApiDirectory apiDirectory, ApiUri apiUri, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
     {
-        var specificationFile = new ApiSpecificationFile(apiSpecification.Version, apiSpecification.Format, apiDirectory);
+        var specificationFile = new ApiSpecificationFile.Wsdl(apiDirectory);
+        using var fileStream = await DownloadSpecificationFile(apiUri, format: "wsdl-link", getRestResource, downloadResource, cancellationToken);
+        await specificationFile.OverwriteWithStream(fileStream, cancellationToken);
+    }
 
-        var exportUri = new ApiSpecificationExportUri(apiUri).Uri;
+    private static async ValueTask<Stream> DownloadSpecificationFile(ApiUri apiUri, string format, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
+    {
+        var exportUri = apiUri.Uri.SetQueryParam("format", format)
+                                  .SetQueryParam("export", "true")
+                                  .SetQueryParam("api-version", "2021-08-01")
+                                  .ToUri();
+
         var exportResponse = await getRestResource(exportUri, cancellationToken);
         var downloadUri = new Uri(exportResponse.GetJsonObjectProperty("value")
                                                 .GetStringProperty("link"));
-        using var responseStream = await downloadResource(downloadUri, cancellationToken);
-        using var specificationFileStream = await ConvertFileToOpenApiSpecification(responseStream, apiSpecification);
+
+        return await downloadResource(downloadUri, cancellationToken);
+    }
+
+    private static async ValueTask ExportApiSpecification(ApiDirectory apiDirectory, ApiUri apiUri, DefaultApiSpecification defaultSpecification, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
+    {
+        ApiSpecificationFile specificationFile = defaultSpecification switch
+        {
+            DefaultApiSpecification.Wadl => new ApiSpecificationFile.Wadl(apiDirectory),
+            DefaultApiSpecification.OpenApi openApi => new ApiSpecificationFile.OpenApi(openApi.Version, openApi.Format, apiDirectory),
+            _ => throw new NotSupportedException()
+        };
+
+        var format = defaultSpecification switch
+        {
+            DefaultApiSpecification.Wadl => "wadl-link",
+            DefaultApiSpecification.OpenApi => "openapi-link",
+            _ => throw new NotSupportedException()
+        };
+
+        using var fileStream = await DownloadSpecificationFile(apiUri, format, getRestResource, downloadResource, cancellationToken);
+        using var specificationFileStream = defaultSpecification switch
+        {
+            DefaultApiSpecification.OpenApi openApi => await ConvertFileToOpenApiSpecification(fileStream, openApi),
+            _ => fileStream
+        };
 
         await specificationFile.OverwriteWithStream(specificationFileStream, cancellationToken);
     }
 
-    private static async ValueTask<MemoryStream> ConvertFileToOpenApiSpecification(Stream fileStream, OpenApiSpecification apiSpecification)
+    private static async ValueTask<MemoryStream> ConvertFileToOpenApiSpecification(Stream fileStream, DefaultApiSpecification.OpenApi openApiSpecification)
     {
         var readResult = await new OpenApiStreamReader().ReadAsync(fileStream);
         var memoryStream = new MemoryStream();
-        readResult.OpenApiDocument.Serialize(memoryStream, apiSpecification.Version, apiSpecification.Format);
+        readResult.OpenApiDocument.Serialize(memoryStream, openApiSpecification.Version, openApiSpecification.Format);
         memoryStream.Position = 0;
 
         return memoryStream;
