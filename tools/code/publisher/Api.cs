@@ -216,7 +216,7 @@ internal static class Api
                 var existingSpecificationFile = TryGetExistingSpecificationFile(deletedApiInformationFile.ApiDirectory, serviceDirectory);
 
                 // We can't create an API purely from its graphQL specification. If it's the only specification file left, delete the API
-                if (existingSpecificationFile is null || existingSpecificationFile is ApiSpecificationFile.GraphQl)
+                if (existingSpecificationFile is null or ApiSpecificationFile.GraphQl)
                 {
                     await Delete(apiName, serviceUri, deleteRestResource, logger, cancellationToken);
                 }
@@ -291,7 +291,7 @@ internal static class Api
             apiJson = apiJson.Merge(fileJson);
         }
 
-        if (specificationFile is not null && specificationFile is ApiSpecificationFile.Wadl or ApiSpecificationFile.Wsdl or ApiSpecificationFile.OpenApi)
+        if (specificationFile is not null and (ApiSpecificationFile.Wadl or ApiSpecificationFile.Wsdl or ApiSpecificationFile.OpenApi))
         {
             var specificationJson = await GetApiSpecificationJson(specificationFile, cancellationToken);
             apiJson = apiJson.Merge(specificationJson);
