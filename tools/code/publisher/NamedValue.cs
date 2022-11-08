@@ -118,9 +118,19 @@ internal static class NamedValue
 
     private static async ValueTask PutNamedValue(NamedValueName namedValueName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Putting named value {namedValueName}...", namedValueName);
+        var namedValue = NamedValueModel.Deserialize(namedValueName, json);
 
-        var uri = GetNamedValueUri(namedValueName, serviceUri);
-        await putRestResource(uri.Uri, json, cancellationToken);
+        switch (namedValue.Properties.Secret, namedValue.Properties.Value, namedValue.Properties.KeyVault?.SecretIdentifier)
+        {
+            case (true, null, null):
+                logger.LogWarning("Named value {namedValueName} is secret, but no value or keyvault identifier was specified. Skipping it...", namedValueName);
+                return;
+            default:
+                logger.LogInformation("Putting named value {namedValueName}...", namedValueName);
+
+                var uri = GetNamedValueUri(namedValueName, serviceUri);
+                await putRestResource(uri.Uri, json, cancellationToken);
+                return;
+        }
     }
 }
