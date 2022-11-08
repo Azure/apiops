@@ -82,16 +82,3 @@ public abstract record ApiSpecificationFile : IArtifactFile
         }
     }
 }
-
-//public sealed record ApiSpecificationExportUri : IArtifactUri
-//{
-//    public Uri Uri { get; }
-
-//    public ApiSpecificationExportUri(ApiUri apiUri)
-//    {
-//        Uri = apiUri.Uri.SetQueryParam("format", "openapi-link")
-//                        .SetQueryParam("export", "true")
-//                        .SetQueryParam("api-version", "2021-08-01")
-//                        .ToUri();
-//    }
-//}
