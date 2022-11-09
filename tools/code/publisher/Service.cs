@@ -23,6 +23,7 @@ internal static class Service
         await ProductPolicy.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
         await Product.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
         await ServicePolicy.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
+        await PolicyFragment.ProcessDeletedArtifacts(files, configurationJson, serviceDirectory, serviceUri, putRestResource, deleteRestResource, logger, cancellationToken);
         await Diagnostic.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
         await Logger.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
         await Backend.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
@@ -41,6 +42,7 @@ internal static class Service
         await Backend.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await Logger.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await Diagnostic.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
+        await PolicyFragment.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await ServicePolicy.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await Product.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await ProductPolicy.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);

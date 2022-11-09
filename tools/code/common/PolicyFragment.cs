@@ -88,7 +88,7 @@ public sealed record PolicyFragmentInformationFile : IArtifactFile
 
 public sealed record PolicyFragmentPolicyFile : IArtifactFile
 {
-    private static readonly string name = "policy.xml";
+    public static string Name { get; } = "policy.xml";
 
     public ArtifactPath Path { get; }
 
@@ -96,7 +96,7 @@ public sealed record PolicyFragmentPolicyFile : IArtifactFile
 
     public PolicyFragmentPolicyFile(PolicyFragmentDirectory policyFragmentDirectory)
     {
-        Path = policyFragmentDirectory.Path.Append(name);
+        Path = policyFragmentDirectory.Path.Append(Name);
         PolicyFragmentDirectory = policyFragmentDirectory;
     }
 }
