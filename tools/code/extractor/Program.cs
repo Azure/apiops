@@ -187,12 +187,14 @@ public static class Program
 
     private static ServiceUri GetServiceUri(IConfiguration configuration, ArmEnvironment armEnvironment)
     {
+        var serviceName = configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME") ?? configuration.GetValue("apimServiceName");
+
         var uri = armEnvironment.Endpoint.AppendPathSegment("subscriptions")
                                          .AppendPathSegment(configuration.GetValue("AZURE_SUBSCRIPTION_ID"))
                                          .AppendPathSegment("resourceGroups")
                                          .AppendPathSegment(configuration.GetValue("AZURE_RESOURCE_GROUP_NAME"))
                                          .AppendPathSegment("providers/Microsoft.ApiManagement/service")
-                                         .AppendPathSegment(configuration.GetValue("API_MANAGEMENT_SERVICE_NAME"))
+                                         .AppendPathSegment(serviceName)
                                          .SetQueryParam("api-version", "2021-12-01-preview")
                                          .ToUri();
 

@@ -214,9 +214,7 @@ internal static class Api
             // Only information file was deleted, put API with existing specification file
             case (not null, null):
                 var existingSpecificationFile = TryGetExistingSpecificationFile(deletedApiInformationFile.ApiDirectory, serviceDirectory);
-
-                // We can't create an API purely from its graphQL specification. If it's the only specification file left, delete the API
-                if (existingSpecificationFile is null or ApiSpecificationFile.GraphQl)
+                if (existingSpecificationFile is null)
                 {
                     await Delete(apiName, serviceUri, deleteRestResource, logger, cancellationToken);
                 }
