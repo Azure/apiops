@@ -1,0 +1,10 @@
+{
+  "properties": {
+    "approvalRequired": true,
+    "description": "Subscribers have completely unlimited access to the API. Administrator approval is required.",
+    "displayName": "Unlimited",
+    "state": "published",
+    "subscriptionRequired": true,
+    "subscriptionsLimit": 1
+  }
+}
