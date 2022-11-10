@@ -1,41 +1,55 @@
-apimServiceName: [prod apim instance name goes here]
+apimServiceName: [prod or any other target environment apim instance name goes here]
 namedValues:
   - name: environment
-    displayName: environment
-    value: "https://www.search.com"
+    properties:
+      displayName: environment
+      value: "https://www.search2.com"
   - name: mysecretvalue
-    displayName: mysecretvalue
-    keyVault:
-      identityClientId: [idnetity client id goes here]
-      secretIdentifier: [your url here]
+    properties:
+      displayName: mysecretvalue
+      keyVault:
+        identityClientId: [identity client id goes here]
+        secretIdentifier: [your url here]
   - name: testSecret
-    displayName: testSecret
-    value: "{#testSecretValue#}"
+    properties:
+      displayName: testSecret
+      value: "{#testSecretValue#}"
+  - name: helloworldfromfuncapp-key
+    properties:
+      displayName: helloworldfromfuncapp-key
+      value: "{#helloworldfromfuncappkey#}"
+  - name: 634e022983908257b35630b0
+    properties:
+      displayName: helloworldfromlogicapp_manual-invoke_634e022983908257b35630b0
+      value: "{#helloworldfromlogicapp#}"  
 loggers:
     - name: apim-lab-insights
-      loggerType: applicationInsights
-      description: prod application insights
-      resourceId: "/subscriptions/[your guid here]/resourceGroups/
+      properties:
+        loggerType: applicationInsights
+        description: prod application insights
+        resourceId: "/subscriptions/[your guid here]/resourceGroups/
                    rg-apim-lab-prod/providers/microsoft.insights/components/apim-lab-prod-insights"
-      credentials:
-        instrumentationKey: "{{Logger-Credentials--62825ade46346113589affc1}}"
+        credentials:
+          instrumentationKey: "{{Logger-Credentials--62825ade46346113589affc1}}"
         isBuffered: true
 diagnostics:
    - name: applicationinsights
-     verbosity: Error
-     loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights" 
+     properties:
+       verbosity: Error
+       loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
+backends:
+  - name: helloworldfromfuncapp
+    properties:
+      url: "https://helloworldfromprodfuncapp.azurewebsites.net/api"
+      resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Web/sites/helloworldfromprodfuncapp"
+  - name: LogicApp_helloworldfromlogicapp_rg-apim-lab_77fadbdc74f14ce88962b34400a1f170
+    properties:
+      url: "https://prod-75.eastus.logic.azure.com/workflows/[guid goes here]/triggers"
+      resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Logic/workflows/helloworldfromprodlogicapp"
 apis:
   - name: demo-conference-api
     diagnostics:
       - name: applicationinsights
-        verbosity: Error
-        loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
-  - name: myapi
-    serviceUrl: https://mysite.com
-backends:
-  - name: helloworldfromfuncapp
-    url: "https://helloworldfromprodfuncapp.azurewebsites.net/api"
-    resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Web/sites/helloworldfromprodfuncapp"
-  - name: LogicApp_helloworldfromlogicapp_rg-apim-lab_77fadbdc74f14ce88962b34400a1f170
-    url: "https://prod-75.eastus.logic.azure.com/workflows/[guid goes here]/triggers"
-    resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Logic/workflows/helloworldfromprodlogicapp"
+        properties:
+          verbosity: Error
+          loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
