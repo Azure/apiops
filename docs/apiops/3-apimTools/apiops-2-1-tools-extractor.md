@@ -54,17 +54,20 @@ The extractor will export the artifacts listed below.
 | - | - |
 | APIM instance global policy | ./policy.xml |
 | Product information | ./products/``product_display_name``/productInformation.json |
-| Product policy | ./products/``product_display_name``/policy.xml |
+| Product Groups | ./products/``product_display_name``/policy.xml |
+| Product Groups | ./products/``product_display_name``/groups.json. Please note that we don't create the groups. We only associate with existing ones that would be created using IaC tool like ARM/Bicep/Terraform which is outside the scope of this tool |
 | Gateway information | ./gateways/``gateway_name``/gatewayInformation.json |
 | Authorization server information | ./authorizationServers/``authorization_server_name``/authorizationServerInformation.json |
 | Diagnostic information | ./diagnostics/``diagnostic_name``/diagnosticInformation.json |
 | Logger information | ./loggers/``logger_name``/loggerInformation.json |
-| Non Versioned/revisioned API information | ./apis/``api_display_name``/Original/1/apiInformation.json |
-| Non Versioned/revisioned specification information | ./apis/``api_display_name``/Original/1/specification.yaml |
-| Versioned API information | ./apis/``api_display_name``/``Original serves as v1 in addition to folders for each version``/1/apiInformation.json |
-| Versioned specification information | ./apis/``api_display_name``/``Original serves as v1 in addition to folders for each version``/1/specification.yaml |
-| revisioned API information | ./apis/``api_display_name``/``Original\[revision number]``/apiinformation.json |
-| revisioned specification information | ./apis/``api_display_name``/``Original\[revision number]``/specification.yaml |
-| OpenAPI specification | ./apis/``api_display_name``/specification.{yaml\|json} |
-| API policy | ./apis/``api_display_name``/policy.xml |
-| Operation policy | ./apis/``api_display_name``/operations/``operation_display_name``/policy.xml |
+| Non Versioned/revisioned API information | ./apis/``api_name``/Original/1/apiInformation.json |
+| Non Versioned/revisioned specification information | ./apis/``api_name``/Original/1/specification.yaml |
+| Versioned API information | ./apis/``api_name``/``Original serves as v1 in addition to folders for each version``/1/apiInformation.json |
+| Versioned specification information | ./apis/``api_name``/``Original serves as v1 in addition to folders for each version``/1/specification.yaml |
+| revisioned API information | ./apis/``api_name``/``Original\[revision number]``/apiinformation.json |
+| revisioned specification information | ./apis/``api_name``/``Original\[revision number]``/specification.yaml |
+| OpenAPI specification | ./apis/``api_name``/specification.{yaml\|json} |
+| API policy | ./apis/``api_name``/policy.xml |
+| Operation policy | ./apis/``api_name``/operations/``operation_name``/policy.xml |
+| tags | ./tags/``tag_name``
+| backends | ./backends/``backend_name``

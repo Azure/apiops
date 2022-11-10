@@ -40,20 +40,14 @@ Here is a [**sample configuration file**](https://github.com/Azure/apiops/blob/m
 ![configuration Overrides](../../assets/images/Yaml_configuration.png)
 
  
-Note that the configuration file is optional. In addition the different properties listed in the table below are optional as well. For example if you only need to override a nameValue then you would only include the namedValues property.
+Note that the configuration file is optional. For a full list of supported configuration overrides that the publisher tool supports please take a look at the restful api documentation of APIM which can be found here [**APIM Restful API Docs**](https://learn.microsoft.com/en-us/rest/api/apimanagement/current-ga/apis/create-or-update?tabs=HTTP). For more information spend some time looking at the response body of each of the sections in the APIM docs. Here is an example of the [**API Diagnostics Response Body which shows you which properties you can override**](https://learn.microsoft.com/en-us/rest/api/apimanagement/current-ga/api-diagnostic/create-or-update?tabs=HTTP#apimanagementcreateapidiagnostic).
 
-Below is the full list of supported configuration overrides that the publisher tool supports. 
 
-| Property | Purpose |
-| - | - |
-| apimServiceName | Name of the destination APIM instance that you would like to promote to. Note that if you provide both the apimServiceName and the API_MANAGEMENT_SERVICE_NAME environment variable then the configuration file will take precedence    |
-| namedValues | List of named value pairs to override. All three types (Plain - Secret - Key Vault) are supported
-| loggers | Information for the application insights instance to utilize in the destination environment APIM instance |
-| diagnostics | Configuration for the verbosity setting of the application insights instance to utilize in the destination environment APIM instance  |
-| apis | List of apis for you which you would like to override settings like the application insights etc.. You can also override the service url across environments. If you are utilizing versioning/revisioning in APIM then you need to set the target api version & revision to apply application insights to e.g. 'my-api', 'my-api-v2', 'my-api-v2;rev=2' |
-| backends | List of backends which you would like to override. You can override information like the url when promoting across environments  |
+```
+Note: When it comes to child configuration override (e.g. apis diagnostics) you don't need to include the properties tag in your yaml. 
+```
 
-As mentioned above the publisher supports overriding secret named values. Whereas the publisher supports both types of APIM secrets (secret and Azure Key Vault), we recommend using Azure Key Vault whenever possible. 
+The publisher supports overriding secret named values. Whereas the publisher supports both types of APIM secrets (secret and Azure Key Vault), we recommend using Azure Key Vault whenever possible. 
 
 If you are trying to override a secret stored in Azure Key Vault then you can simply override the named value in your configuration file as demonstrated in the following [**sample configuration file**](https://github.com/Azure/apiops/blob/main/configuration.prod.yaml).
 
@@ -70,9 +64,16 @@ Note: You don't have to create the named values in the target APIM environments 
 
 If you are trying to override a secret stored as secret namedvalue type in APIM you can simply override the named value in your configuration file as demonstrated in the following [**sample configuration file**](https://github.com/Azure/apiops/blob/main/configuration.prod.yaml).
 
-The important thing to note here is that the value included in the configuration override needs to be defined as a secret in your Azure Devops (as a variable group secret) and Github (as an environment secret) and then passed as an environment variable in the yaml files. The sample configuration yaml files provided in this repository set a variable name called testSecretValue which is the value that gets set on Azure APIM. The important thing to note there is that you need to surround your secret with {#[your secret]#}. Set the list of environments variables as you fit for your scenario. Please note that you will need to install the Replace Tokens Extension in the Azure DevOps environment. Go to the marketplace and search for Replace Tokens. You don't need to install any extension for Github as its not required there.
+The important thing to note here is that the value included in the configuration override needs to be defined as a secret in your Azure Devops (as a variable group secret) and Github (as an environment secret) and then passed as an environment variable in the yaml files. The sample configuration yaml files provided in this repository set a variable name called testSecretValue which is the value that gets set on Azure APIM. Another thing to note here is that there is that you need to surround your secret with {#[your secret]#}. Set the list of environments variables as you fit for your scenario. 
 
+```
+Note: You will need to install the Replace Tokens Extension in the Azure DevOps environment. Go to the marketplace and search for Replace Tokens. You don't need to install any extension for Github as its not required there.
+```
 
 ```
 Note: You don't have to create the named values in the target APIM environments ahead of time as they will be created by the publisher.
+```
+
+```
+Note: Important note regarding deleting apis. If you delete the specification file nothing happens. But if you delete the information file we delete the api. Now if you delete one but not the other it will do a put of whichever file is left. So always make sure you delete both files when deleting an api. As a matter of fact its recommended you delete the folder pertaining to the api under question.
 ```

@@ -58,6 +58,8 @@ Below there is a table with all [artifacts extracted and published by APIOps](ht
 | | | |
 |Backend|Provides operations for managing Backends configured for the APIs|Yes|
 |Policy Fragments| |Yes|
+|API and Product Tags| |Yes|
+|Group/Products Association| |Yes|
 |GraphQL| |Yes|
 
 
