@@ -1,65 +1,58 @@
-﻿using System;
-using System.IO;
-using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using Flurl;
+using System;
 
 namespace common;
 
-public sealed record ServicePolicyFile : FileRecord
+public sealed record ServicePoliciesUri : IArtifactUri
 {
-    private static readonly string name = "policy.xml";
+    public Uri Uri { get; }
+
+    public ServicePoliciesUri(ServiceUri serviceUri)
+    {
+        Uri = serviceUri.AppendPath("policies");
+    }
+}
+
+public sealed record ServicePolicyName
+{
+    private readonly string value;
+
+    public ServicePolicyName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException($"Service policy name cannot be null or whitespace.", nameof(value));
+        }
+
+        this.value = value;
+    }
+
+    public override string ToString() => value;
+}
+
+public sealed record ServicePolicyUri : IArtifactUri
+{
+    public Uri Uri { get; }
+
+    public ServicePolicyUri(ServicePolicyName policyName, ServicePoliciesUri servicePoliciesUri)
+    {
+        Uri = servicePoliciesUri.AppendPath(policyName.ToString())
+                                .SetQueryParam("format", "rawxml")
+                                .ToUri();
+    }
+}
+
+public sealed record ServicePolicyFile : IArtifactFile
+{
+    public ArtifactPath Path { get; }
 
     public ServiceDirectory ServiceDirectory { get; }
 
-    private ServicePolicyFile(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
+    public string PolicyName => this.GetNameWithoutExtensions();
+
+    public ServicePolicyFile(ServicePolicyName policyName, ServiceDirectory serviceDirectory)
     {
+        Path = serviceDirectory.Path.Append($"{policyName}.xml");
         ServiceDirectory = serviceDirectory;
-    }
-
-    public static ServicePolicyFile From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
-
-    public static ServicePolicyFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo? file) =>
-        name.Equals(file?.Name) && serviceDirectory.PathEquals(file.Directory)
-        ? new(serviceDirectory)
-        : null;
-}
-
-public static class ServicePolicy
-{
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("policies")
-               .AppendPath("policy")
-               .SetQueryParameter("format", "rawxml");
-
-    public static async ValueTask<string?> TryGet(Func<Uri, CancellationToken, ValueTask<JsonObject?>> tryGetResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName);
-        var json = await tryGetResource(uri, cancellationToken);
-
-        return json?.GetJsonObjectProperty("properties")
-                    .GetStringProperty("value");
-    }
-
-    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, string policyText, CancellationToken cancellationToken)
-    {
-        var json = new JsonObject
-        {
-            ["properties"] = new JsonObject
-            {
-                ["format"] = "rawxml",
-                ["value"] = policyText
-            }
-        };
-
-        var uri = GetUri(serviceProviderUri, serviceName);
-        await putResource(uri, json, cancellationToken);
-    }
-
-    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName);
-        await deleteResource(uri, cancellationToken);
     }
 }

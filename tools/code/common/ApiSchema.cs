@@ -1,88 +1,98 @@
 ﻿using System;
-using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record GraphQLSchemaFile : FileRecord
+public sealed record ApiSchemasUri : IArtifactUri
 {
-    public ApiDirectory ApiDirectory { get; }
-    public const string FileName = "schema.graphql";
+    public Uri Uri { get; }
 
-    private GraphQLSchemaFile(ApiDirectory apiDirectory)
-        : base(apiDirectory.Path.Append(FileName))
+    public ApiSchemasUri(ApiUri apiUri)
     {
-        ApiDirectory = apiDirectory;
-    }
-
-    public static GraphQLSchemaFile From(ApiDirectory apiDirectory) => new(apiDirectory);
-    
-    public static GraphQLSchemaFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
-
-        return (apiDirectory, file.Name) switch
-        {
-            (not null, FileName) => new GraphQLSchemaFile(apiDirectory),
-            _ => null
-        };
+        Uri = apiUri.AppendPath("schemas");
     }
 }
 
-public sealed record ApiSchemaName : NonEmptyString
+public sealed record ApiSchemaName
 {
-    private ApiSchemaName(string value) : base(value)
+    private readonly string value;
+
+    public ApiSchemaName(string value)
     {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException($"API schema name cannot be null or whitespace.", nameof(value));
+        }
+
+        this.value = value;
     }
 
-    public static ApiSchemaName From(string value) => new(value);
+    public override string ToString() => value;
 
-    public static ApiSchemaName GraphQLSchemaName() => new("graphql");
+    public static ApiSchemaName GraphQl { get; } = new("graphql");
 }
 
-
-public static class ApiSchema
+public sealed record ApiSchemaUri : IArtifactUri
 {
+    public Uri Uri { get; }
 
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiSchemaName schemaName)
+    public ApiSchemaUri(ApiSchemaName apiSchemaName, ApiSchemasUri apiSchemasUri)
     {
-        return Api.GetUri(serviceProviderUri, serviceName, apiName)
-           .AppendPath("schemas")
-           .AppendPath(schemaName);
+        Uri = apiSchemasUri.AppendPath(apiSchemaName.ToString());
     }
+}
 
-    public static async ValueTask<string?> TryGetGraphQLSchemaContent(Func<Uri, CancellationToken, ValueTask<JsonObject?>> tryGetResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, CancellationToken cancellationToken)
+public sealed record ApiSchemaModel
+{
+    public required string Name { get; init; }
+
+    public required SchemaContractProperties Properties { get; init; }
+
+    public sealed record SchemaContractProperties
     {
-        var uri = GetUri(serviceProviderUri,
-                         serviceName,
-                         apiName,
-                         ApiSchemaName.GraphQLSchemaName());
+        public string? ContentType { get; init; }
+        public SchemaDocumentProperties? Document { get; init; }
 
-        var json = await tryGetResource(uri, cancellationToken);
+        public JsonObject Serialize() =>
+            new JsonObject()
+                .AddPropertyIfNotNull("contentType", ContentType)
+                .AddPropertyIfNotNull("document", Document?.Serialize());
 
-        return json?.GetJsonObjectProperty("properties")
-                    .GetJsonObjectProperty("document")
-                    .GetStringProperty("value");
-    }
-
-    public static async ValueTask PutGraphQL(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, string schemaText, CancellationToken cancellationToken)
-    {
-        var json = new JsonObject()
-        {
-            ["properties"] = new JsonObject
+        public static SchemaContractProperties Deserialize(JsonObject jsonObject) =>
+            new()
             {
-                ["contentType"] = "application/vnd.ms-azure-apim.graphql.schema",
-                ["document"] = new JsonObject() 
-                {
-                    ["value"] = schemaText
-                }
-            }
-        };
+                ContentType = jsonObject.TryGetStringProperty("contentType"),
+                Document = jsonObject.TryGetJsonObjectProperty("document")
+                                     .Map(SchemaDocumentProperties.Deserialize)
+            };
 
-        var uri = GetUri(serviceProviderUri, serviceName, apiName, ApiSchemaName.GraphQLSchemaName());
-        await putResource(uri, json, cancellationToken);
+        public sealed record SchemaDocumentProperties
+        {
+            public string? Value { get; init; }
+
+            public JsonObject Serialize() =>
+                new JsonObject()
+                    .AddPropertyIfNotNull("value", Value);
+
+            public static SchemaDocumentProperties Deserialize(JsonObject jsonObject) =>
+                new()
+                {
+                    Value = jsonObject.TryGetStringProperty("value")
+                };
+        }
     }
+
+    public JsonObject Serialize() =>
+        new JsonObject()
+            .AddProperty("properties", Properties.Serialize());
+
+    public static ApiSchemaModel Deserialize(ApiSchemaName name, JsonObject jsonObject) =>
+        new()
+        {
+            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
+            Properties = jsonObject.GetJsonObjectProperty("properties")
+                                   .Map(SchemaContractProperties.Deserialize)!
+        };
 }

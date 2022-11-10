@@ -1,180 +1,136 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text.Json;
+﻿using Flurl;
+using System;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record PolicyFragmentName : NonEmptyString
+public sealed record PolicyFragmentsUri : IArtifactUri
 {
-    private PolicyFragmentName(string value) : base(value)
-    {
-    }
+    public Uri Uri { get; }
 
-    public static PolicyFragmentName From(string value) => new(value);
+    public PolicyFragmentsUri(ServiceUri serviceUri)
+    {
+        Uri = serviceUri.AppendPath("policyFragments");
+    }
 }
 
-public sealed record PolicyFragmentsDirectory : DirectoryRecord
+public sealed record PolicyFragmentsDirectory : IArtifactDirectory
 {
-    private static readonly string name = "policy fragments";
+    public static string Name { get; } = "policy fragments";
+
+    public ArtifactPath Path { get; }
 
     public ServiceDirectory ServiceDirectory { get; }
 
-    private PolicyFragmentsDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
+    public PolicyFragmentsDirectory(ServiceDirectory serviceDirectory)
     {
+        Path = serviceDirectory.Path.Append(Name);
         ServiceDirectory = serviceDirectory;
     }
-
-    public static PolicyFragmentsDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
-
-    public static PolicyFragmentsDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
-        ? new(serviceDirectory)
-        : null;
 }
 
-public sealed record PolicyFragmentDirectory : DirectoryRecord
+public sealed record PolicyFragmentName
 {
+    private readonly string value;
+
+    public PolicyFragmentName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException($"Policy fragment name cannot be null or whitespace.", nameof(value));
+        }
+
+        this.value = value;
+    }
+
+    public override string ToString() => value;
+}
+
+public sealed record PolicyFragmentUri : IArtifactUri
+{
+    public Uri Uri { get; }
+
+    public PolicyFragmentUri(PolicyFragmentName policyFragmentName, PolicyFragmentsUri policyFragmentsUri)
+    {
+        Uri = policyFragmentsUri.AppendPath(policyFragmentName.ToString())
+                                .SetQueryParam("format", "rawxml")
+                                .ToUri();
+    }
+}
+
+public sealed record PolicyFragmentDirectory : IArtifactDirectory
+{
+    public ArtifactPath Path { get; }
+
     public PolicyFragmentsDirectory PolicyFragmentsDirectory { get; }
-    public PolicyFragmentName PolicyFragmentName { get; }
 
-    private PolicyFragmentDirectory(PolicyFragmentsDirectory policyFragmentsDirectory, PolicyFragmentName policyFragmentName) : base(policyFragmentsDirectory.Path.Append(policyFragmentName))
+    public PolicyFragmentDirectory(PolicyFragmentName policyFragmentName, PolicyFragmentsDirectory policyFragmentsDirectory)
     {
+        Path = policyFragmentsDirectory.Path.Append(policyFragmentName.ToString());
         PolicyFragmentsDirectory = policyFragmentsDirectory;
-        PolicyFragmentName = policyFragmentName;
-    }
-
-    public static PolicyFragmentDirectory From(PolicyFragmentsDirectory policyFragmentsDirectory, PolicyFragmentName policyFragmentName) => new(policyFragmentsDirectory, policyFragmentName);
-
-    public static PolicyFragmentDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
-    {
-        var parentDirectory = directory?.Parent;
-        if (parentDirectory is not null)
-        {
-            var policyFragmentsDirectory = PolicyFragmentsDirectory.TryFrom(serviceDirectory, parentDirectory);
-
-            return policyFragmentsDirectory is null ? null : From(policyFragmentsDirectory, PolicyFragmentName.From(directory!.Name));
-        }
-        else
-        {
-            return null;
-        }
     }
 }
 
-public sealed record PolicyFragmentInformationFile : FileRecord
+public sealed record PolicyFragmentInformationFile : IArtifactFile
 {
-    private static readonly string name = "policyFragmentInformation.json";
+    public static string Name { get; } = "policyFragmentInformation.json";
+
+    public ArtifactPath Path { get; }
 
     public PolicyFragmentDirectory PolicyFragmentDirectory { get; }
 
-    private PolicyFragmentInformationFile(PolicyFragmentDirectory policyFragmentDirectory) : base(policyFragmentDirectory.Path.Append(name))
+    public PolicyFragmentInformationFile(PolicyFragmentDirectory policyFragmentDirectory)
     {
+        Path = policyFragmentDirectory.Path.Append(Name);
         PolicyFragmentDirectory = policyFragmentDirectory;
-    }
-
-    public static PolicyFragmentInformationFile From(PolicyFragmentDirectory policyFragmentDirectory) => new(policyFragmentDirectory);
-
-    public static PolicyFragmentInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        if (name.Equals(file.Name))
-        {
-            var policyFragmentDirectory = PolicyFragmentDirectory.TryFrom(serviceDirectory, file.Directory);
-
-            return policyFragmentDirectory is null ? null : new(policyFragmentDirectory);
-        }
-        else
-        {
-            return null;
-        }
     }
 }
 
-public sealed record PolicyFragmentPolicyFile : FileRecord
+public sealed record PolicyFragmentPolicyFile : IArtifactFile
 {
-    private static readonly string name = "policy.xml";
+    public static string Name { get; } = "policy.xml";
+
+    public ArtifactPath Path { get; }
 
     public PolicyFragmentDirectory PolicyFragmentDirectory { get; }
 
-    private PolicyFragmentPolicyFile(PolicyFragmentDirectory policyFragmentDirectory) : base(policyFragmentDirectory.Path.Append(name))
+    public PolicyFragmentPolicyFile(PolicyFragmentDirectory policyFragmentDirectory)
     {
+        Path = policyFragmentDirectory.Path.Append(Name);
         PolicyFragmentDirectory = policyFragmentDirectory;
-    }
-
-    public static PolicyFragmentPolicyFile From(PolicyFragmentDirectory policyFragmentDirectory) => new(policyFragmentDirectory);
-
-    public static PolicyFragmentPolicyFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        if (name.Equals(file.Name))
-        {
-            var policyFragmentDirectory = PolicyFragmentDirectory.TryFrom(serviceDirectory, file.Directory);
-
-            return policyFragmentDirectory is null ? null : new(policyFragmentDirectory);
-        }
-        else
-        {
-            return null;
-        }
     }
 }
 
-public static class PolicyFragment
+public sealed record PolicyFragmentModel
 {
-    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    public required string Name { get; init; }
 
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, PolicyFragmentName policyFragmentName) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("policyFragments")
-               .AppendPath(policyFragmentName)
-               .SetQueryParameter("format", "rawxml");
+    public required PolicyFragmentContractProperties Properties { get; init; }
 
-    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("policyFragments");
-
-    public static PolicyFragmentName GetNameFromFile(PolicyFragmentInformationFile file)
+    public sealed record PolicyFragmentContractProperties
     {
-        var jsonObject = file.ReadAsJsonObject();
-        var policyFragment = Deserialize(jsonObject);
+        public string? Description { get; init; }
 
-        return PolicyFragmentName.From(policyFragment.Name);
+        public JsonObject Serialize() =>
+            new JsonObject()
+                .AddPropertyIfNotNull("description", Description);
+
+        public static PolicyFragmentContractProperties Deserialize(JsonObject jsonObject) =>
+            new()
+            {
+                Description = jsonObject.TryGetStringProperty("description")
+            };
     }
 
-    public static Models.PolicyFragment Deserialize(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Models.PolicyFragment>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
+    public JsonObject Serialize() =>
+        new JsonObject()
+            .AddProperty("properties", Properties.Serialize());
 
-    public static JsonObject Serialize(Models.PolicyFragment policyFragment) =>
-        JsonSerializer.SerializeToNode(policyFragment, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
-
-    public static async ValueTask<Models.PolicyFragment> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, PolicyFragmentName policyFragmentName, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName, policyFragmentName);
-        var json = await getResource(uri, cancellationToken);
-        return Deserialize(json);
-    }
-
-    public static IAsyncEnumerable<Models.PolicyFragment> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var uri = ListUri(serviceProviderUri, serviceName);
-        return getResources(uri, cancellationToken).Select(Deserialize);
-    }
-
-    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.PolicyFragment policyFragment, CancellationToken cancellationToken)
-    {
-        var name = PolicyFragmentName.From(policyFragment.Name);
-        var uri = GetUri(serviceProviderUri, serviceName, name);
-        var json = Serialize(policyFragment);
-        await putResource(uri, json, cancellationToken);
-    }
-
-    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, PolicyFragmentName policyFragmentName, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName, policyFragmentName);
-        await deleteResource(uri, cancellationToken);
-    }
+    public static PolicyFragmentModel Deserialize(PolicyFragmentName name, JsonObject jsonObject) =>
+        new()
+        {
+            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
+            Properties = jsonObject.GetJsonObjectProperty("properties")
+                                   .Map(PolicyFragmentContractProperties.Deserialize)!
+        };
 }

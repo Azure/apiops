@@ -1,153 +1,186 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
-
 
 namespace common;
-public sealed record ApiVersionSetId : NonEmptyString
+
+public sealed record ApiVersionSetsUri : IArtifactUri
 {
-    private ApiVersionSetId(string value) : base(value)
+    public Uri Uri { get; }
+
+    public ApiVersionSetsUri(ServiceUri serviceUri)
     {
-    }
-
-    public static ApiVersionSetId From(string value) => new(value);
-}
-
-public sealed record ApiVersionSetDirectory : DirectoryRecord
-{
-    public ApisDirectory ApisDirectory { get; }
-    public ApiDisplayName ApiDisplayName { get; }
-
-    private ApiVersionSetDirectory(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName) : base(apisDirectory.Path.Append(apiDisplayName))
-    {
-        ApisDirectory = apisDirectory;
-        ApiDisplayName = apiDisplayName;
-    }
-
-    public static ApiVersionSetDirectory From(ApisDirectory apisDirectory, ApiDisplayName apiDisplayName) => new(apisDirectory, apiDisplayName);
-
-    public static ApiVersionSetDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
-    {
-        // apis/<api-name>
-        var parentDirectory = directory?.Parent;
-        if (parentDirectory is not null)
-        {
-            var apisDirectory = ApisDirectory.TryFrom(serviceDirectory, parentDirectory);
-
-            return apisDirectory is null ? null : From(apisDirectory, ApiDisplayName.From(directory!.Name));
-        }
-        else
-        {
-            return null;
-        }
+        Uri = serviceUri.AppendPath("apiVersionSets");
     }
 }
 
-
-public sealed record ApiVersionSetInformationFile : FileRecord
+public sealed record ApiVersionSetsDirectory : IArtifactDirectory
 {
-    private static readonly string name = "apiVersionSet.json";
+    public static string Name { get; } = "version sets";
 
-    public ApiVersionSetDirectory VersionSetDirectory { get; }
+    public ArtifactPath Path { get; }
 
-    private ApiVersionSetInformationFile(ApiVersionSetDirectory versionSetDirectory) : base(versionSetDirectory.Path.Append(name))
+    public ServiceDirectory ServiceDirectory { get; }
+
+    public ApiVersionSetsDirectory(ServiceDirectory serviceDirectory)
     {
-        VersionSetDirectory = versionSetDirectory;
-    }
-
-    public static ApiVersionSetInformationFile From(ApiVersionSetDirectory versionSetDirectory) => new(versionSetDirectory);
-
-    public static ApiVersionSetInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        if (name.Equals(file.Name))
-        {
-            var apiDirectory = ApiVersionSetDirectory.TryFrom(serviceDirectory, file.Directory);
-
-            return apiDirectory is null ? null : new(apiDirectory);
-        }
-        else
-        {
-            return null;
-        }
+        Path = serviceDirectory.Path.Append(Name);
+        ServiceDirectory = serviceDirectory;
     }
 }
 
-public static class ApiVersionSet
+public sealed record ApiVersionSetName
 {
-    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    private readonly string value;
 
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiVersionSetId versionSetId) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("apiVersionSets")
-               .AppendPath(versionSetId);
-
-    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("apiVersionSets");
-
-    public static ApiVersionSetId GetIdFromFile(ApiVersionSetInformationFile file)
+    public ApiVersionSetName(string value)
     {
-        var jsonObject = file.ReadAsJsonObject();
-        var api = Deserialize(jsonObject);
-
-        return ApiVersionSetId.From(api.Name);
-    }
-    public static Models.ApiVersionSet Deserialize(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Models.ApiVersionSet>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
-
-    public static JsonObject Serialize(Models.ApiVersionSet api) =>
-        JsonSerializer.SerializeToNode(api, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
-
-    public static async ValueTask<Models.ApiVersionSet> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiVersionSetId versionSetId, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName, versionSetId);
-        var json = await getResource(uri, cancellationToken);
-        return Deserialize(json);
-    }
-
-    public static IAsyncEnumerable<Models.ApiVersionSet> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var uri = ListUri(serviceProviderUri, serviceName);
-        return getResources(uri, cancellationToken).Select(Deserialize);
-    }
-
-    /// <summary>
-    /// Only return version sets associated with APIs in <paramref name="apiDisplayNamesToInclude"/>.
-    /// </summary>
-    public static async IAsyncEnumerable<Models.ApiVersionSet> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ICollection<string> apiDisplayNamesToInclude, [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        // Get version set names from apis to include
-        var filteredVersionNames = await Api.List(getResources, serviceProviderUri, serviceName, apiDisplayNamesToInclude, cancellationToken)
-                                            .Select(api => api.Properties.ApiVersionSetId?.Split("/").LastOrDefault())
-                                            .ToListAsync(cancellationToken);
-
-        var versionSets = List(getResources, serviceProviderUri, serviceName, cancellationToken)
-                            .Where(versionSet => filteredVersionNames.Contains(versionSet.Name));
-
-        await foreach (var versionSet in versionSets)
+        if (string.IsNullOrWhiteSpace(value))
         {
-            yield return versionSet;
+            throw new ArgumentException($"API version set name cannot be null or whitespace.", nameof(value));
+        }
+
+        this.value = value;
+    }
+
+    public override string ToString() => value;
+}
+
+public sealed record ApiVersionSetUri : IArtifactUri
+{
+    public Uri Uri { get; }
+
+    public ApiVersionSetUri(ApiVersionSetName apiVersionSetName, ApiVersionSetsUri apiVersionSetsUri)
+    {
+        Uri = apiVersionSetsUri.AppendPath(apiVersionSetName.ToString());
+    }
+}
+
+public sealed record ApiVersionSetDirectory : IArtifactDirectory
+{
+    public ArtifactPath Path { get; }
+
+    public ApiVersionSetsDirectory ApiVersionSetsDirectory { get; }
+
+    public ApiVersionSetDirectory(ApiVersionSetName apiVersionSetName, ApiVersionSetsDirectory apiVersionSetsDirectory)
+    {
+        Path = apiVersionSetsDirectory.Path.Append(apiVersionSetName.ToString());
+        ApiVersionSetsDirectory = apiVersionSetsDirectory;
+    }
+}
+
+public sealed record ApiVersionSetInformationFile : IArtifactFile
+{
+    public static string Name { get; } = "apiVersionSetInformation.json";
+
+    public ArtifactPath Path { get; }
+
+    public ApiVersionSetDirectory ApiVersionSetDirectory { get; }
+
+    public ApiVersionSetInformationFile(ApiVersionSetDirectory apiVersionSetDirectory)
+    {
+        Path = apiVersionSetDirectory.Path.Append(Name);
+        ApiVersionSetDirectory = apiVersionSetDirectory;
+    }
+}
+
+public sealed record ApiVersionSetApisUri : IArtifactUri
+{
+    public Uri Uri { get; }
+
+    public ApiVersionSetApisUri(ApiVersionSetUri apiVersionSetUri)
+    {
+        Uri = apiVersionSetUri.AppendPath("apis");
+    }
+}
+
+public sealed record ApiVersionSetApisFile : IArtifactFile
+{
+    private static readonly string name = "apis.json";
+
+    public ArtifactPath Path { get; }
+
+    public ApiVersionSetDirectory ApiVersionSetDirectory { get; }
+
+    public ApiVersionSetApisFile(ApiVersionSetDirectory apiVersionSetDirectory)
+    {
+        Path = apiVersionSetDirectory.Path.Append(name);
+        ApiVersionSetDirectory = apiVersionSetDirectory;
+    }
+}
+
+public sealed record ApiVersionSetModel
+{
+    public required string Name { get; init; }
+
+    public required ApiVersionSetContractProperties Properties { get; init; }
+
+    public sealed record ApiVersionSetContractProperties
+    {
+        public string? Description { get; init; }
+        public string? DisplayName { get; init; }
+        public string? VersionHeaderName { get; init; }
+        public string? VersionQueryName { get; init; }
+        public VersioningSchemeOption? VersioningScheme { get; init; }
+
+        public JsonObject Serialize() =>
+            new JsonObject()
+                .AddPropertyIfNotNull("description", Description)
+                .AddPropertyIfNotNull("displayName", DisplayName)
+                .AddPropertyIfNotNull("versionHeaderName", VersionHeaderName)
+                .AddPropertyIfNotNull("versionQueryName", VersionQueryName)
+                .AddPropertyIfNotNull("versioningScheme", VersioningScheme?.Serialize());
+
+        public static ApiVersionSetContractProperties Deserialize(JsonObject jsonObject) =>
+            new()
+            {
+                Description = jsonObject.TryGetStringProperty("description"),
+                DisplayName = jsonObject.TryGetStringProperty("displayName"),
+                VersionHeaderName = jsonObject.TryGetStringProperty("versionHeaderName"),
+                VersionQueryName = jsonObject.TryGetStringProperty("versionQueryName"),
+                VersioningScheme = jsonObject.TryGetProperty("versioningScheme")
+                                             .Map(VersioningSchemeOption.Deserialize)
+            };
+
+        public sealed record VersioningSchemeOption
+        {
+            private readonly string value;
+
+            private VersioningSchemeOption(string value)
+            {
+                this.value = value;
+            }
+
+            public static VersioningSchemeOption Header => new("Header");
+            public static VersioningSchemeOption Query => new("Query");
+            public static VersioningSchemeOption Segment => new("Segment");
+
+            public override string ToString() => value;
+
+            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
+
+            public static VersioningSchemeOption Deserialize(JsonNode node) =>
+                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
+                    ? value switch
+                    {
+                        _ when nameof(Header).Equals(value, StringComparison.OrdinalIgnoreCase) => Header,
+                        _ when nameof(Query).Equals(value, StringComparison.OrdinalIgnoreCase) => Query,
+                        _ when nameof(Segment).Equals(value, StringComparison.OrdinalIgnoreCase) => Segment,
+                        _ => throw new JsonException($"'{value}' is not a valid {nameof(VersioningSchemeOption)}.")
+                    }
+                        : throw new JsonException("Node must be a string JSON value.");
         }
     }
 
-    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.ApiVersionSet apiVersionSet, CancellationToken cancellationToken)
-    {
-        var versionSetId = ApiVersionSetId.From(apiVersionSet.Name);
-        var uri = GetUri(serviceProviderUri, serviceName, versionSetId);
-        var json = Serialize(apiVersionSet);
-        await putResource(uri, json, cancellationToken);
-    }
+    public JsonObject Serialize() =>
+        new JsonObject()
+            .AddProperty("properties", Properties.Serialize());
 
-    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiVersionSetId versionSetId, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName, versionSetId);
-        await deleteResource(uri, cancellationToken);
-    }
+    public static ApiVersionSetModel Deserialize(ApiVersionSetName name, JsonObject jsonObject) =>
+        new()
+        {
+            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
+            Properties = jsonObject.GetJsonObjectProperty("properties")
+                                   .Map(ApiVersionSetContractProperties.Deserialize)!
+        };
 }
