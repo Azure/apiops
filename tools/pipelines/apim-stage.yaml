@@ -2,7 +2,7 @@ parameters:
   - name: API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH
     type: string
     displayName: Folder where the artifacts reside
-  - name: ENVIRONMRNT
+  - name: ENVIRONMENT
     type: string
     displayName: Environment to display
   - name: RESOURCE_GROUP_NAME
@@ -34,10 +34,12 @@ steps:
     verbose: false
     customCommand: 'install -g @stoplight/spectral'
 
-- script: spectral lint "$(Build.Repository.Name)\${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
+- checkout: self
+  fetchDepth: 0
+
+- script: spectral lint "$(Build.SourcesDirectory)\${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
   displayName: 'Lint API definition' 
 
-- checkout: self
 - task: UniversalPackages@0
   displayName: Download publisher
   inputs:
@@ -45,6 +47,7 @@ steps:
     vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
     vstsFeedPackage: 'publisher'
     vstsPackageVersion: '*'
+
 - task: AzureCLI@2
   displayName: Set publishing variables
   inputs:
@@ -59,8 +62,23 @@ steps:
       echo "##vso[task.setvariable issecret=true;variable=AZURE_SUBSCRIPTION_ID]$(az account show --query "id" --output tsv)"
     addSpnToEnvironment: true
     failOnStandardError: true
+
+# replacetokens@3 task will need to be installed to use
+- task: replacetokens@3
+  displayName: 'Perform namevalue secret substitution in configuration.${{ parameters.ENVIRONMENT}}.yaml'
+  inputs:
+    targetFiles: $(Build.SourcesDirectory)/configuration.${{ parameters.ENVIRONMENT}}.yaml
+    encoding: "auto"
+    writeBOM: true
+    verbosity: "off"
+    actionOnMissing: "warn"
+    keepToken: false
+    tokenPrefix: "{#"
+    tokenSuffix: "#}"
+
+
 - task: AzureCLI@2
-  displayName: Run publisher for ${{ parameters.ENVIRONMRNT}} environment
+  displayName: Run publisher for ${{ parameters.ENVIRONMENT}} environment
   inputs:
     azureSubscription: "$(SERVICE_CONNECTION_NAME)"
     scriptType: bash

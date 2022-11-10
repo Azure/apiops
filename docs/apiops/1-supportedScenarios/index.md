@@ -31,6 +31,36 @@ Create all the different artifacts from an IDE (e.g. VS Code) -> commit the chan
 
 In this scenario you don't need to utilize the extractor tool to generate the artifacts as the artifacts will be created in the IDE. Having said that, nothing prevents you from utilizing the extractor tool to generate the initial artifacts if you are introducing the tool to an existing APIM instance.
 
+# Supported  2022-09-01
+Below there is a table with all [artifacts extracted and published by APIOps](https://docs.microsoft.com/en-us/rest/api/apimanagement/). 
+
+|Operation Group|Description|Implemented in APIOps?|
+|:----|:----|:----|
+|API Diagnostic|Provides operations for managing Diagnostic settings for the logger in an API.|Yes|
+|API Export|Exports an API to a SAS blob.|Yes|
+|API Operation|Lists the operations for an API.|Yes|
+|API Operation Policy|Provides operations for managing the policy configured at the API Operation Level of a service instance.|Yes|
+|API Policy|Provides operations for managing the policy configured at the Api Level of a service instance.|Yes|
+|API Product|Lists the APIs associated with a product.|Yes|
+|API Revision|Lists the API revisions associated with an API in a service instance.|Yes|
+|API Version Set|Provides operations for managing the Version Set of an API.|Yes|
+|APIs|Provides operations for managing the APIs of a service instance.|Yes|
+|Diagnostic|Provides operations for managing Diagnostic settings for the logger in a service instance.|Yes|
+|Gateway|Provides operations for managing self-hosted gateways for a service instance.|Yes|
+|Gateway Api|Provides operations for managing self-hosted gateway apis for a service instance.|Yes|
+|Logger|Provides operations for managing Loggers used to collect events.|Yes|
+|Named Value|Provides operations for creating and updating the named value collection for the service instance.|Yes|
+|Operation|Provides API operations for managing operations for the service instance.|Yes|
+|Policy|Provides operations for policy management at the global service instance level.|Yes|
+|Product|Provides operations for managing products.|Yes|
+|Product API|Provides operations for configuring which APIs associated with a product.|Yes|
+|Product Policy|Provides operations for managing the policy configured at the Product Level of a service instance.|Yes|
+| | | |
+|Backend|Provides operations for managing Backends configured for the APIs|Yes|
+|Policy Fragments| |Yes|
+|GraphQL| |Yes|
+
+
 
 
 

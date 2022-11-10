@@ -21,6 +21,16 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | API_MANAGEMENT_SERVICE_NAME  | Name of the APIM instance to publish to. This can also be parsed from the configuration file |
 | CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to override different configurations (e.g. policy backend value,  namevalue pairs, just to name a few) when promoting across APIM environments (e.g. dev -> qa -> prod). You will need a unique Yaml configuration file per environment  (e.g. configuration.prod.yaml for production) when overriding configurations across environments. More on this later on in the lab.  |
 | COMMIT_ID | Git commit ID. If specified, the tool will only use files that were affected by that commit. New/modified files will be updated in Azure, and deleted artifacts will be removed from the Azure APIM instance. If unspecified, the tool will do a Put operation on the Azure APIM instance with all files in the artifacts folder. |
+| PUBLISH_CONFIGURATION_ARTIFACTS | If set to true, publisher will publish artifacts that are defined in configuration and exist in the artifacts directory.  |
+
+>There are some interesting interactions with cases where we pass a commit ID. Here's the current behavior:
+
+| COMMIT_ID specified | PUBLISH_CONFIGURATION_ARTIFACTS specified | Action |
+| - | - | - |
+| No | No | Put all files in the artifacts directory |
+| No | Yes | Only put files in the artifacts directory that are defined in configuration |
+| Yes | No | Put artifacts that have changed in commit. If configuration YAML was modified in commit, include all artifacts in the configuration YAML that exist in the artifacts directory. |
+| Yes | Yes | Put artifacts that have changed in commit. Also include all artifacts defined in configuration (configuration YAML, environment variables, etc) that exist in the artifacts directory. |
 
 ### Configuration Override Across Environments
  In an enterprise setting you may want to override some configurations as you promote your APIM across environments. For example you may have a policy which points to a backend url which is different across environments. Or you may be using a completely different application insights instance across environments and you would like to point to the correct application insights instance. In order to override these configurations you will need to provide them inside a environment specific configuration file which the publisher tool can pick up and parse when pushing the changes across different APIM instances. For example if you have three different environments (Dev -> QA -> Prod) then you would have two separate configuration files (e.g. configuration.qa.yaml and configuration.prod.yaml). The lowest environment doesn't require a configuration file as its the source environment.
@@ -40,7 +50,8 @@ Below is the full list of supported configuration overrides that the publisher t
 | namedValues | List of named value pairs to override. All three types (Plain - Secret - Key Vault) are supported
 | loggers | Information for the application insights instance to utilize in the destination environment APIM instance |
 | diagnostics | Configuration for the verbosity setting of the application insights instance to utilize in the destination environment APIM instance  |
-| apis | list of apis for you which you would like to override settings like the application insights etc.. If you are utilizing versioning/revisioning in APIM then you need to set the target api version & revision to apply application insights to e.g. 'my-api', 'my-api-v2', 'my-api-v2;rev=2' |
+| apis | List of apis for you which you would like to override settings like the application insights etc.. You can also override the service url across environments. If you are utilizing versioning/revisioning in APIM then you need to set the target api version & revision to apply application insights to e.g. 'my-api', 'my-api-v2', 'my-api-v2;rev=2' |
+| backends | List of backends which you would like to override. You can override information like the url when promoting across environments  |
 
 As mentioned above the publisher supports overriding secret named values. Whereas the publisher supports both types of APIM secrets (secret and Azure Key Vault), we recommend using Azure Key Vault whenever possible. 
 
@@ -57,4 +68,11 @@ Also when using Key vault make sure you complete the steps below. You can either
 Note: You don't have to create the named values in the target APIM environments ahead of time as they will be created by the publisher.
 ```
 
-Docs and implementation for supporting the secret named value type is Under Construction. Come back soon. 🚧
+If you are trying to override a secret stored as secret namedvalue type in APIM you can simply override the named value in your configuration file as demonstrated in the following [**sample configuration file**](https://github.com/Azure/apiops/blob/main/configuration.prod.yaml).
+
+The important thing to note here is that the value included in the configuration override needs to be defined as a secret in your Azure Devops (as a variable group secret) and Github (as an environment secret) and then passed as an environment variable in the yaml files. The sample configuration yaml files provided in this repository set a variable name called testSecretValue which is the value that gets set on Azure APIM. The important thing to note there is that you need to surround your secret with {#[your secret]#}. Set the list of environments variables as you fit for your scenario. Please note that you will need to install the Replace Tokens Extension in the Azure DevOps environment. Go to the marketplace and search for Replace Tokens. You don't need to install any extension for Github as its not required there.
+
+
+```
+Note: You don't have to create the named values in the target APIM environments ahead of time as they will be created by the publisher.
+```
