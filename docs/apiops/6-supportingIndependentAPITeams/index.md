@@ -12,10 +12,11 @@ The extractor tool supports extracting select apis which enables the following s
 
 In order to signal to the extractor tool to extract select apis you need to provide a configuration file (either yaml or json based) which includes the list of apis to extract. Following the example above you can instruct the extractor tool to extract api1 and api2 by providing the following configuration file:
 
- ApiDisplayNames:
+```yaml
+apiNames:
   - api1
   - api2
-
+```
 Here is the Azure Devops extractor pipeline windows offering either full extraction or selective api extraction through the configuration file: <br />
 ![extractor pipeline](../../assets/images/Extractor_Configuration.png)
 
