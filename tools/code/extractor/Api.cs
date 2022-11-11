@@ -157,29 +157,45 @@ internal static class Api
             // APIM exports OpenApiv3 to YAML. Convert to JSON if needed.
             case DefaultApiSpecification.OpenApi openApi when openApi.Version is OpenApiSpecVersion.OpenApi3_0 && openApi.Format is OpenApiFormat.Json:
                 {
-                    using var streamReader = new StreamReader(downloadFileStream);
-                    var yaml = new Deserializer().Deserialize(streamReader) ?? throw new InvalidOperationException("Failed to deserialize YAML.");
-
-                    var json = JsonSerializer.Serialize(yaml, new JsonSerializerOptions { WriteIndented = true });
-                    await specificationFile.OverwriteWithText(json, cancellationToken);
-
+                    var bytes = ConvertYamlStreamToJson(downloadFileStream);
+                    await specificationFile.OverwriteWithBytes(bytes, cancellationToken);
                     break;
                 }
             // APIM exports OpenApiv2 to JSON. Convert to YAML if needed.
             case DefaultApiSpecification.OpenApi openApi when openApi.Version is OpenApiSpecVersion.OpenApi2_0 && openApi.Format is OpenApiFormat.Yaml:
                 {
-                    using var streamReader = new StreamReader(downloadFileStream);
-                    var yaml = new Deserializer().Deserialize(streamReader) ?? throw new InvalidOperationException("Failed to deserialize YAML.");
-
-                    var text = new Serializer().Serialize(yaml);
-                    await specificationFile.OverwriteWithText(text, cancellationToken);
-
+                    var bytes = ConvertJsonStreamToYaml(downloadFileStream);
+                    await specificationFile.OverwriteWithBytes(bytes, cancellationToken);
                     break;
                 }
             default:
                 await specificationFile.OverwriteWithStream(downloadFileStream, cancellationToken);
                 break;
         }
+    }
+
+    private static byte[] ConvertYamlStreamToJson(Stream stream)
+    {
+        var yaml = ConvertStreamToYamlObject(stream);
+        return JsonSerializer.SerializeToUtf8Bytes(yaml, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static object ConvertStreamToYamlObject(Stream stream)
+    {
+        using var streamReader = new StreamReader(stream);
+        return new Deserializer().Deserialize(streamReader) ?? throw new InvalidOperationException("Failed to deserialize YAML.");
+    }
+
+    private static byte[] ConvertJsonStreamToYaml(Stream stream)
+    {
+        using var memoryStream = new MemoryStream();
+        using var streamWriter = new StreamWriter(memoryStream);
+        var yaml = ConvertStreamToYamlObject(stream);
+
+        new Serializer().Serialize(streamWriter, yaml);
+        memoryStream.Position = 0;
+
+        return memoryStream.ToArray();
     }
 
     private static async ValueTask ExportTags(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)

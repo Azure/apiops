@@ -120,6 +120,12 @@ public static class ArtifactFileExtensions
         await File.WriteAllTextAsync(file.Path.ToString(), text, cancellationToken);
     }
 
+    public static async ValueTask OverwriteWithBytes(this IArtifactFile file, byte[] bytes, CancellationToken cancellationToken)
+    {
+        file.CreateDirectoryIfNotExists();
+        await File.WriteAllBytesAsync(file.Path.ToString(), bytes, cancellationToken);
+    }
+
     public static async ValueTask OverwriteWithStream(this IArtifactFile file, Stream stream, CancellationToken cancellationToken)
     {
         file.CreateDirectoryIfNotExists();
