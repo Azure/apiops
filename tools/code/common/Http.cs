@@ -20,7 +20,7 @@ public static class HttpPipelineExtensions
 
         while (nextLink is not null)
         {
-            var responseJson = await pipeline.GetJsonObject(uri, cancellationToken);
+            var responseJson = await pipeline.GetJsonObject(nextLink, cancellationToken);
 
             var values = responseJson.TryGetJsonArrayProperty("value")
                                      .Map(jsonArray => jsonArray.Choose(node => node as JsonObject))
