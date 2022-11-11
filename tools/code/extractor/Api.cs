@@ -1,14 +1,18 @@
 ﻿using common;
 using Flurl;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi;
 using Microsoft.OpenApi.Extensions;
 using Microsoft.OpenApi.Readers;
+using SharpYaml.Model;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using YamlDotNet.Serialization;
 using static common.ApiModel.ApiCreateOrUpdateProperties;
 
 namespace extractor;
@@ -135,29 +139,47 @@ internal static class Api
         var format = defaultSpecification switch
         {
             DefaultApiSpecification.Wadl => "wadl-link",
-            DefaultApiSpecification.OpenApi => "openapi-link",
+            DefaultApiSpecification.OpenApi openApi =>
+                openApi.Version switch
+                {
+                    OpenApiSpecVersion.OpenApi2_0 => "swagger-link",
+                    OpenApiSpecVersion.OpenApi3_0 => "openapi-link",
+                    _ => throw new NotSupportedException()
+                },
             _ => throw new NotSupportedException()
         };
 
-        using var fileStream = await DownloadSpecificationFile(apiUri, format, getRestResource, downloadResource, cancellationToken);
-        using var specificationFileStream = defaultSpecification switch
-        {
-            DefaultApiSpecification.OpenApi openApi => await ConvertFileToOpenApiSpecification(fileStream, openApi),
-            _ => fileStream
-        };
+        using var downloadFileStream = await DownloadSpecificationFile(apiUri, format, getRestResource, downloadResource, cancellationToken);
 
         logger.LogInformation("Writing API specification file {filePath}...", specificationFile.Path);
-        await specificationFile.OverwriteWithStream(specificationFileStream, cancellationToken);
-    }
+        switch (defaultSpecification)
+        {
+            // APIM exports OpenApiv3 to YAML. Convert to JSON if needed.
+            case DefaultApiSpecification.OpenApi openApi when openApi.Version is OpenApiSpecVersion.OpenApi3_0 && openApi.Format is OpenApiFormat.Json:
+                {
+                    using var streamReader = new StreamReader(downloadFileStream);
+                    var yaml = new Deserializer().Deserialize(streamReader) ?? throw new InvalidOperationException("Failed to deserialize YAML.");
 
-    private static async ValueTask<MemoryStream> ConvertFileToOpenApiSpecification(Stream fileStream, DefaultApiSpecification.OpenApi openApiSpecification)
-    {
-        var readResult = await new OpenApiStreamReader().ReadAsync(fileStream);
-        var memoryStream = new MemoryStream();
-        readResult.OpenApiDocument.Serialize(memoryStream, openApiSpecification.Version, openApiSpecification.Format);
-        memoryStream.Position = 0;
+                    var json = JsonSerializer.Serialize(yaml, new JsonSerializerOptions { WriteIndented = true });
+                    await specificationFile.OverwriteWithText(json, cancellationToken);
 
-        return memoryStream;
+                    break;
+                }
+            // APIM exports OpenApiv2 to JSON. Convert to YAML if needed.
+            case DefaultApiSpecification.OpenApi openApi when openApi.Version is OpenApiSpecVersion.OpenApi2_0 && openApi.Format is OpenApiFormat.Yaml:
+                {
+                    using var streamReader = new StreamReader(downloadFileStream);
+                    var yaml = new Deserializer().Deserialize(streamReader) ?? throw new InvalidOperationException("Failed to deserialize YAML.");
+
+                    var text = new Serializer().Serialize(yaml);
+                    await specificationFile.OverwriteWithText(text, cancellationToken);
+
+                    break;
+                }
+            default:
+                await specificationFile.OverwriteWithStream(downloadFileStream, cancellationToken);
+                break;
+        }
     }
 
     private static async ValueTask ExportTags(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
