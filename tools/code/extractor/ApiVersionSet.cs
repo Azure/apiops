@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,14 +9,10 @@ namespace extractor;
 
 internal static class ApiVersionSet
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
-                .ForEachParallel(async apiVersionSetName => await Export(serviceDirectory,
-                                                                   serviceUri,
-                                                                   apiVersionSetName,
-                                                                   getRestResource,
-                                                                   cancellationToken),
+                .ForEachParallel(async apiVersionSetName => await Export(serviceDirectory, serviceUri, apiVersionSetName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -27,7 +24,7 @@ internal static class ApiVersionSet
                                  .Select(name => new ApiVersionSetName(name));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiVersionSetName apiVersionSetName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiVersionSetName apiVersionSetName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var apiVersionSetsDirectory = new ApiVersionSetsDirectory(serviceDirectory);
         var apiVersionSetDirectory = new ApiVersionSetDirectory(apiVersionSetName, apiVersionSetsDirectory);
@@ -35,10 +32,10 @@ internal static class ApiVersionSet
         var apiVersionSetsUri = new ApiVersionSetsUri(serviceUri);
         var apiVersionSetUri = new ApiVersionSetUri(apiVersionSetName, apiVersionSetsUri);
 
-        await ExportInformationFile(apiVersionSetDirectory, apiVersionSetUri, apiVersionSetName, getRestResource, cancellationToken);
+        await ExportInformationFile(apiVersionSetDirectory, apiVersionSetUri, apiVersionSetName, getRestResource, logger, cancellationToken);
     }
 
-    private static async ValueTask ExportInformationFile(ApiVersionSetDirectory apiVersionSetDirectory, ApiVersionSetUri apiVersionSetUri, ApiVersionSetName apiVersionSetName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportInformationFile(ApiVersionSetDirectory apiVersionSetDirectory, ApiVersionSetUri apiVersionSetUri, ApiVersionSetName apiVersionSetName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var apiVersionSetInformationFile = new ApiVersionSetInformationFile(apiVersionSetDirectory);
 
@@ -46,6 +43,7 @@ internal static class ApiVersionSet
         var apiVersionSetModel = ApiVersionSetModel.Deserialize(apiVersionSetName, responseJson);
         var contentJson = apiVersionSetModel.Serialize();
 
+        logger.LogInformation("Writing API version set information file {filePath}...", apiVersionSetInformationFile.Path);
         await apiVersionSetInformationFile.OverwriteWithJson(contentJson, cancellationToken);
     }
 }

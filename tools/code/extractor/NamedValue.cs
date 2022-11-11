@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,14 +9,10 @@ namespace extractor;
 
 internal static class NamedValue
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
-                .ForEachParallel(async namedValueName => await Export(serviceDirectory,
-                                                                      serviceUri,
-                                                                      namedValueName,
-                                                                      getRestResource,
-                                                                      cancellationToken),
+                .ForEachParallel(async namedValueName => await Export(serviceDirectory, serviceUri, namedValueName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -27,7 +24,7 @@ internal static class NamedValue
                                     .Select(name => new NamedValueName(name));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, NamedValueName namedValueName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, NamedValueName namedValueName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var namedValuesDirectory = new NamedValuesDirectory(serviceDirectory);
         var namedValueDirectory = new NamedValueDirectory(namedValueName, namedValuesDirectory);
@@ -35,10 +32,10 @@ internal static class NamedValue
         var namedValuesUri = new NamedValuesUri(serviceUri);
         var namedValueUri = new NamedValueUri(namedValueName, namedValuesUri);
 
-        await ExportInformationFile(namedValueDirectory, namedValueUri, namedValueName, getRestResource, cancellationToken);
+        await ExportInformationFile(namedValueDirectory, namedValueUri, namedValueName, getRestResource, logger, cancellationToken);
     }
 
-    private static async ValueTask ExportInformationFile(NamedValueDirectory namedValueDirectory, NamedValueUri namedValueUri, NamedValueName namedValueName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportInformationFile(NamedValueDirectory namedValueDirectory, NamedValueUri namedValueUri, NamedValueName namedValueName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var namedValueInformationFile = new NamedValueInformationFile(namedValueDirectory);
 
@@ -46,6 +43,7 @@ internal static class NamedValue
         var namedValueModel = NamedValueModel.Deserialize(namedValueName, responseJson);
         var contentJson = namedValueModel.Serialize();
 
+        logger.LogInformation("Writing named value information file {filePath}...", namedValueInformationFile.Path);
         await namedValueInformationFile.OverwriteWithJson(contentJson, cancellationToken);
     }
 }

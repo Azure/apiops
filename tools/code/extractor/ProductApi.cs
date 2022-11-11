@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -9,7 +10,7 @@ namespace extractor;
 
 internal static class ProductApi
 {
-    public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
     {
         var productApisFile = new ProductApisFile(productDirectory);
 
@@ -19,6 +20,7 @@ internal static class ProductApi
 
         if (productApis.Any())
         {
+            logger.LogInformation("Writing product APIs file {filePath}...", productApisFile.Path);
             await productApisFile.OverwriteWithJson(productApis, cancellationToken);
         }
     }

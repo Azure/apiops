@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,14 +9,10 @@ namespace extractor;
 
 internal static class Tag
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
-                .ForEachParallel(async tagName => await Export(serviceDirectory,
-                                                               serviceUri,
-                                                               tagName,
-                                                               getRestResource,
-                                                               cancellationToken),
+                .ForEachParallel(async tagName => await Export(serviceDirectory, serviceUri, tagName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -27,7 +24,7 @@ internal static class Tag
                              .Select(name => new TagName(name));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, TagName tagName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, TagName tagName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var tagsDirectory = new TagsDirectory(serviceDirectory);
         var tagDirectory = new TagDirectory(tagName, tagsDirectory);
@@ -35,10 +32,10 @@ internal static class Tag
         var tagsUri = new TagsUri(serviceUri);
         var tagUri = new TagUri(tagName, tagsUri);
 
-        await ExportInformationFile(tagDirectory, tagUri, tagName, getRestResource, cancellationToken);
+        await ExportInformationFile(tagDirectory, tagUri, tagName, getRestResource, logger, cancellationToken);
     }
 
-    private static async ValueTask ExportInformationFile(TagDirectory tagDirectory, TagUri tagUri, TagName tagName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportInformationFile(TagDirectory tagDirectory, TagUri tagUri, TagName tagName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var tagInformationFile = new TagInformationFile(tagDirectory);
 
@@ -46,6 +43,7 @@ internal static class Tag
         var tagModel = TagModel.Deserialize(tagName, responseJson);
         var contentJson = tagModel.Serialize();
 
+        logger.LogInformation("Writing tag information file {filePath}...", tagInformationFile.Path);
         await tagInformationFile.OverwriteWithJson(contentJson, cancellationToken);
     }
 }

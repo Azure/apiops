@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,14 +9,10 @@ namespace extractor;
 
 internal static class ProductPolicy
 {
-    public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(productUri, listRestResources, cancellationToken)
-                .ForEachParallel(async policyName => await Export(productDirectory,
-                                                                  productUri,
-                                                                  policyName,
-                                                                  getRestResource,
-                                                                  cancellationToken),
+                .ForEachParallel(async policyName => await Export(productDirectory, productUri, policyName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -27,7 +24,7 @@ internal static class ProductPolicy
                                 .Select(name => new ProductPolicyName(name));
     }
 
-    private static async ValueTask Export(ProductDirectory productDirectory, ProductUri productUri, ProductPolicyName policyName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ProductDirectory productDirectory, ProductUri productUri, ProductPolicyName policyName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var policyFile = new ProductPolicyFile(policyName, productDirectory);
 
@@ -37,6 +34,7 @@ internal static class ProductPolicy
         var policyContent = responseJson.GetJsonObjectProperty("properties")
                                         .GetStringProperty("value");
 
+        logger.LogInformation("Writing product policy file {filePath}...", policyFile.Path);
         await policyFile.OverwriteWithText(policyContent, cancellationToken);
     }
 }
