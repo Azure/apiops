@@ -51,7 +51,7 @@ internal static class Service
         await ProductTag.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
         await Api.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await ApiPolicy.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
-        await ApiDiagnostic.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
+        await ApiDiagnostic.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await ApiTag.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
         await ApiOperationPolicy.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await ProductApi.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
