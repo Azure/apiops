@@ -152,7 +152,7 @@ public static class Program
 
             if (logger.IsEnabled(LogLevel.Trace))
             {
-                logger.LogTrace("Successfully retrieved REST resource {json} at URI {uri}.", json, uri);
+                logger.LogTrace("Successfully retrieved REST resource {json} at URI {uri}.", json.ToJsonString(), uri);
             }
             else
             {
@@ -165,20 +165,20 @@ public static class Program
 
     private static ListRestResources GetListRestResources(IServiceProvider provider)
     {
-        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var authenticatedPipeline = provider.GetRequiredService<AuthenticatedHttpPipeline>();
         var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(ListRestResources));
 
         return (uri, cancellationToken) =>
         {
             logger.LogDebug("Listing REST resources at URI {uri}...", uri);
-            return pipeline.ListJsonObjects(uri, cancellationToken);
+            return authenticatedPipeline.Pipeline.ListJsonObjects(uri, cancellationToken);
         };
     }
 
     private static Extractor.Parameters GetExtractorParameters(IServiceProvider provider)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var armEnvironment = provider.GetRequiredService<ArmEnvironment>();
+        var armEnvironment = provider.GetRequiredService<GetArmEnvironment>()();
 
         return new Extractor.Parameters
         {

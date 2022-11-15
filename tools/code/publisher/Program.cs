@@ -158,7 +158,7 @@ public static class Program
         {
             if (logger.IsEnabled(LogLevel.Trace))
             {
-                logger.LogTrace("Beginning request to put REST resource {json} at URI {uri}...", json, uri);
+                logger.LogTrace("Beginning request to put REST resource {json} at URI {uri}...", json.ToString(), uri);
             }
             else
             {
@@ -174,7 +174,7 @@ public static class Program
     private static Publisher.Parameters GetPublisherParameters(IServiceProvider provider)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var armEnvironment = provider.GetRequiredService<ArmEnvironment>();
+        var armEnvironment = provider.GetRequiredService<GetArmEnvironment>()();
 
         return new Publisher.Parameters
         {
