@@ -47,7 +47,7 @@ public static class Program
 
     private static void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton(GetArmEnvironment)
+        services.AddSingleton(GetGetArmEnvironment)
                 .AddSingleton(GetAuthenticatedHttpPipeline)
                 .AddSingleton(GetGetRestResource)
                 .AddSingleton(GetListRestResources)
@@ -56,11 +56,11 @@ public static class Program
                 .AddHostedService<Extractor>();
     }
 
-    private static ArmEnvironment GetArmEnvironment(IServiceProvider provider)
+    private static GetArmEnvironment GetGetArmEnvironment(IServiceProvider provider)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
 
-        return configuration.TryGetValue("AZURE_CLOUD_ENVIRONMENT") switch
+        var environment = configuration.TryGetValue("AZURE_CLOUD_ENVIRONMENT") switch
         {
             null => ArmEnvironment.AzurePublicCloud,
             "AzureGlobalCloud" or nameof(ArmEnvironment.AzurePublicCloud) => ArmEnvironment.AzurePublicCloud,
@@ -69,6 +69,8 @@ public static class Program
             "AzureGermanCloud" or nameof(ArmEnvironment.AzureGermany) => ArmEnvironment.AzureGermany,
             _ => throw new InvalidOperationException($"AZURE_CLOUD_ENVIRONMENT is invalid. Valid values are {nameof(ArmEnvironment.AzurePublicCloud)}, {nameof(ArmEnvironment.AzureChina)}, {nameof(ArmEnvironment.AzureGovernment)}, {nameof(ArmEnvironment.AzureGermany)}")
         };
+
+        return () => environment;
     }
 
     private static AuthenticatedHttpPipeline GetAuthenticatedHttpPipeline(IServiceProvider provider)
@@ -76,7 +78,7 @@ public static class Program
         var configuration = provider.GetRequiredService<IConfiguration>();
         var credential = GetTokenCredential(configuration);
 
-        var armEnvironment = provider.GetRequiredService<ArmEnvironment>();
+        var armEnvironment = provider.GetRequiredService<GetArmEnvironment>()();
         var policy = new BearerTokenAuthenticationPolicy(credential, armEnvironment.DefaultScope);
 
         return new AuthenticatedHttpPipeline(policy);
@@ -273,4 +275,6 @@ public static class Program
             }
         }
     }
+
+    private delegate ArmEnvironment GetArmEnvironment();
 }
