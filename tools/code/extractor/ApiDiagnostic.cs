@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,14 +9,10 @@ namespace extractor;
 
 internal static class ApiDiagnostic
 {
-    public static async ValueTask ExportAll(ApiUri apiUri, ApiDirectory apiDirectory, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ApiUri apiUri, ApiDirectory apiDirectory, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(apiUri, listRestResources, cancellationToken)
-                .ForEachParallel(async diagnosticName => await Export(apiDirectory,
-                                                                      apiUri,
-                                                                      diagnosticName,
-                                                                      getRestResource,
-                                                                      cancellationToken),
+                .ForEachParallel(async diagnosticName => await Export(apiDirectory, apiUri, diagnosticName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -27,7 +24,7 @@ internal static class ApiDiagnostic
                                     .Select(name => new ApiDiagnosticName(name));
     }
 
-    private static async ValueTask Export(ApiDirectory apiDirectory, ApiUri apiUri, ApiDiagnosticName apiDiagnosticName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ApiDirectory apiDirectory, ApiUri apiUri, ApiDiagnosticName apiDiagnosticName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var apiDiagnosticsDirectory = new ApiDiagnosticsDirectory(apiDirectory);
         var apiDiagnosticDirectory = new ApiDiagnosticDirectory(apiDiagnosticName, apiDiagnosticsDirectory);
@@ -35,10 +32,10 @@ internal static class ApiDiagnostic
         var apiDiagnosticsUri = new ApiDiagnosticsUri(apiUri);
         var apiDiagnosticUri = new ApiDiagnosticUri(apiDiagnosticName, apiDiagnosticsUri);
 
-        await ExportInformationFile(apiDiagnosticDirectory, apiDiagnosticUri, apiDiagnosticName, getRestResource, cancellationToken);
+        await ExportInformationFile(apiDiagnosticDirectory, apiDiagnosticUri, apiDiagnosticName, getRestResource, logger, cancellationToken);
     }
 
-    private static async ValueTask ExportInformationFile(ApiDiagnosticDirectory apiDiagnosticDirectory, ApiDiagnosticUri apiDiagnosticUri, ApiDiagnosticName apiDiagnosticName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportInformationFile(ApiDiagnosticDirectory apiDiagnosticDirectory, ApiDiagnosticUri apiDiagnosticUri, ApiDiagnosticName apiDiagnosticName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var apiDiagnosticInformationFile = new ApiDiagnosticInformationFile(apiDiagnosticDirectory);
 
@@ -46,6 +43,7 @@ internal static class ApiDiagnostic
         var apiDiagnosticModel = ApiDiagnosticModel.Deserialize(apiDiagnosticName, responseJson);
         var contentJson = apiDiagnosticModel.Serialize();
 
+        logger.LogInformation("Writing API diagnostic information file {filePath}...", apiDiagnosticInformationFile.Path);
         await apiDiagnosticInformationFile.OverwriteWithJson(contentJson, cancellationToken);
     }
 }

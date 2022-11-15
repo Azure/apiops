@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -9,7 +10,7 @@ namespace extractor;
 
 internal static class GatewayApi
 {
-    public static async ValueTask ExportAll(GatewayDirectory gatewayDirectory, GatewayUri gatewayUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(GatewayDirectory gatewayDirectory, GatewayUri gatewayUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
     {
         var gatewayApisFile = new GatewayApisFile(gatewayDirectory);
 
@@ -19,6 +20,7 @@ internal static class GatewayApi
 
         if (gatewayApis.Any())
         {
+            logger.LogInformation("Writing gateway APIs file {filePath}...", gatewayApisFile.Path);
             await gatewayApisFile.OverwriteWithJson(gatewayApis, cancellationToken);
         }
     }

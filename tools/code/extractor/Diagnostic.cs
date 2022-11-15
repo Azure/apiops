@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,14 +9,10 @@ namespace extractor;
 
 internal static class Diagnostic
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
-                .ForEachParallel(async diagnosticName => await Export(serviceDirectory,
-                                                                      serviceUri,
-                                                                      diagnosticName,
-                                                                      getRestResource,
-                                                                      cancellationToken),
+                .ForEachParallel(async diagnosticName => await Export(serviceDirectory, serviceUri, diagnosticName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -28,7 +25,7 @@ internal static class Diagnostic
                                     .Select(name => new DiagnosticName(name));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, DiagnosticName diagnosticName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, DiagnosticName diagnosticName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var diagnosticsDirectory = new DiagnosticsDirectory(serviceDirectory);
         var diagnosticDirectory = new DiagnosticDirectory(diagnosticName, diagnosticsDirectory);
@@ -36,10 +33,10 @@ internal static class Diagnostic
         var diagnosticsUri = new DiagnosticsUri(serviceUri);
         var diagnosticUri = new DiagnosticUri(diagnosticName, diagnosticsUri);
 
-        await ExportInformationFile(diagnosticDirectory, diagnosticUri, diagnosticName, getRestResource, cancellationToken);
+        await ExportInformationFile(diagnosticDirectory, diagnosticUri, diagnosticName, getRestResource, logger, cancellationToken);
     }
 
-    private static async ValueTask ExportInformationFile(DiagnosticDirectory diagnosticDirectory, DiagnosticUri diagnosticUri, DiagnosticName diagnosticName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask ExportInformationFile(DiagnosticDirectory diagnosticDirectory, DiagnosticUri diagnosticUri, DiagnosticName diagnosticName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var diagnosticInformationFile = new DiagnosticInformationFile(diagnosticDirectory);
 
@@ -47,6 +44,7 @@ internal static class Diagnostic
         var diagnosticModel = DiagnosticModel.Deserialize(diagnosticName, responseJson);
         var contentJson = diagnosticModel.Serialize();
 
+        logger.LogInformation("Writing diagnostic information file {filePath}...", diagnosticInformationFile.Path);
         await diagnosticInformationFile.OverwriteWithJson(contentJson, cancellationToken);
     }
 }
