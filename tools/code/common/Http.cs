@@ -49,7 +49,7 @@ public static class HttpPipelineExtensions
         var request = pipeline.CreateRequest(uri, RequestMethod.Get);
 
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
-        response.Validate();
+        response.Validate(uri);
 
         return response.Content;
     }
@@ -58,7 +58,7 @@ public static class HttpPipelineExtensions
     {
         var request = pipeline.CreateRequest(uri, RequestMethod.Delete);
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
-        response.Validate();
+        response.Validate(uri);
     }
 
     public static async ValueTask PutResource(this HttpPipeline pipeline, Uri uri, JsonObject resource, CancellationToken cancellationToken)
@@ -69,7 +69,7 @@ public static class HttpPipelineExtensions
         request.Headers.Add("Content-type", "application/json");
 
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
-        response.Validate();
+        response.Validate(uri);
         await pipeline.WaitForLongRunningOperation(response, cancellationToken);
     }
 
@@ -82,14 +82,14 @@ public static class HttpPipelineExtensions
         return request;
     }
 
-    private static Response Validate(this Response response)
+    private static Response Validate(this Response response, Uri requestUri)
     {
         return response.IsError
-            ? throw new InvalidOperationException($"HTTP request to URI failed with status code {response.Status}. Content is '{response.Content}'.")
+            ? throw new InvalidOperationException($"HTTP request to URI {requestUri} failed with status code {response.Status}. Content is '{response.Content}'.")
             : response;
     }
 
-    private async ValueTask WaitForLongRunningOperation(this HttpPipeline pipeline, Response response, CancellationToken cancellationToken)
+    private static async ValueTask WaitForLongRunningOperation(this HttpPipeline pipeline, Response response, CancellationToken cancellationToken)
     {
         var updatedResponse = response;
         while ((updatedResponse.Status == ((int)HttpStatusCode.Accepted))
@@ -109,7 +109,7 @@ public static class HttpPipelineExtensions
 
             var request = pipeline.CreateRequest(locationUri, RequestMethod.Get);
             updatedResponse = await pipeline.SendRequestAsync(request, cancellationToken);
-            updatedResponse.Validate();
+            updatedResponse.Validate(locationUri);
         }
     }
 }

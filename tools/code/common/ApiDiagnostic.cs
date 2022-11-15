@@ -368,7 +368,7 @@ public sealed record ApiDiagnosticModel
                 new()
                 {
                     Percentage = jsonObject.TryGetIntProperty("percentage"),
-                    SamplingType = jsonObject.TryGetJsonObjectProperty("samplingType")
+                    SamplingType = jsonObject.TryGetProperty("samplingType")
                                              .Map(SamplingTypeOption.Deserialize)
                 };
 
