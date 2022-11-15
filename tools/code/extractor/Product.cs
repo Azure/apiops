@@ -9,10 +9,10 @@ namespace extractor;
 
 internal static class Product
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
-                .ForEachParallel(async productName => await Export(serviceDirectory, serviceUri, productName, listRestResources, getRestResource, logger, cancellationToken),
+                .ForEachParallel(async productName => await Export(serviceDirectory, serviceUri, productName, apiNamesToExport, listRestResources, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -24,7 +24,7 @@ internal static class Product
                                  .Select(name => new ProductName(name));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ProductName productName, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ProductName productName, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var productsDirectory = new ProductsDirectory(serviceDirectory);
         var productDirectory = new ProductDirectory(productName, productsDirectory);
@@ -34,7 +34,7 @@ internal static class Product
 
         await ExportInformationFile(productDirectory, productUri, productName, getRestResource, logger, cancellationToken);
         await ExportPolicies(productDirectory, productUri, listRestResources, getRestResource, logger, cancellationToken);
-        await ExportApis(productDirectory, productUri, listRestResources, logger, cancellationToken);
+        await ExportApis(productDirectory, productUri, apiNamesToExport, listRestResources, logger, cancellationToken);
         await ExportGroups(productDirectory, productUri, listRestResources, logger, cancellationToken);
         await ExportTags(productDirectory, productUri, listRestResources, logger, cancellationToken);
     }
@@ -56,9 +56,9 @@ internal static class Product
         await ProductPolicy.ExportAll(productDirectory, productUri, listRestResources, getRestResource, logger, cancellationToken);
     }
 
-    private static async ValueTask ExportApis(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask ExportApis(ProductDirectory productDirectory, ProductUri productUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
     {
-        await ProductApi.ExportAll(productDirectory, productUri, listRestResources, logger, cancellationToken);
+        await ProductApi.ExportAll(productDirectory, productUri, apiNamesToExport, listRestResources, logger, cancellationToken);
     }
 
     private static async ValueTask ExportGroups(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)

@@ -29,10 +29,10 @@ internal static class Service
         await Backend.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, cancellationToken);
 
         logger.LogInformation("Exporting products...");
-        await Product.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, cancellationToken);
+        await Product.ExportAll(serviceDirectory, serviceUri, apiNamesToExport, listRestResources, getRestResource, logger, cancellationToken);
 
         logger.LogInformation("Exporting gateways...");
-        await Gateway.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, cancellationToken);
+        await Gateway.ExportAll(serviceDirectory, serviceUri, apiNamesToExport, listRestResources, getRestResource, logger, cancellationToken);
 
         logger.LogInformation("Exporting policy fragments...");
         await PolicyFragment.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, cancellationToken);
