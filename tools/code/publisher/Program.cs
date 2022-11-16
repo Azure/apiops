@@ -47,34 +47,20 @@ public static class Program
 
     private static void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton(GetPublisherParameters)
+        services.AddSingleton(GetGetArmEnvironment)
+                .AddSingleton(GetHttpPipeline)
+                .AddSingleton(GetDeleteRestResource)
+                .AddSingleton(GetListRestResources)
+                .AddSingleton(GetPutRestResource)
+                .AddSingleton(GetPublisherParameters)
                 .AddHostedService<Publisher>();
     }
 
-    private static Publisher.Parameters GetPublisherParameters(IServiceProvider provider)
+    private static GetArmEnvironment GetGetArmEnvironment(IServiceProvider provider)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
-        var armEnvironment = GetArmEnvironment(configuration);
-        var pipeline = GetHttpPipeline(configuration, armEnvironment);
 
-        return new Publisher.Parameters
-        {
-            ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
-            CommitId = TryGetCommitId(configuration),
-            ConfigurationFile = TryGetConfigurationFile(configuration),
-            ConfigurationJson = GetConfigurationJson(configuration),
-            DeleteRestResource = GetDeleteRestResource(pipeline),
-            ListRestResources = GetListRestResources(pipeline),
-            Logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(Publisher)),
-            PutRestResource = GetPutRestResource(pipeline),
-            ServiceDirectory = GetServiceDirectory(configuration),
-            ServiceUri = GetServiceUri(configuration, armEnvironment)
-        };
-    }
-
-    private static ArmEnvironment GetArmEnvironment(IConfiguration configuration)
-    {
-        return configuration.TryGetValue("AZURE_CLOUD_ENVIRONMENT") switch
+        var environment = configuration.TryGetValue("AZURE_CLOUD_ENVIRONMENT") switch
         {
             null => ArmEnvironment.AzurePublicCloud,
             "AzureGlobalCloud" or nameof(ArmEnvironment.AzurePublicCloud) => ArmEnvironment.AzurePublicCloud,
@@ -83,12 +69,18 @@ public static class Program
             "AzureGermanCloud" or nameof(ArmEnvironment.AzureGermany) => ArmEnvironment.AzureGermany,
             _ => throw new InvalidOperationException($"AZURE_CLOUD_ENVIRONMENT is invalid. Valid values are {nameof(ArmEnvironment.AzurePublicCloud)}, {nameof(ArmEnvironment.AzureChina)}, {nameof(ArmEnvironment.AzureGovernment)}, {nameof(ArmEnvironment.AzureGermany)}")
         };
+
+        return () => environment;
     }
 
-    private static HttpPipeline GetHttpPipeline(IConfiguration configuration, ArmEnvironment armEnvironment)
+    private static HttpPipeline GetHttpPipeline(IServiceProvider provider)
     {
+        var configuration = provider.GetRequiredService<IConfiguration>();
         var credential = GetTokenCredential(configuration);
+
+        var armEnvironment = provider.GetRequiredService<GetArmEnvironment>()();
         var policy = new BearerTokenAuthenticationPolicy(credential, armEnvironment.DefaultScope);
+
         return HttpPipelineBuilder.Build(ClientOptions.Default, policy);
     }
 
@@ -130,6 +122,73 @@ public static class Program
         var accessToken = new AccessToken(token, expirationDate);
 
         return DelegatedTokenCredential.Create((context, cancellationToken) => accessToken);
+    }
+
+    private static DeleteRestResource GetDeleteRestResource(IServiceProvider provider)
+    {
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(DeleteRestResource));
+
+        return async (uri, cancellationToken) =>
+        {
+            logger.LogDebug("Beginning request to delete REST resource at URI {uri}...", uri);
+            await pipeline.DeleteResource(uri, cancellationToken);
+            logger.LogDebug("Successfully deleted REST resource at URI {uri}.", uri);
+        };
+    }
+
+    private static ListRestResources GetListRestResources(IServiceProvider provider)
+    {
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(ListRestResources));
+
+        return (uri, cancellationToken) =>
+        {
+            logger.LogDebug("Listing REST resources at URI {uri}...", uri);
+            return pipeline.ListJsonObjects(uri, cancellationToken);
+        };
+    }
+
+    private static PutRestResource GetPutRestResource(IServiceProvider provider)
+    {
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(PutRestResource));
+
+        return async (uri, json, cancellationToken) =>
+        {
+            if (logger.IsEnabled(LogLevel.Trace))
+            {
+                logger.LogTrace("Beginning request to put REST resource {json} at URI {uri}...", json.ToString(), uri);
+            }
+            else
+            {
+                logger.LogDebug("Beginning request to put REST resource URI {uri}...", uri);
+            }
+
+            await pipeline.PutResource(uri, json, cancellationToken);
+
+            logger.LogDebug("Successfully put REST resource at URI {uri}.", uri);
+        };
+    }
+
+    private static Publisher.Parameters GetPublisherParameters(IServiceProvider provider)
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var armEnvironment = provider.GetRequiredService<GetArmEnvironment>()();
+
+        return new Publisher.Parameters
+        {
+            ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
+            CommitId = TryGetCommitId(configuration),
+            ConfigurationFile = TryGetConfigurationFile(configuration),
+            ConfigurationJson = GetConfigurationJson(configuration),
+            DeleteRestResource = provider.GetRequiredService<DeleteRestResource>(),
+            ListRestResources = provider.GetRequiredService<ListRestResources>(),
+            Logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(Publisher)),
+            PutRestResource = provider.GetRequiredService<PutRestResource>(),
+            ServiceDirectory = GetServiceDirectory(configuration),
+            ServiceUri = GetServiceUri(configuration, armEnvironment)
+        };
     }
 
     private static CommitId? TryGetCommitId(IConfiguration configuration)
@@ -209,27 +268,6 @@ public static class Program
         }
     }
 
-    private static DeleteRestResource GetDeleteRestResource(HttpPipeline pipeline)
-    {
-        return async (uri, cancellationToken) =>
-        {
-            await pipeline.DeleteResource(uri, cancellationToken);
-        };
-    }
-
-    private static ListRestResources GetListRestResources(HttpPipeline pipeline)
-    {
-        return (uri, cancellationToken) => pipeline.ListJsonObjects(uri, cancellationToken);
-    }
-
-    private static PutRestResource GetPutRestResource(HttpPipeline pipeline)
-    {
-        return async (uri, json, cancellationToken) =>
-        {
-            await pipeline.PutResource(uri, json, cancellationToken);
-        };
-    }
-
     private static ServiceDirectory GetServiceDirectory(IConfiguration configuration)
     {
         var directoryPath = configuration.GetValue("API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH");
@@ -252,4 +290,6 @@ public static class Program
 
         return new ServiceUri(uri);
     }
+
+    private delegate ArmEnvironment GetArmEnvironment();
 }

@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,14 +9,10 @@ namespace extractor;
 
 internal static class ServicePolicy
 {
-    public static async ValueTask ExportAll(ServiceUri serviceUri, ServiceDirectory serviceDirectory, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceUri serviceUri, ServiceDirectory serviceDirectory, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
-                .ForEachParallel(async policyName => await Export(serviceDirectory,
-                                                                  serviceUri,
-                                                                  policyName,
-                                                                  getRestResource,
-                                                                  cancellationToken),
+                .ForEachParallel(async policyName => await Export(serviceDirectory, serviceUri, policyName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -27,7 +24,7 @@ internal static class ServicePolicy
                                 .Select(name => new ServicePolicyName(name));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ServicePolicyName policyName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ServicePolicyName policyName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var policyFile = new ServicePolicyFile(policyName, serviceDirectory);
 
@@ -37,6 +34,7 @@ internal static class ServicePolicy
         var policyContent = responseJson.GetJsonObjectProperty("properties")
                                         .GetStringProperty("value");
 
+        logger.LogInformation("Writing service policy file {filePath}...", policyFile.Path);
         await policyFile.OverwriteWithText(policyContent, cancellationToken);
     }
 }

@@ -1,4 +1,5 @@
 ﻿using common;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,14 +9,10 @@ namespace extractor;
 
 internal static class ApiPolicy
 {
-    public static async ValueTask ExportAll(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(apiUri, listRestResources, cancellationToken)
-                .ForEachParallel(async policyName => await Export(apiDirectory,
-                                                                  apiUri,
-                                                                  policyName,
-                                                                  getRestResource,
-                                                                  cancellationToken),
+                .ForEachParallel(async policyName => await Export(apiDirectory, apiUri, policyName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -27,7 +24,7 @@ internal static class ApiPolicy
                                 .Select(name => new ApiPolicyName(name));
     }
 
-    private static async ValueTask Export(ApiDirectory apiDirectory, ApiUri apiUri, ApiPolicyName policyName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Export(ApiDirectory apiDirectory, ApiUri apiUri, ApiPolicyName policyName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var policyFile = new ApiPolicyFile(policyName, apiDirectory);
 
@@ -37,6 +34,7 @@ internal static class ApiPolicy
         var policyContent = responseJson.GetJsonObjectProperty("properties")
                                         .GetStringProperty("value");
 
+        logger.LogInformation("Writing API policy file {filePath}...", policyFile.Path);
         await policyFile.OverwriteWithText(policyContent, cancellationToken);
     }
 }
