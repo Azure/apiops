@@ -1,4 +1,4 @@
-﻿using common;
+using common;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Extensions;
@@ -253,10 +253,10 @@ internal static class Api
 
     private static ApiSpecificationFile? TryGetExistingSpecificationFile(ApiDirectory apiDirectory, ServiceDirectory serviceDirectory)
     {
-        return apiDirectory.GetDirectoryInfo()
+        return apiDirectory.DirectoryExists() ? apiDirectory.GetDirectoryInfo()
                            .EnumerateFiles()
                            .Choose(file => TryGetApiSpecificationFile(file, serviceDirectory))
-                           .FirstOrDefault();
+                           .FirstOrDefault() : null;
     }
 
     private static async ValueTask PutApi(ApiName apiName, ApiInformationFile? apiInformationFile, ApiSpecificationFile? specificationFile, JsonObject? configurationApiJson, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
