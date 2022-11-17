@@ -355,7 +355,7 @@ public sealed record ApiDiagnosticModel
 
         public sealed record SamplingSettings
         {
-            public int? Percentage { get; init; }
+            public double? Percentage { get; init; }
 
             public SamplingTypeOption? SamplingType { get; init; }
 
@@ -367,7 +367,7 @@ public sealed record ApiDiagnosticModel
             public static SamplingSettings Deserialize(JsonObject jsonObject) =>
                 new()
                 {
-                    Percentage = jsonObject.TryGetIntProperty("percentage"),
+                    Percentage = jsonObject.TryGetDoubleProperty("percentage"),
                     SamplingType = jsonObject.TryGetProperty("samplingType")
                                              .Map(SamplingTypeOption.Deserialize)
                 };
