@@ -22,6 +22,17 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH | Folder where the APIM artifacts will be saved |
 | API_SPECIFICATION_FORMAT | OpenAPI specification format. Valid options are **JSON** or **YAML**. If the variable is missing or invalid, **YAML** will be used by default |
 | CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to specify select apis to extract. A sample yaml extractor configuration file to signal to the extractor to extract select apis. This is an optional parameter and will only come into play if you want different teams to manage different apis. You typically will have one configuration per team. Note: You can call the file whatever you want as long as you reference the right file within your extractor pipeline.
+| Logging__LogLevel__Default:  | The allowed values are either "Information", "Debug", or "Trace". Table below shows the description of each logging level.
+
+Here are the different logging levels available. By default the logging level is set to "Information". 
+
+| Log Level | Description |
+| - | - |
+| Information | Logs that track the general flow of the application. These logs should have long-term value |
+| Debug | Logs that are used for interactive investigation during development. These logs should primarily contain information useful for debugging and have no long-term value |
+| Trace | Logs that contain the most detailed messages. These messages may contain sensitive application data. These messages are disabled by default and should never be enabled in a production environment |
+
+
 
 ### API_SPECIFICATION_FORMAT
 The specification file format is controlled by the configuration variable ``API_SPECIFICATION_FORMAT``. Here are the options:

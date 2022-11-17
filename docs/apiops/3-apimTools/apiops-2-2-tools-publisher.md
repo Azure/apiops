@@ -22,6 +22,16 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to override different configurations (e.g. policy backend value,  namevalue pairs, just to name a few) when promoting across APIM environments (e.g. dev -> qa -> prod). You will need a unique Yaml configuration file per environment  (e.g. configuration.prod.yaml for production) when overriding configurations across environments. More on this later on in the lab.  |
 | COMMIT_ID | Git commit ID. If specified, the tool will only use files that were affected by that commit. New/modified files will be updated in Azure, and deleted artifacts will be removed from the Azure APIM instance. If unspecified, the tool will do a Put operation on the Azure APIM instance with all files in the artifacts folder. |
 | PUBLISH_CONFIGURATION_ARTIFACTS | If set to true, publisher will publish artifacts that are defined in configuration and exist in the artifacts directory.  |
+| Logging__LogLevel__Default:  | The allowed values are either "Information", "Debug", or "Trace". Table below shows the description of each logging level.
+
+Here are the different logging levels available. By default the logging level is set to "Information". 
+
+| Log Level | Description |
+| - | - |
+| Information | Logs that track the general flow of the application. These logs should have long-term value |
+| Debug | Logs that are used for interactive investigation during development. These logs should primarily contain information useful for debugging and have no long-term value |
+| Trace | Logs that contain the most detailed messages. These messages may contain sensitive application data. These messages are disabled by default and should never be enabled in a production environment |
+
 
 >There are some interesting interactions with cases where we pass a commit ID. Here's the current behavior:
 
