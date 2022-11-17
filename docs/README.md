@@ -14,7 +14,7 @@ This lab is designed to bring a 400-level understanding of automating API deploy
 This hands-on lab will guide you through the concept of APIOps. It applies the concepts of GitOps and DevOps to API deployment. By using practices from these two methodologies, APIOps can enable everyone involved in the lifecycle of API design, development, and deployment with self-service and automated tools to ensure the quality of the specifications and APIs that they're building.
 
 
-[This workshop is delivered using Github Pages and Just-The-Docs theme at https://azure.github.io/apiops/.](https://azure.github.io/apiops/)
+[This Guide is delivered using Github Pages and Just-The-Docs theme at https://azure.github.io/apiops/.](https://azure.github.io/apiops/)
 
 ## Contributing
 
