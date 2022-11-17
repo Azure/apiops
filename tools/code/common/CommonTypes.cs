@@ -1,4 +1,4 @@
-﻿using Flurl;
+using Flurl;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -155,6 +155,11 @@ public static class ArtifactDirectoryExtensions
     public static string GetName(this IArtifactDirectory directory)
     {
         return directory.GetDirectoryInfo().Name;
+    }
+
+    public static bool DirectoryExists(this IArtifactDirectory directory)
+    {
+        return directory.GetDirectoryInfo().Exists;
     }
 
     public static IEnumerable<FileInfo> EnumerateFilesRecursively(this IArtifactDirectory directory)
