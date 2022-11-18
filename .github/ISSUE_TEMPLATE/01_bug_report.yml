@@ -1,5 +1,5 @@
 name: Bug report
-description: Create a report to help us improve. Please make sure you read the docs found [here](https://azure.github.io/apiops/) before opening an issue 
+description: Create a report to help us improve. Please make sure you read the docs before opening an issue 
 title: "[BUG]"
 
 body:
