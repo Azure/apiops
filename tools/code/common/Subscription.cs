@@ -119,7 +119,7 @@ namespace common
                 {
                     DisplayName = jsonObject.TryGetStringProperty("displayName"),
                     AllowTracing = jsonObject.TryGetBoolProperty("allowTracing"),
-                    OwnerId = GetOwnerId(jsonObject.TryGetStringProperty("ownerId")),
+                    OwnerId = jsonObject.TryGetStringProperty("ownerId"),
                     PrimaryKey = jsonObject.TryGetStringProperty("primaryKey"),
                     Scope = jsonObject.TryGetStringProperty("scope"),
                     SecondaryKey = jsonObject.TryGetStringProperty("secondaryKey"),
@@ -140,15 +140,6 @@ namespace common
                 throw new ArgumentException("Subscription scope should be one of '/apis', '/apis/{apiId}', '/products/{productId}'");
             }
             return string.Format("/{0}", string.Join('/', splittedSubscriptionScope));
-        }
-
-        public static string? GetOwnerId(string? fullId) 
-        {
-            var splittedId = fullId is not null ? fullId.Split('/').Select((uriPart, index) => new { uriPart, index }) : null;
-            if (splittedId is null)
-                return null;
-            var splittedUserId = splittedId.Where(split => split.index >= splittedId.Count() - 2).Select(split => split.uriPart).ToArray();
-            return string.Format("/{0}", string.Join('/', splittedUserId));
         }
 
         public JsonObject Serialize() =>

@@ -85,7 +85,6 @@ internal static class Subscription
 
     public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Entered subscription creation");
         await GetArtifactsToPut(files, configurationJson, serviceDirectory)
                 .ForEachParallel(async artifact => await PutSubscription(artifact.Name, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
                                  cancellationToken);
