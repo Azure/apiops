@@ -46,13 +46,6 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
-          - task: UniversalPackages@0
-            displayName: Download extractor
-            inputs:
-              downloadDirectory: '$(Pipeline.Workspace)/extractor'
-              vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
-              vstsFeedPackage: 'extractor'
-              vstsPackageVersion: '*'
           - task: AzureCLI@2
             displayName: Set extraction variables
             inputs:
@@ -67,6 +60,16 @@ stages:
                 echo "##vso[task.setvariable issecret=true;variable=AZURE_SUBSCRIPTION_ID]$(az account show --query "id" --output tsv)"
               addSpnToEnvironment: true
               failOnStandardError: true
+          - task: Bash@3
+            displayName: Fetch extractor
+            inputs:
+              targetType: 'inline'
+              script: |
+                wget https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/extractor
+                result=$?
+                echo "Exit code is $result"
+                exit $result
+              failOnStderr: false
           - task: AzureCLI@2
             displayName: Run extractor
             inputs:
@@ -74,8 +77,8 @@ stages:
               scriptType: bash
               scriptLocation: inlineScript
               inlineScript: |
-                chmod u+x $(Pipeline.Workspace)/extractor/extractor
-                $(Pipeline.Workspace)/extractor/extractor
+                chmod +x ./extractor
+                ./extractor
                 result=$?
                 echo "Exit code is $result"
                 exit $result

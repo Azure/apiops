@@ -33,7 +33,7 @@ stages:
         pool:
           vmImage: ubuntu-latest
         steps:
-          - template: apim-stage.yaml
+          - template: run-publisher-with-env.yaml
             parameters:
               API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
               RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME)
@@ -57,7 +57,7 @@ stages:
           runOnce:
             deploy:
                steps:
-                 - template: apim-stage.yaml
+                 - template: run-publisher-with-env.yaml
                    parameters:
                      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
                      RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME_Prod)
