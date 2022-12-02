@@ -1,4 +1,4 @@
-name: Run Extractor
+name: Run - Extractor
 
 on:
   workflow_dispatch:
@@ -19,20 +19,16 @@ on:
         - OpenAPIV3Json
         - OpenAPIV2Yaml
         - OpenAPIV2Json
- 
+
+env:
+  apiops_release_version: desired-version-goes-here
+
 jobs:
   extract:
     runs-on: ubuntu-latest
     environment: dev # change this to match the dev environment created in settings 
     steps:
       - uses: actions/checkout@v2
-          
-      - name: Download artifact
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          workflow: publish-extractor.yaml
-          name: extractor
           
       - name: Run extractor without Config Yaml
         if: ${{ github.event.inputs.CONFIGURATION_YAML_PATH == 'Extract All APIs' }}
@@ -46,6 +42,7 @@ jobs:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/apimartifacts  # change this to the artifacts folder
           API_SPECIFICATION_FORMAT: ${{ github.event.inputs.API_SPECIFICATION_FORMAT }} 
         run: |
+          wget https://github.com/Azure/apiops/releases/download/$apiops_release_version/extractor
           chmod +x ./extractor
           ./extractor
       
@@ -62,6 +59,7 @@ jobs:
           API_SPECIFICATION_FORMAT: ${{ github.event.inputs.API_SPECIFICATION_FORMAT }} 
           CONFIGURATION_YAML_PATH:  ${{ GITHUB.WORKSPACE }}/${{ github.event.inputs.CONFIGURATION_YAML_PATH }}
         run: |
+          wget https://github.com/Azure/apiops/releases/download/$apiops_release_version/extractor
           chmod +x ./extractor
           ./extractor
 

@@ -1,5 +1,4 @@
-
-name: run-publisher-with-env
+name: Run Publisher with Environment
 
 on:
   workflow_call:
@@ -16,7 +15,10 @@ on:
       API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: 
         required: true
         type: string          
-        
+
+env:
+  apiops_release_version: desired-version-goes-here
+  
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,14 +36,6 @@ jobs:
         with:
           fetch-depth: 2
 
-      # Download the Publisher binary
-      - name: Download artifact
-        uses: dawidd6/action-download-artifact@v2
-        with:
-          github_token: ${{secrets.GITHUB_TOKEN}}
-          workflow: publish-publisher.yaml
-          name: publisher         
-      
       # Add this step for each APIM environment and pass specific set of secrets that you want replaced in the env section below
       - name: 'Perform namevalue secret substitution in configuration.${{ inputs.API_MANAGEMENT_ENVIRONMENT}}.yaml'
         if: (inputs.API_MANAGEMENT_ENVIRONMENT == 'prod' )   
@@ -54,7 +48,7 @@ jobs:
         # replace within the configuration.[environment].yaml file
         env: 
           testSecretValue: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
-
+         
       - name: Run publisher without Config Yaml but with Commit ID
         if: ( inputs.CONFIGURATION_YAML_PATH == '' &&  inputs.COMMIT_ID != '')
         env:
@@ -67,6 +61,7 @@ jobs:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
           COMMIT_ID: ${{ inputs.COMMIT_ID }}
         run: |
+          wget https://github.com/Azure/apiops/releases/download/$apiops_release_version/publisher
           chmod +x ./publisher
           ./publisher        
           
@@ -81,8 +76,9 @@ jobs:
           API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
         run: |
+          wget https://github.com/Azure/apiops/releases/download/$apiops_release_version/publisher
           chmod +x ./publisher
-          ./publisher        
+          ./publisher  
       
       - name: Run publisher with Config Yaml and Commit id
         if: ( inputs.CONFIGURATION_YAML_PATH != '' &&  inputs.COMMIT_ID != '')
@@ -97,8 +93,9 @@ jobs:
           CONFIGURATION_YAML_PATH:  ${{ GITHUB.WORKSPACE }}/${{ inputs.CONFIGURATION_YAML_PATH }}
           COMMIT_ID: ${{ inputs.COMMIT_ID }}
         run: |
+          wget https://github.com/Azure/apiops/releases/download/$apiops_release_version/publisher
           chmod +x ./publisher
-          ./publisher             
+          ./publisher
      
           
       - name: Run publisher with Config Yaml but without Commit id
@@ -113,5 +110,6 @@ jobs:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
           CONFIGURATION_YAML_PATH:  ${{ GITHUB.WORKSPACE }}/${{ inputs.CONFIGURATION_YAML_PATH }}
         run: |
+          wget https://github.com/Azure/apiops/releases/download/$apiops_release_version/publisher
           chmod +x ./publisher
-          ./publisher             
+          ./publisher
