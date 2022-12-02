@@ -232,7 +232,7 @@ public sealed record DiagnosticModel
                         new JsonObject()
                             .AddPropertyIfNotNull("headers", Headers?.Select(x => x.Serialize())
                                                                     ?.ToJsonArray())
-                            .AddPropertyIfNotNull("queryParams", Headers?.Select(x => x.Serialize())
+                            .AddPropertyIfNotNull("queryParams", QueryParams?.Select(x => x.Serialize())
                                                                         ?.ToJsonArray());
 
                     public static DataMaskingSettings Deserialize(JsonObject jsonObject) =>
