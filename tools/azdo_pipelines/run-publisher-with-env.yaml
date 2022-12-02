@@ -40,14 +40,6 @@ steps:
 - script: spectral lint "$(Build.SourcesDirectory)\${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
   displayName: 'Lint API definition' 
 
-- task: UniversalPackages@0
-  displayName: Download publisher
-  inputs:
-    downloadDirectory: '$(Pipeline.Workspace)/publisher'
-    vstsFeed: $(System.TeamProject)/$(ARTIFACTS_FEED_NAME)
-    vstsFeedPackage: 'publisher'
-    vstsPackageVersion: '*'
-
 - task: AzureCLI@2
   displayName: Set publishing variables
   inputs:
@@ -76,6 +68,16 @@ steps:
     tokenPrefix: "{#"
     tokenSuffix: "#}"
 
+- task: Bash@3
+  displayName: Fetch publisher
+  inputs:
+    targetType: 'inline'
+    script: |
+      wget https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/publisher
+      result=$?
+      echo "Exit code is $result"
+      exit $result
+    failOnStderr: false
 
 - task: AzureCLI@2
   displayName: Run publisher for ${{ parameters.ENVIRONMENT}} environment
@@ -84,8 +86,8 @@ steps:
     scriptType: bash
     scriptLocation: inlineScript
     inlineScript: |
-      chmod u+x $(Pipeline.Workspace)/publisher/publisher
-      $(Pipeline.Workspace)/publisher/publisher
+      chmod +x ./publisher
+      ./publisher
       result=$?
       echo "Exit code is $result"
       exit $result

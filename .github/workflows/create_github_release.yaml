@@ -76,3 +76,25 @@ jobs:
         with:
           name: artifacts
           path: ${{ GITHUB.WORKSPACE }}/finalartifacts
+      
+    
+  Generate_Release:
+   needs: Generate_Artifacts
+   runs-on: [ubuntu-latest]
+   steps:
+   - name: Download artifacts
+     uses: actions/download-artifact@v2
+     with:
+       name: artifacts
+       path: ${{ GITHUB.WORKSPACE }}/finalartifacts
+   - name: Release
+     uses: softprops/action-gh-release@v1
+     with:
+       files: |
+         ${{github.workspace}}/finalartifacts/extractor
+         ${{github.workspace}}/finalartifacts/publisher
+         ${{github.workspace}}/finalartifacts/Azure_DevOps.zip
+         ${{github.workspace}}/finalartifacts/Github.zip
+       name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
+       tag_name: ${{ github.event.inputs.Release_Version }}
+       generate_release_notes: true
