@@ -1,6 +1,6 @@
 ---
 title: Basic Concepts
-parent: APIOps Lab
+parent: APIOps
 has_children: false
 nav_order: 2
 ---

@@ -1,12 +1,12 @@
 ---
 title: Prerequisites
-parent: APIOps Lab
+parent: APIOps
 has_children: false
 nav_order: 1
 ---
 
 ## Prerequisites
-Please check that you have the following requirements to complete the hands-on lab:
+Please check that you have the following requirements before utilizing the apiops tool:
 
 - Azure requirements
   - Access to the [Azure Portal](https://www.portal.azure.com)
