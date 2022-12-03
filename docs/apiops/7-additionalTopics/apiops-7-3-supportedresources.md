@@ -17,14 +17,17 @@ Below there is a table with all [artifacts extracted and published by APIOps](ht
 | API Operation Policy | ✓ | | |
 | API Policy | ✓ | | |
 | API Specification | ✓ | | |
+| Api Product | ✓ | | |
+| Api Version set | ✓ | | |
+| Api Revision | ✓ | | |
+| Api tags | ✓ | | |
+| Deleted APIs | ✓ | | |
 | Diagnostics | ✓ | | Global level |
 | Gateways | ✓| | |
 | Gateway APIs | ✓| | |
 | Loggers | ✓ | | |
 | Named values | ✓ | | |
+| Policy Fragments | ✓ | | |
 | Products | ✓ | | |
-| Api Product | ✓ | | |
-| Api Version set | ✓ | | |
-| Api Revision | ✓ | | |
-| Deleted APIs | ✓ | | |
+| Product tags | ✓ | | |
 | |
