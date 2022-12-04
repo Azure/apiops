@@ -13,7 +13,7 @@ Before we dive into learning about the APIOPs tool we would like to share some g
 #  Versions
 Please note that starting with release V.3.0.0 we changed the way the updates to the system get delivered. Thus when reading the docs you will notice that there are some sections that are designated with the <= V.3.0.0 and >= V.3.0.0 suffixes to distinguish between the old and the new update delivery methodology. We recommend switching to the new methodology whenever possible as it greatly simplifies fetching the latest version of the code. 
 
-##  Old method (version < 3.0.0)
+## Old method (version < 3.0.0)
 
 Each time a new release was pushed you would have to:
 - Download the updated code folder as well as the updated pipelines
