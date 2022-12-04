@@ -17,14 +17,17 @@ Please note that starting with release V.3.0.0 we changed the way the updates to
 
 Each time a new release was pushed you would have to:
 - Download the updated code folder as well as the updated pipelines
-- You would have to build the extractor and publisher pipelines and store them within your internal feed
+- You would have to run the publish-extractor and publish-publisher pipelines and store the resulting binaries in your own internal feed
+- We dropped the publish-publisher and publish-extractor pipelines as we now host the binaries for you. If you would rather host the binaries yourself you still have access to the source code which you can download and build yourself. Just keep in mind that these deprecated pipelines now live in the releases themselves and won't be found in the repository.
+
 ## New method (version >= 3.0.0)
 
 - The binaries are now hosted for you on the public github repo as part of the release
-- Utilizing the new version simply involves pointing the pipelines to the new version (refer to the docs on how to achieve that). No more rebuilding of binaries
-- You only have to download the updated pipelines if they are updated
-- As part of the release we now push two different sets of pipelines. The Azure_DevOps.zip if you are a Azure Devops user and Github.zip if you are a Github user
-- We dropped the publish-publisher and publish-extractor pipelines as we now host the binaries for you. If you would rather host the binaries yourself you still have access to the source code which you can download and build yourself. Just keep in mind that these deprecated pipelines now live in the releases themselves and won't be found in the repository. We also now publish the compiled publisher and extractor binaries as part of the release so you can download these and host them internally if you want. The publish-publisher and publish-extractor pipelines are now legacy pipelines that can be found under the V.2.x release if you still need access to them.
+- Utilizing the new version simply involves pointing the pipelines to the new version by changing environment variables (refer to the docs on how to achieve that). No more rebuilding or hosting of binaries
+- You only have to download the updated pipelines if they are updated. As part of the release we now push two different sets of pipelines. The Azure_DevOps.zip if you are a Azure Devops user and Github.zip if you are a Github user
+- If you would still rather host the extractor and publisher binaries within your own environment you have two options:
+    - We publish the compiled publisher and extractor binaries as part of the release so you can download these and host them internally if you want
+    - The publish-publisher and publish-extractor pipelines are now legacy pipelines that can be found under the V.2.x release if you still need access to them. Also note that we still include the source code as part of the Source code (zip) in each release
 
 #  About this Tool
 
