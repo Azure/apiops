@@ -37,7 +37,7 @@ This guide will guide you through the concept of APIOps. It applies the concepts
 [This Guide is delivered using Github Pages and Just-The-Docs theme at https://azure.github.io/apiops/.](https://azure.github.io/apiops/).
 
 ## Wiki
-The Wiki covers all of our supported resources. Think about it as being more resource-focused with deeper dives, as opposed to the aforementioned guide which is more scenario-based and wholistic. So in essence you need to read both to have a successful adoption of the tool. [The wiki can be found on wiki tab within this repo or by following this link](https://github.com/Azure/apiops/wiki).
+The Wiki covers all of our supported resources. Think about it as being more resource-focused with deeper dives, as opposed to the aforementioned guide which is more scenario-based and holistic. So in essence you need to read both to have a successful adoption of the tool. [The wiki can be found on wiki tab within this repo or by following this link](https://github.com/Azure/apiops/wiki).
 
 # Contributing
 
