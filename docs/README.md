@@ -1,5 +1,4 @@
 
-
 <img src="assets/images/apim-logo-transparent.png">
 
 #  Code Of Conduct
@@ -29,19 +28,18 @@ Each time a new release was pushed you would have to:
 
 #  About this Tool
 
-APIOps places the Azure API Management infrastructure under version control to achieve these goals. Rather than making changes directly in API Management portal, most operations happen through code changes that can be reviewed and audited. 
+APIOps places the Azure API Management infrastructure under version control to achieve these goals. Rather than making changes directly in API Management portal, most operations happen through code changes that can be reviewed and audited. In this section we include links to both a complementary Guide and Wiki to get you started with the tool.
 
-
-##  Complementary Guide to get you started with the Tool
-
+## Complementary Guide
 
 This guide is designed to bring a 400-level understanding of automating API deployments in Azure Api Management. This is meant to be a hands-on lab experience, all instructions are provided, but a basic level of understanding of apis, devops and gitops is expected.
 This guide will guide you through the concept of APIOps. It applies the concepts of GitOps and DevOps to API deployment. By using practices from these two methodologies, APIOps can enable everyone involved in the lifecycle of API design, development, and deployment with self-service and automated tools to ensure the quality of the specifications and APIs that they're building.
+[This Guide is delivered using Github Pages and Just-The-Docs theme at https://azure.github.io/apiops/.](https://azure.github.io/apiops/).
 
+## Wiki
+The Wiki covers all of our supported resources. Think about it as being more resource-focused with deeper dives, as opposed to the aforementioned guide which is more scenario-based and wholistic. So in essence you need to read both to have a successful adoption of the tool. [The wiki can be found on wiki tab within this repo or by following this link](https://github.com/Azure/apiops/wiki).
 
-[This Guide is delivered using Github Pages and Just-The-Docs theme at https://azure.github.io/apiops/.](https://azure.github.io/apiops/)
-
-## Contributing
+# Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
 Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
@@ -55,7 +53,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
 contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
 
-## Trademarks
+# Trademarks
 
 This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft 
 trademarks or logos is subject to and must follow 
