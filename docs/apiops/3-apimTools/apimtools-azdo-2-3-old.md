@@ -1,5 +1,5 @@
 ---
-title: Configure APIM tools in Azure DevOps - < V.3.0.0
+title: Configure APIM tools in Azure DevOps - Old Version
 parent: Configure APIM tools
 has_children: false
 nav_order: 4
@@ -7,7 +7,7 @@ nav_order: 4
 > **Warning**
 > This section pertains to the older method where it was required to download the code folder into your environment, run pipelines that build the code, and finally store the resulting binaries in your own environment. This is being retained for backward compatibility. Please use release V.3.0.0 or higher which utilizes the new method of consuming binaries that are now hosted on the Github repo and as a result there is no need to download the code folder anymore or the accompanying pipelines (publish-publisher and publish-extractor) into your environment.
 <br />
-The updated method [can be found here](apimtools-azdo-2-3-new.md).
+The updated method [can be found here](https://azure.github.io/apiops/apiops/3-apimTools/apimtools-azdo-2-3-new.html).
 
 ## Configure APIM tools in Azure DevOps
 
