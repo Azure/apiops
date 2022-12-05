@@ -9,7 +9,7 @@ nav_order: 4
 <br />
 The updated method [can be found here](https://azure.github.io/apiops/apiops/3-apimTools/apimtools-azdo-2-3-new.html).
 
-## Configure APIM tools in Azure DevOps
+## Configure APIM tools in Azure DevOps - Old Version (< v.3.0.0)
 
 1. Create a new project in Azure DevOps for this tutorial (optional). We will refer to it as **apiops** in this tutorial
 2. Publish the [**tools**](https://github.com/Azure/apiops/tree/main/tools) folder to this new repository. Your folder structure should look like:

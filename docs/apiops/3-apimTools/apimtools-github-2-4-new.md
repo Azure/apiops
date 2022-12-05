@@ -10,14 +10,12 @@ nav_order: 5
 
 
 1. Create a new Github repository. We will refer to it as **apiops** in this tutorial.
-2. Copy the "code" and "utils" folder from the [**tools**](https://github.com/Azure/apiops/tree/main/tools) folder to the tools folder under this new repository (ignore the pipelines folder as its only relevant if you are using Azure DevOps). Copy the .github/worflows folder from the [**.github/workflows**](https://github.com/Azure/apiops/tree/main/.github/workflows) folder to .github/workflows folder under this new repository. Your folder structure should look like this:
+2. Head to the release you are targeting on the Github page. The list of releases can be found [here](https://github.com/Azure/apiops/releases). For this example we will assume you are trying to start with release v.3.0.0.  As you can see in the image below under the "Assets" section you have a file called **Github.zip**. Download that file and then extract the content into your repository. Your folder structure should look like:
     - your-repo-name
-        - .github/workflows
-            - ...
-        - tools
-            - code
-                - ...
-            - utils
+        - .github
+            - workflows
+
+    ![Github_Release](../../assets/images/Github_Release_Github.png)
 3. Next we will need to [Create an Azure AD Service Principal](https://docs.microsoft.com/en-us/cli/azure/ad/sp?view=azure-cli-latest#az-ad-sp-create-for-rbac) and configure its access to Azure resources. We will provide the SP with the contributor role to the resource groups hosting your different APIM instances. Make sure that you have the [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) installed. Issue the following command twice on your command prompt (once for each environment). Make sure you replace the subscription id and resource group with your own information.
      - az ad sp create-for-rbac -n "apiopslab" --role Contributor --scopes /subscriptions/{subscription-id}/resourceGroups/{dev-resource-group} --sdk-auth
     - az ad sp create-for-rbac -n "apiopslab" --role Contributor --scopes /subscriptions/{subscription-id}/resourceGroups/{prod-resource-group} --sdk-auth
@@ -26,6 +24,4 @@ nav_order: 5
 5. Repeat the same process for the production apim instance (remember to use the information from the json object generated for the production apim instance in the service principal command above). Also for hte production environment we will need to add a protection rule to ensure that the production stage only gets triggered after manual approval. Here is the completed production environment settings with one reviewer selected. Its recommended you have at least two approvers in an enterpirse setting. ![github prod environment](../../assets/images/github_prod_environment.png)
 6. Here are the two completed environments: ![github environment](../../assets/images/Github_Environments.png)
 
-7. Next head to the actions section within your repository and manually run the "Publish - Publisher" and "Publish - Extractor" workflows. This will generate the binaires which will be utilized later on by the Extractor and Publisher runners. ![pipeline variable group](../../assets/images/GithubActionsPublishers.png)
-    >Note that Github build pipeline agents don't have permission by default to contribute to a repo, create a branch or update a pr. Set the security settings to allow Workflows to have write permissions.
-You need to grant that permission as discussed [here](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#setting-the-permissions-of-the-github_token-for-your-repository)
+7. Thats it. You are now ready to extract and publish your Azure APIM instance artifacts. Refer to the extract and publish APIM artifacts sections for more information. For a list of supported artifacts refer to [this section ](https://azure.github.io/apiops/apiops/7-additionalTopics/apiops-7-3-supportedresources.html).

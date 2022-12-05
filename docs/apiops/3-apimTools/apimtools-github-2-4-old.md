@@ -5,8 +5,12 @@ has_children: false
 nav_order: 6
 ---
 
+> **Warning**
+> This section pertains to the older method where it was required to download the code folder into your environment, run pipelines that build the code, and finally store the resulting binaries in your own environment. This is being retained for backward compatibility. Please use release V.3.0.0 or higher which utilizes the new method of consuming binaries that are now hosted on the Github repo and as a result there is no need to download the code folder anymore or the accompanying pipelines (publish-publisher and publish-extractor) into your environment.
+<br />
+The updated method [can be found here](https://azure.github.io/apiops/apiops/3-apimTools/apimtools-github-2-4-new.html).
  
-## Configure APIM tools in GitHub
+## Configure APIM tools in GitHub - Old Version (< v.3.0.0)
 
 
 1. Create a new Github repository. We will refer to it as **apiops** in this tutorial.
