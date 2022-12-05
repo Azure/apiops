@@ -7,7 +7,7 @@ nav_order: 3
 
 # Typos, minor updates, or fixes to existing challenges 
 
-Whenever you are submitting any changes to the workshop, please follow these recommendations:
+Whenever you are submitting any changes to the guide, please follow these recommendations:
 
 - Always fork repository to your own account for applying modifications
 - Do not combine multiple changes to one pull request, please submit any challenges and documentation updates using separate PRs

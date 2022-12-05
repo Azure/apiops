@@ -1,10 +1,13 @@
 ---
-title: Configure APIM tools in Azure DevOps
+title: Configure APIM tools in Azure DevOps - < V.3.0.0
 parent: Configure APIM tools
 has_children: false
-nav_order: 3
+nav_order: 4
 ---
-
+> **Warning**
+> This section pertains to the older method where it was required to download the code folder into your environment, run pipelines that build the code, and finally store the resulting binaries in your own environment. This is being retained for backward compatibility. Please use release V.3.0.0 or higher which utilizes the new method of consuming binaries that are now hosted on the Github repo and as a result there is no need to download the code folder anymore or the accompanying pipelines (publish-publisher and publish-extractor) into your environment.
+<br />
+The updated method [can be found here](apimtools-azdo-2-3-new.md).
 
 ## Configure APIM tools in Azure DevOps
 
@@ -23,7 +26,7 @@ nav_order: 3
     - **ARTIFACTS_FEED_NAME** and for its value, enter the name of the artifacts feed you just created.
     - **SERVICE_CONNECTION_NAME** and for its value, enter the name of your [Azure service connection](https://docs.microsoft.com/en-us/azure/devops/pipelines/library/service-endpoints?view=azure-devops&tabs=yaml).
     - **APIM_NAME** and for its value, enter the name of lower environment apim instance name.
-    - **RESOURCE_GROUP_NAME** and for its value, enter the resource group name of your Azure APIM instance. In this workshop we have two apim instances representing both the dev and prod environments so make sure you have two resource group entries representing both as shown in the image below.
+    - **RESOURCE_GROUP_NAME** and for its value, enter the resource group name of your Azure APIM instance. In this guide we have two apim instances representing both the dev and prod environments so make sure you have two resource group entries representing both as shown in the image below.
 ![pipeline variable group](../../assets/images/variable_groups.png)
 5. Create a target [**environment**](https://docs.microsoft.com/en-us/azure/devops/pipelines/process/environments?view=azure-devops) called prod as shown below. The environment will allow us to require a manual approval between stages in a yaml based release pipeline. Choose Prod as the name and for the resource type choose None. ![prod environment](../../assets/images/ado_prod_environment.png)
 6. After creating the environment add one ore more approvers by heading to the ellipses menu and click on "Approvals and checks" ![prod environment approvals](../../assets/images/ado_prod_environment_approvals.png)

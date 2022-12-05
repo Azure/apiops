@@ -5,7 +5,7 @@ has_children: false
 nav_order: 1
 ---
 
-If you'd like to contribute to this workshop, please read the following guidelines. Contributors are more than welcome to share your learnings with others from a centralized location.
+If you'd like to contribute to this guide, please read the following guidelines. Contributors are more than welcome to share your learnings with others from a centralized location.
 
 # What Can I Do?
 

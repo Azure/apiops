@@ -7,7 +7,7 @@ nav_order: 3
 
 ## Create an API Management instance
 
-We will need to create two APIM instances to demonstrate promotion of configurations (e.g. different policies, name/value pairs) across different environments. In this workshop we will simulate promotion from Dev -> Prod, but in an enterprise scenario you can expand it to have one or more stages between the Dev and Prod Environments. 
+We will need to create two APIM instances to demonstrate promotion of configurations (e.g. different policies, name/value pairs) across different environments. In this guide we will simulate promotion from Dev -> Prod, but in an enterprise scenario you can expand it to have one or more stages between the Dev and Prod Environments. 
 
 An instance can take some time to provision. Expect ~45-75 minutes. Therefore, please create both instances prior to any demo.
 

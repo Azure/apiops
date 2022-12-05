@@ -15,4 +15,4 @@ Please check that you have the following requirements before utilizing the apiop
 - Access to a valid [Azure DevOps](https://dev.azure.com) organization if you plan on using AZDO.
 - Access to a valid [Github](https://www.github.com) organization if you plan on using Github. Make sure you create your repo as a public repo as it is required to create Github [environments](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment) which will be utilized throughout this lab. To use environments with private repos you will need access to a Github Enterprise Organization.
 
-**An API Management instance can take some time to provision.** Please follow the steps outlined in APIM Creation prior to the workshop.
+**An API Management instance can take some time to provision.** Please follow the steps outlined in APIM Creation before continuing.
