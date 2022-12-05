@@ -30,4 +30,3 @@ Below there is a table with all [artifacts extracted and published by APIOps](ht
 | Policy Fragments | ✓ | | |
 | Products | ✓ | | |
 | Product tags | ✓ | | |
-| |
