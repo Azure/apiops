@@ -16,6 +16,7 @@ nav_order: 3
 
     ![Github_Release](../../assets/images/Github_Release_Azure_Devops.png)
 
+    In order to update the pipelines in the future you will follow the same steps documented in step 2.
 
 3. [Create a pipeline variable group](https://docs.microsoft.com/en-us/azure/devops/pipelines/library/variable-groups?view=azure-devops&tabs=classic#create-a-variable-group) called **apim-automation**. In that group, add these variables:
     - **SERVICE_CONNECTION_NAME** and for its value, enter the name of your [Azure service connection](https://docs.microsoft.com/en-us/azure/devops/pipelines/library/service-endpoints?view=azure-devops&tabs=yaml).
