@@ -4,6 +4,14 @@ parent: Configure APIM tools
 has_children: false
 nav_order: 3
 ---
+
+> **Note**
+> Please note that the instructions on this page pertain to new and simplified setup which was introduced with release v.3.0.0
+<br />
+The older setup [can be found here](https://azure.github.io/apiops/apiops/3-apimTools/apimtools-github-2-4-old.html).
+
+
+
 ## Configure APIM tools in Azure DevOps
 
 1. Create a new project in Azure DevOps. We will refer to it as **apiops** in this tutorial
