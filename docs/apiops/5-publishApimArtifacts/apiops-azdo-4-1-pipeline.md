@@ -8,7 +8,7 @@ nav_order: 1
 
 ### Create pipeline to automatically push changes using publisher tool
 
-1. Create a new pipeline based on [**run-publisher.yaml**](https://github.com/Azure/apiops/blob/main/tools/pipelines/run-publisher.yaml) in your  repository.
+1. Create a new pipeline based on [**run-publisher.yaml**](https://github.com/Azure/apiops/blob/main/tools/azdo_pipelines/run-publisher.yaml) in your  repository.
 2. Go back to the PR that was created in the previous step as a result of running the extractor. Once the PR is merged the run-publisher pipeline should automatically trigger. Remember that the publisher pipeline requires manual approval before promoting between stages. To promote to the prod environment, wait on the dev stage to succeed and then click on the review button and approve to deploy the changes to the prod environment.
 ![approve promotion to prod environment](../../assets/images/ado_promotion.png) 
 3. Approve the prod environment for deployment.![approve promotion to prod environment](../../assets/images/ado_promotion_approval.png) 
