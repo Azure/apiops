@@ -19,9 +19,11 @@ parameters:
   - name: COMMIT_ID
     type: string
     default: publish-artifacts-in-last-commit
+  - name: PROCESS_SECRETS
+    type: boolean
+    default: false
 
-     
-
+    
 steps:
 - script: echo Provided configuration was ${{ parameters.CONFIGURATION_YAML_PATH }}
   displayName: Print the name of the yaml configuration file if provided
@@ -56,17 +58,18 @@ steps:
     failOnStandardError: true
 
 # replacetokens@3 task will need to be installed to use
-- task: replacetokens@3
-  displayName: 'Perform namevalue secret substitution in configuration.${{ parameters.ENVIRONMENT}}.yaml'
-  inputs:
-    targetFiles: $(Build.SourcesDirectory)/configuration.${{ parameters.ENVIRONMENT}}.yaml
-    encoding: "auto"
-    writeBOM: true
-    verbosity: "off"
-    actionOnMissing: "warn"
-    keepToken: false
-    tokenPrefix: "{#"
-    tokenSuffix: "#}"
+- ${{ if eq(parameters.PROCESS_SECRETS, true) }}:
+  - task: replacetokens@3
+    displayName: 'Perform namevalue secret substitution in ${{ parameters.CONFIGURATION_YAML_PATH }}'
+    inputs:
+      targetFiles: ${{ parameters.CONFIGURATION_YAML_PATH }}
+      encoding: "auto"
+      writeBOM: true
+      verbosity: "off"
+      actionOnMissing: "warn"
+      keepToken: false
+      tokenPrefix: "{#"
+      tokenSuffix: "#}"
 
 - task: Bash@3
   displayName: Fetch publisher
