@@ -19,9 +19,6 @@ parameters:
   - name: COMMIT_ID
     type: string
     default: publish-artifacts-in-last-commit
-  - name: PROCESS_SECRETS
-    type: boolean
-    default: false
 
     
 steps:
@@ -58,14 +55,14 @@ steps:
     failOnStandardError: true
 
 # replacetokens@3 task will need to be installed to use
-- ${{ if eq(parameters.PROCESS_SECRETS, true) }}:
+- ${{ if ne(parameters.CONFIGURATION_YAML_PATH, '') }}:
   - task: replacetokens@3
     displayName: 'Perform namevalue secret substitution in ${{ parameters.CONFIGURATION_YAML_PATH }}'
     inputs:
       targetFiles: ${{ parameters.CONFIGURATION_YAML_PATH }}
       encoding: "auto"
       writeBOM: true
-      verbosity: "off"
+      verbosity: "detailed"
       actionOnMissing: "warn"
       keepToken: false
       tokenPrefix: "{#"
