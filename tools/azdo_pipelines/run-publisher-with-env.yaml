@@ -62,7 +62,7 @@ steps:
       targetFiles: ${{ parameters.CONFIGURATION_YAML_PATH }}
       encoding: "auto"
       writeBOM: true
-      verbosity: "detailed"
+      verbosity: "off"
       actionOnMissing: "warn"
       keepToken: false
       tokenPrefix: "{#"
