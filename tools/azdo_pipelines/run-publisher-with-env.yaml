@@ -20,7 +20,6 @@ parameters:
     type: string
     default: publish-artifacts-in-last-commit
 
-    
 steps:
 - script: echo Provided configuration was ${{ parameters.CONFIGURATION_YAML_PATH }}
   displayName: Print the name of the yaml configuration file if provided
