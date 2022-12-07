@@ -211,7 +211,7 @@ internal static class PolicyFragment
             {
                 ["properties"] = new JsonObject
                 {
-                    ["format"] = "xml",
+                    ["format"] = "rawxml",
                     ["value"] = await policyFile.ReadAsString(cancellationToken)
                 }
             };
