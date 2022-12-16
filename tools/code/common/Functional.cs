@@ -46,6 +46,14 @@ public static class IEnumerableExtensions
                                     cancellationToken,
                                     (item, token) => action(item));
 
+    public static async ValueTask ForEachAwaitAsync<T>(this IEnumerable<T> enumerable, Func<T, ValueTask> action)
+    {
+        foreach(var t in enumerable)
+        {
+            await action(t);
+        }
+    }
+
     /// <summary>
     /// Returns an empty enumerable if <paramref name="enumerable"/> is null.
     /// </summary>

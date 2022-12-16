@@ -19,6 +19,7 @@ internal static class Service
         await ApiDiagnostic.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
         await ApiPolicy.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
         await Api.ProcessDeletedArtifacts(files, configurationJson, serviceDirectory, serviceUri, putRestResource, deleteRestResource, logger, cancellationToken);
+        await Subscription.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
         await ProductTag.ProcessDeletedArtifacts(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
         await ProductGroup.ProcessDeletedArtifacts(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
         await ProductPolicy.ProcessDeletedArtifacts(files, serviceDirectory, serviceUri, deleteRestResource, logger, cancellationToken);
@@ -56,5 +57,7 @@ internal static class Service
         await ApiOperationPolicy.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
         await ProductApi.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
         await GatewayApi.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
+        await Subscription.ProcessArtifactsToPut(files, configurationJson, serviceDirectory, serviceUri, putRestResource, logger, cancellationToken);
+
     }
 }

@@ -42,5 +42,8 @@ internal static class Service
 
         logger.LogInformation("Exporting apis...");
         await Api.ExportAll(serviceDirectory, serviceUri, defaultSpecification, apiNamesToExport, listRestResources, getRestResource, downloadResource, logger, cancellationToken);
+
+        logger.LogInformation("Exporting subscriptions...");
+        await Subscription.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, cancellationToken);
     }
 }
