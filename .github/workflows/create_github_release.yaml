@@ -16,6 +16,9 @@ jobs:
         dotnet-runtime: [linux-x64, win-x64]
     # Dynamically set the runner OS based on the .NET runtime
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
+    env:
+      output-directory: ${{ format('{0}/extractor/{1}', runner.temp, matrix.dotnet-runtime) }}
+      exe-file-name: ${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -34,12 +37,11 @@ jobs:
 
           Write-Information "Generating extractor..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
-          $outputDirectory = Join-Path ${{ runner.temp }} "extractor"
-          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
+          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output ${{ env.output-directory}}
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
-          $extractorPath = Join-Path $outputDirectory "extractor"
-          Rename-Item -Path $extractorPath -NewName "${{ format('extractor.{0}', matrix.dotnet-runtime) }}"
+          $extractorPath = Join-Path ${{ env.output-directory }} "extractor"
+          Rename-Item -Path $extractorPath -NewName ${{ env.exe-file-name }}
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -47,7 +49,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/extractor/extractor.{1}', runner.temp, matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/{1}', env.output-directory, env.exe-file-name) }}
 
   generate_publisher_artifacts:
     name: Generate publisher artifacts
@@ -56,6 +58,9 @@ jobs:
         dotnet-runtime: [linux-x64, win-x64]
     # Dynamically set the runner OS based on the .NET runtime
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
+    env:
+      output-directory: ${{ format('{0}/publisher/{1}', runner.temp, matrix.dotnet-runtime) }}
+      exe-file-name: ${{ format('publisher.{0}.exe', matrix.dotnet-runtime) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -74,12 +79,11 @@ jobs:
 
           Write-Information "Generating publisher..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
-          $outputDirectory = Join-Path ${{ runner.temp }} "publisher"
-          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
+          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output ${{ env.output-directory}}
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-          $publisherPath = Join-Path $outputDirectory "publisher"
-          Rename-Item -Path $publisherPath -NewName "${{ format('publisher.{0}', matrix.dotnet-runtime) }}"
+          $publisherPath = Join-Path ${{ env.output-directory }} "publisher"
+          Rename-Item -Path $publisherPath -NewName ${{ env.exe-file-name }}
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -87,7 +91,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/publisher/publisher.{1}', runner.temp, matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/{1}', env.output-directory, env.exe-file-name) }}
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
@@ -113,7 +117,7 @@ jobs:
 
           Write-Information "Zipping artifacts..."
           $sourceFolderPath = Join-Path $artifactsFolderPath "*"
-          $outputFilePath = Join-Path ${{ runner.temp }} "github.zip"
+          $outputFilePath = Join-Path ${{ runner.temp }} "Github.zip"
           Get-ChildItem -Path $sourceFolderPath | Compress-Archive -DestinationPath $outputFilePath
 
           Write-Information "Execution complete."
@@ -140,10 +144,10 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ${{github.workspace}}/artifact/extractor.win-x64
-            ${{github.workspace}}/artifact/extractor.linux-x64
-            ${{github.workspace}}/artifact/publisher.win-x64
-            ${{github.workspace}}/artifact/publisher.linux-x64
+            ${{github.workspace}}/artifact/extractor.win-x64.exe
+            ${{github.workspace}}/artifact/extractor.linux-x64.exe
+            ${{github.workspace}}/artifact/publisher.win-x64.exe
+            ${{github.workspace}}/artifact/publisher.linux-x64.exe
             ${{github.workspace}}/finalartifacts/Github.zip
 #           ${{github.workspace}}/finalartifacts/Azure_DevOps.zip
           name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
