@@ -100,6 +100,7 @@ jobs:
           Write-Information "Copying GitHub workflows..."
           $sourceFolderPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "*"
           $outputFolderPath = Join-Path $artifactsFolderPath ".github" "workflows"
+          New-Item -Path $outputFolderPath -ItemType "Directory"
           Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
