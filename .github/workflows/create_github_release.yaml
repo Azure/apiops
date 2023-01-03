@@ -34,16 +34,20 @@ jobs:
 
           Write-Information "Generating extractor..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
-          $outputDirectory = Join-Path ${{ runner.temp }} "${{ format('extractor.{0}', matrix.dotnet-runtime) }}"
+          $outputDirectory = Join-Path ${{ runner.temp }} "extractor"
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
+
+          $extractorPath = Join-Path $outputDirectory "extractor"
+          Rename-Item -Path $extractorPath -NewName "${{ format('extractor.{0}', matrix.dotnet-runtime) }}"
+
+          Write-Information "Execution complete."
         shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ format('extractor.{0}', matrix.dotnet-runtime) }}
-          path: ${{ format('{0}/extractor.{1}', runner.temp, matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/extractor/extractor.{1}', runner.temp, matrix.dotnet-runtime) }}
 
   generate_publisher_artifacts:
     name: Generate publisher artifacts
@@ -70,16 +74,20 @@ jobs:
 
           Write-Information "Generating publisher..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
-          $outputDirectory = Join-Path ${{ runner.temp }} "${{ format('publisher.{0}', matrix.dotnet-runtime) }}"
+          $outputDirectory = Join-Path ${{ runner.temp }} "publisher"
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
+
+          $publisherPath = Join-Path $outputDirectory "publisher"
+          Rename-Item -Path $publisherPath -NewName "${{ format('publisher.{0}', matrix.dotnet-runtime) }}"
+
+          Write-Information "Execution complete."
         shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ format('publisher.{0}', matrix.dotnet-runtime) }}
-          path: ${{ format('{0}/publisher.{1}', runner.temp, matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/publisher/publisher.{1}', runner.temp, matrix.dotnet-runtime) }}
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
@@ -105,7 +113,7 @@ jobs:
 
           Write-Information "Zipping artifacts..."
           $sourceFolderPath = Join-Path $artifactsFolderPath "*"
-          $outputFilePath = Join-Path $artifactsFolderPath "github.zip"
+          $outputFilePath = Join-Path ${{ runner.temp }} "github.zip"
           Get-ChildItem -Path $sourceFolderPath | Compress-Archive -DestinationPath $outputFilePath
 
           Write-Information "Execution complete."
@@ -114,30 +122,33 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: GitHub artifacts
-          path: ${{ runner.temp }}/github_artifacts
+          path: ${{ runner.temp }}/Github.zip
 
   generate_release:
     name: Generate release
-    needs: [generate_extractor_artifacts, generate_publisher_artifacts, generate_github_pipeline_artifacts]
+    needs:
+      [
+        generate_extractor_artifacts,
+        generate_publisher_artifacts,
+        generate_github_pipeline_artifacts,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v3
-      - name: Display artifacts
-        run: ls -R
-      # - name: Release
-      #   uses: softprops/action-gh-release@v1
-      #   with:
-      #     files: |
-      #       ${{github.workspace}}/finalartifacts/extractor
-      #       ${{github.workspace}}/finalartifacts/publisher
-      #       ${{github.workspace}}/finalartifacts/Azure_DevOps.zip
-      #       ${{github.workspace}}/finalartifacts/Github.zip
-      #     name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
-      #     tag_name: ${{ github.event.inputs.Release_Version }}
-      #     generate_release_notes: true
-
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{github.workspace}}/artifact/extractor.win-x64
+            ${{github.workspace}}/artifact/extractor.linux-x64
+            ${{github.workspace}}/artifact/publisher.win-x64
+            ${{github.workspace}}/artifact/publisher.linux-x64
+            ${{github.workspace}}/finalartifacts/Github.zip
+#           ${{github.workspace}}/finalartifacts/Azure_DevOps.zip
+          name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
+          tag_name: ${{ github.event.inputs.Release_Version }}
+          generate_release_notes: true
 # jobs:
 #   generate_artifacts:
 #     name: Generate artifacts
