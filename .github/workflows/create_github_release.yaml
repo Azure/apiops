@@ -116,9 +116,8 @@ jobs:
           Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
-          $sourceFolderPath = Join-Path $artifactsFolderPath
           $outputFilePath = Join-Path ${{ runner.temp }} "Github.zip"
-          Get-ChildItem -Path $sourceFolderPath | Compress-Archive -DestinationPath $outputFilePath
+          Get-ChildItem -Path $artifactsFolderPath | Compress-Archive -DestinationPath $outputFilePath
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -151,9 +150,8 @@ jobs:
           Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
-          $sourceFolderPath = Join-Path $artifactsFolderPath
           $outputFilePath = Join-Path ${{ runner.temp }} "Azure_DevOps.zip"
-          Get-ChildItem -Path $sourceFolderPath | Compress-Archive -DestinationPath $outputFilePath
+          Get-ChildItem -Path $artifactsFolderPath | Compress-Archive -DestinationPath $outputFilePath
 
           Write-Information "Execution complete."
         shell: pwsh
