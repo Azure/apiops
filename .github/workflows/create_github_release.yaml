@@ -2,12 +2,23 @@ name: Create Github Release
 
 # Controls when the workflow will run
 on:
-   workflow_dispatch:
-     inputs:
-       Release_Version:
-         description: 'Provide a release version. e.g. v3.1.0'     
-         required: true
-         type: string
+  workflow_dispatch:
+    inputs:
+      Release_Version:
+        description: "Provide a release version. e.g. v3.1.0"
+        required: true
+        type: string
+      runtime-parameters:
+        description: Runtime parameters
+        default: |
+          {
+            "linux-x64":{
+              "runs-on":"ubuntu-latest"
+            },
+            "win-x64":{
+              "runs-on":"windows-latest"
+            }
+          }
 
 jobs:
   generate_artifacts:
@@ -15,17 +26,7 @@ jobs:
       matrix:
         dotnet-runtime: [linux-x64, win-x64]
     # The type of runner that the job will run on
-    runs-on: ${{ fromJson(env.os-parameters).(matrix.dotnet-runtime).runs-on }}
-    env:
-      os-parameters: |
-        {
-          "linux-x64":{
-            "runs-on":"ubuntu-latest"
-          },
-          "win-x64":{
-            "runs-on":"windows-latest"
-          }
-        }
+    runs-on: ${{ fromJson(inputs.runtime-parameters).(matrix.dotnet-runtime).runs-on }}
     steps:
       - name: Validate variables
         run: |
@@ -61,27 +62,26 @@ jobs:
 #         with:
 #           dotnet-version: 7.x
 #           include-prerelease: true
-       
-         
+
 #       - name: Generate Artifacts
 #         run: |
 #           #generate the extractor binary
 #           cd tools/code/extractor/
 #           dotnet publish ./extractor.csproj --self-contained --runtime linux-x64 -p:PublishSingleFile=true -o extractor
-          
+
 #           #go back to the root of the workspace
 #           cd ${{github.workspace}}
 
 #           #generate the publisher binary
 #           cd tools/code/publisher/
 #           dotnet publish ./publisher.csproj --self-contained --runtime linux-x64 -p:PublishSingleFile=true -o publisher
-          
+
 #           # replace the the release version in extractor and publisher of the github pipelines. Azure devops pipelines aren't affected
 #           cd ${{github.workspace}}/tools/github_workflows/
-#           sed -i 's/desired-version-goes-here/${{ github.event.inputs.Release_Version }}/g' run-extractor.yaml 
+#           sed -i 's/desired-version-goes-here/${{ github.event.inputs.Release_Version }}/g' run-extractor.yaml
 #           sed -i 's/desired-version-goes-here/${{ github.event.inputs.Release_Version }}/g' run-publisher-with-env.yaml
 
-#       - name: Package the artifacts 
+#       - name: Package the artifacts
 #         run: |
 #           #go back to the root of the workspace
 #           cd ${{github.workspace}}
@@ -94,8 +94,8 @@ jobs:
 #           cp ${{github.workspace}}/tools/azdo_pipelines/*.yaml tools/pipelines
 #           cp ${{github.workspace}}/tools/utils/* tools/utils
 #           cp ${{github.workspace}}/tools/github_workflows/*.yaml .github/workflows
-#           cp -r ${{github.workspace}}/tools/code/extractor/extractor/extractor . 
-#           cp -r ${{github.workspace}}/tools/code/publisher/publisher/publisher . 
+#           cp -r ${{github.workspace}}/tools/code/extractor/extractor/extractor .
+#           cp -r ${{github.workspace}}/tools/code/publisher/publisher/publisher .
 #           #create a package for the azure devops users
 #           zip Azure_DevOps.zip tools/pipelines/*.yaml tools/utils/create_pull_request.sh
 #           #create a package for the Github users
@@ -103,14 +103,13 @@ jobs:
 #           #carry cleanup before publishing
 #           rm -R tools
 #           rm -R .github
-          
+
 #       - name: publish artifact
 #         uses: actions/upload-artifact@v2
 #         with:
 #           name: artifacts
 #           path: ${{ GITHUB.WORKSPACE }}/finalartifacts
-      
-    
+
 #   Generate_Release:
 #    needs: Generate_Artifacts
 #    runs-on: [ubuntu-latest]
