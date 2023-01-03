@@ -39,7 +39,6 @@ jobs:
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputFolderPath
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
-          Get-ChildItem -Path $outputFolderPath -Recurse
           $exeFileName = "${{ matrix.dotnet-runtime }}".Contains("win") ? "extractor.exe" : "extractor"
           $exeFolderPath = Join-Path $outputFolderPath $exeFileName
           Rename-Item -Path $exeFolderPath -NewName ${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}
@@ -51,7 +50,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           path: ${{ format('{0}/{1}/extractor.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
-          
+
   generate_publisher_artifacts:
     name: Generate publisher artifacts
     strategy:
@@ -82,7 +81,6 @@ jobs:
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputFolderPath
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-          Get-ChildItem -Path $outputFolderPath -Recurse
           $exeFileName = "${{ matrix.dotnet-runtime }}".Contains("win") ? "publisher.exe" : "publisher"
           $exeFolderPath = Join-Path $outputFolderPath $exeFileName
           Rename-Item -Path $exeFolderPath -NewName ${{ format('publisher.{0}.exe', matrix.dotnet-runtime) }}
@@ -118,7 +116,7 @@ jobs:
           Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
-          $sourceFolderPath = Join-Path $artifactsFolderPath "*"
+          $sourceFolderPath = Join-Path $artifactsFolderPath
           $outputFilePath = Join-Path ${{ runner.temp }} "Github.zip"
           Get-ChildItem -Path $sourceFolderPath | Compress-Archive -DestinationPath $outputFilePath
 
@@ -129,6 +127,41 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           path: ${{ runner.temp }}/Github.zip
+
+  generate_ado_pipeline_artifacts:
+    name: Generate Azure DevOps artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup artifact contents
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          $artifactsFolderPath = Join-Path ${{ runner.temp }} "azdo_artifacts"
+
+          Write-Information "Copying Azure DevOps pipelines..."
+          $sourceFolderPath = Join-Path ${{ github.workspace }} "tools" "azdo_pipelines" "*"
+          $outputFolderPath = Join-Path $artifactsFolderPath "tools" "pipelines"
+          New-Item -Path $outputFolderPath -ItemType "Directory"
+          Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
+
+          Write-Information "Zipping artifacts..."
+          $sourceFolderPath = Join-Path $artifactsFolderPath
+          $outputFilePath = Join-Path ${{ runner.temp }} "Azure_DevOps.zip"
+          Get-ChildItem -Path $sourceFolderPath | Compress-Archive -DestinationPath $outputFilePath
+
+          Write-Information "Execution complete."
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          path: ${{ runner.temp }}/Azure_DevOps.zip
 
   generate_release:
     name: Generate release
@@ -150,8 +183,8 @@ jobs:
             ${{github.workspace}}/artifact/extractor.linux-x64.exe
             ${{github.workspace}}/artifact/publisher.win-x64.exe
             ${{github.workspace}}/artifact/publisher.linux-x64.exe
-            ${{github.workspace}}/finalartifacts/Github.zip
-#           ${{github.workspace}}/finalartifacts/Azure_DevOps.zip
+            ${{github.workspace}}/artifact/Github.zip
+            ${{github.workspace}}/artifact/Azure_DevOps.zip
           name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
           tag_name: ${{ github.event.inputs.Release_Version }}
           generate_release_notes: true
