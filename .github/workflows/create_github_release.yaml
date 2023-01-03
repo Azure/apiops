@@ -37,6 +37,7 @@ jobs:
           $outputDirectory = Join-Path ${{ runner.temp }} "extractor.{{ matrix.dotnet-runtime }}"
           & dotnet publish $extractorPath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
+        shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
