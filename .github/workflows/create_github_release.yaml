@@ -34,7 +34,7 @@ jobs:
 
           Write-Information "Generating extractor..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
-          $outputDirectory = Join-Path ${{ runner.temp }} "extractor.{{ matrix.dotnet-runtime }}"
+          $outputDirectory = Join-Path ${{ runner.temp }} extractor.{{ matrix.dotnet-runtime }}
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
         shell: pwsh
@@ -42,7 +42,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: "extractor.{{ matrix.dotnet-runtime }}"
+          name: extractor.{{ matrix.dotnet-runtime }}
           path: ${{ runner.temp }}/extractor.{{ matrix.dotnet-runtime }}
 
   generate_publisher_artifact:
@@ -70,7 +70,7 @@ jobs:
 
           Write-Information "Generating publisher..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
-          $outputDirectory = Join-Path ${{ runner.temp }} "publisher.{{ matrix.dotnet-runtime }}"
+          $outputDirectory = Join-Path ${{ runner.temp }} publisher.{{ matrix.dotnet-runtime }}
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
         shell: pwsh
@@ -78,7 +78,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: "publisher.{{ matrix.dotnet-runtime }}"
+          name: publisher.{{ matrix.dotnet-runtime }}
           path: ${{ runner.temp }}/publisher.{{ matrix.dotnet-runtime }}
 
   generate_github_pipeline_artifacts:
@@ -102,11 +102,6 @@ jobs:
           $outputFolderPath = Join-Path $artifactsFolderPath ".github" "workflows"
           New-Item -Path $outputFolderPath -ItemType "Directory"
           Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
-
-          Write-Information "Zipping artifacts..."
-          $sourceFolderPath = Join-Path $artifactsFolderPath "*"
-          $outputFilePath = Join-Path $artifactsFolderPath "github.zip"
-          Get-ChildItem -Path $sourceFolderPath | Compress-Archive -DestinationPath $outputFilePath
 
           Write-Information "Execution complete."
         shell: pwsh
