@@ -10,18 +10,32 @@ on:
 
 jobs:
   generate_artifacts:
+    name: Generate artifacts
     strategy:
       matrix:
         dotnet-runtime: [linux-x64, win-x64]
     # The type of runner that the job will run on
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
     steps:
-      - name: Validate variables
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v1
+        with:
+          dotnet-version: 7.x
+
+      - name: Generate executables
         run: |
-          echo ${{ matrix.dotnet-runtime }}
-          echo ${{ contains(matrix.dotnet-runtime, 'win') }}
-          echo ${{ contains(matrix.dotnet-runtime, 'win') && 'windows-latest'}}
-          echo ${{ contains(matrix.dotnet-runtime, 'win') && 'windows-latest' || 'ubuntu-latest'}}
+          set -euxo pipefail
+          
+          echo "Generating extractor..."
+          dotnet publish ${{ github.workspace }}/tools/code/extractor/extractor.csproj --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o extractor
+
+          echo "Generating publisher..."
+          dotnet publish ${{ github.workspace }}/tools/code/publisher/publisher.csproj --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o publisher
+
+          echo "Execution complete."
 
 # # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 # jobs:
