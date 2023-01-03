@@ -14,7 +14,7 @@ jobs:
       matrix:
         dotnet-runtime: [linux-x64, win-x64]
     # The type of runner that the job will run on
-    runs-on: ${{ contains(matrix.dotnet-runtime, 'win') && 'windows-latest' || 'ubuntu-latest'}}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Validate variables
         run: |
