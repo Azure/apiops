@@ -39,6 +39,7 @@ jobs:
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputFolderPath
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
+          Get-ChildItem -Path $outputFolderPath -Recurse
           $extractorPath = Join-Path $outputFolderPath "extractor"
           Rename-Item -Path $extractorPath -NewName ${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}
 
@@ -49,7 +50,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           path: ${{ format('{0}/{1}/extractor.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
-          
+
   generate_publisher_artifacts:
     name: Generate publisher artifacts
     strategy:
