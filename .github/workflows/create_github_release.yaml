@@ -16,9 +16,6 @@ jobs:
         dotnet-runtime: [linux-x64, win-x64]
     # Dynamically set the runner OS based on the .NET runtime
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
-    env:
-      output-directory: ${{ format('{0}/extractor/{1}', runner.temp, matrix.dotnet-runtime) }}
-      exe-file-name: ${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -37,11 +34,13 @@ jobs:
 
           Write-Information "Generating extractor..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
-          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output ${{ env.output-directory}}
+          $outputFolderPath = Join-Path ${{ runner.temp }} ${{ matrix.dotnet-runtime }}
+
+          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputFolderPath
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
-          $extractorPath = Join-Path ${{ env.output-directory }} "extractor"
-          Rename-Item -Path $extractorPath -NewName ${{ env.exe-file-name }}
+          $extractorPath = Join-Path $outputFolderPath "extractor"
+          Rename-Item -Path $extractorPath -NewName ${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -49,8 +48,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/{1}', env.output-directory, env.exe-file-name) }}
-
+          path: ${{ format('{0}/{1}/extractor.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
+          
   generate_publisher_artifacts:
     name: Generate publisher artifacts
     strategy:
@@ -58,9 +57,6 @@ jobs:
         dotnet-runtime: [linux-x64, win-x64]
     # Dynamically set the runner OS based on the .NET runtime
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
-    env:
-      output-directory: ${{ format('{0}/publisher/{1}', runner.temp, matrix.dotnet-runtime) }}
-      exe-file-name: ${{ format('publisher.{0}.exe', matrix.dotnet-runtime) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -79,11 +75,13 @@ jobs:
 
           Write-Information "Generating publisher..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
-          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output ${{ env.output-directory}}
+          $outputFolderPath = Join-Path ${{ runner.temp }} ${{ matrix.dotnet-runtime }}
+
+          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputFolderPath
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-          $publisherPath = Join-Path ${{ env.output-directory }} "publisher"
-          Rename-Item -Path $publisherPath -NewName ${{ env.exe-file-name }}
+          $publisherPath = Join-Path $outputFolderPath "publisher"
+          Rename-Item -Path $publisherPath -NewName ${{ format('publisher.{0}.exe', matrix.dotnet-runtime) }}
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -91,7 +89,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/{1}', env.output-directory, env.exe-file-name) }}
+          path: ${{ format('{0}/{1}/publisher.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
