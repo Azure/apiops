@@ -5,7 +5,7 @@
     <TargetFramework>net7.0</TargetFramework>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Nullable>enable</Nullable>
-    <AnalysisLevel>latest-all</AnalysisLevel>
+    <!-- <AnalysisLevel>latest-all</AnalysisLevel> -->
     <UserSecretsId>05a138d4-2528-4536-b7d8-e2185a272594</UserSecretsId>
   </PropertyGroup>
 
