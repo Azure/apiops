@@ -1,6 +1,5 @@
 name: Create Github Release
 
-# Controls when the workflow will run
 on:
   workflow_dispatch:
     inputs:
@@ -8,6 +7,7 @@ on:
         description: "Provide a release version. e.g. v3.1.0"
         required: true
         type: string
+
 jobs:
   generate_artifacts:
     strategy:
@@ -19,6 +19,9 @@ jobs:
       - name: Validate variables
         run: |
           echo ${{ matrix.dotnet-runtime }}
+          echo ${{ contains(matrix.dotnet-runtime, 'win') }}
+          echo ${{ contains(matrix.dotnet-runtime, 'win') && 'windows-latest'}}
+          echo ${{ contains(matrix.dotnet-runtime, 'win') && 'windows-latest' || 'ubuntu-latest'}}
 
 # # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 # jobs:
