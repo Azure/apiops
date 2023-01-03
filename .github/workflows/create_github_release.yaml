@@ -35,10 +35,32 @@ jobs:
           Write-Information "Generating extractor..."
           $extractorPath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
           & dotnet publish $extractorPath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o extractor
+          if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
           Write-Information "Generating publisher..."
           $publisherPath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
           & dotnet publish $publisherPath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o publisher
+          if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
+
+          Write-Information "Execution complete."
+        shell: pwsh
+
+      - name: Update versions in YAML
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          $runExtractorPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "run-extractor.yaml"
+          (Get-Content -Path $runExtractorPath) |
+            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+              Set-Content -Path $runExtractorPath
+
+          $runPublisherWithEnvPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "run-publisher-with-env.yaml"
+          (Get-Content -Path $runExtractorPath) |
+            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+              Set-Content -Path $runPublisherWithEnvPath
 
           Write-Information "Execution complete."
         shell: pwsh
