@@ -8,29 +8,17 @@ on:
         description: "Provide a release version. e.g. v3.1.0"
         required: true
         type: string
-      runtime-parameters:
-        description: Runtime parameters
-        default: |
-          {
-            "linux-x64":{
-              "runs-on":"ubuntu-latest"
-            },
-            "win-x64":{
-              "runs-on":"windows-latest"
-            }
-          }
-
 jobs:
   generate_artifacts:
     strategy:
       matrix:
         dotnet-runtime: [linux-x64, win-x64]
     # The type of runner that the job will run on
-    runs-on: ${{ fromJson(inputs.runtime-parameters).matrix.dotnet-runtime.runs-on }}
+    runs-on: ${{ contains(matrix.dotnet-runtime, 'win') && 'windows-latest' || 'ubuntu-latest'}}
     steps:
       - name: Validate variables
         run: |
-          echo ${{ env.os-parameters }}
+          echo ${{ matrix.dotnet-runtime }}
 
 # # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 # jobs:
