@@ -13,15 +13,15 @@ jobs:
     name: Generate extractor artifact
     strategy:
       matrix:
-        dotnet_runtime: [linux-x64, win-x64]
+        dotnet-runtime: [linux-x64, win-x64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet_runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v1
+        uses: actions/setup-dotnet@v3
         with:
           dotnet-version: 7.x
 
@@ -34,16 +34,16 @@ jobs:
 
           Write-Information "Generating extractor..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
-          $outputDirectory = Join-Path ${{ runner.temp }} "extractor.{{ matrix.dotnet_runtime }}"
-          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet_runtime }} -p:PublishSingleFile=true --output $outputDirectory
+          $outputDirectory = Join-Path ${{ runner.temp }} "${{ format('extractor.{0}', matrix.dotnet-runtime) }}"
+          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
         shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: extractor.{{ matrix.dotnet_runtime }}
-          path: ${{ runner.temp }}/extractor.{{ matrix.dotnet_runtime }}
+          name: ${{ format('extractor.{0}', matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/extractor.{1}', runner.temp, matrix.dotnet-runtime) }}
 
   generate_publisher_artifact:
     name: Generate publisher artifact
@@ -51,13 +51,13 @@ jobs:
       matrix:
         dotnet-runtime: [linux-x64, win-x64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet_runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v1
+        uses: actions/setup-dotnet@v3
         with:
           dotnet-version: 7.x
 
@@ -70,23 +70,23 @@ jobs:
 
           Write-Information "Generating publisher..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
-          $outputDirectory = Join-Path ${{ runner.temp }} "publisher.{{ matrix.dotnet_runtime }}"
-          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet_runtime }} -p:PublishSingleFile=true --output $outputDirectory
+          $outputDirectory = Join-Path ${{ runner.temp }} "${{ format('publisher.{0}', matrix.dotnet-runtime) }}"
+          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
         shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: publisher.{{ matrix.dotnet_runtime }}
-          path: ${{ runner.temp }}/publisher.{{ matrix.dotnet_runtime }}
+          name: ${{ format('publisher.{0}', matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/publisher.{1}', runner.temp, matrix.dotnet-runtime) }}
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Setup artifact contents
         run: |
@@ -123,13 +123,13 @@ jobs:
 #       matrix:
 #         dotnet-runtime: [linux-x64, win-x64]
 #     # Dynamically set the runner OS based on the .NET runtime
-#     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet_runtime] }}
+#     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
 #     steps:
 #       - name: Checkout repository
-#         uses: actions/checkout@v2
+#         uses: actions/checkout@v3
 
 #       - name: Setup .NET
-#         uses: actions/setup-dotnet@v1
+#         uses: actions/setup-dotnet@v3
 #         with:
 #           dotnet-version: 7.x
 
@@ -144,12 +144,12 @@ jobs:
 
 #           Write-Information "Generating extractor..."
 #           $extractorPath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
-#           & dotnet publish $extractorPath --self-contained --runtime ${{ matrix.dotnet_runtime }} -p:PublishSingleFile=true -o extractor
+#           & dotnet publish $extractorPath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o extractor
 #           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
 #           Write-Information "Generating publisher..."
 #           $publisherPath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
-#           & dotnet publish $publisherPath --self-contained --runtime ${{ matrix.dotnet_runtime }} -p:PublishSingleFile=true -o publisher
+#           & dotnet publish $publisherPath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o publisher
 #           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
 #           Write-Information "Execution complete."
@@ -180,10 +180,10 @@ jobs:
 #       #     set -euxo pipefail
 
 #       #     echo "Generating extractor..."
-#       #     dotnet publish ${{ github.workspace }}/tools/code/extractor/extractor.csproj --self-contained --runtime ${{ matrix.dotnet_runtime }} -p:PublishSingleFile=true -o extractor
+#       #     dotnet publish ${{ github.workspace }}/tools/code/extractor/extractor.csproj --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o extractor
 
 #       #     echo "Generating publisher..."
-#       #     dotnet publish ${{ github.workspace }}/tools/code/publisher/publisher.csproj --self-contained --runtime ${{ matrix.dotnet_runtime }} -p:PublishSingleFile=true -o publisher
+#       #     dotnet publish ${{ github.workspace }}/tools/code/publisher/publisher.csproj --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o publisher
 
 #       #     echo "Execution complete."
 #       #   shell: bash
@@ -205,7 +205,7 @@ jobs:
 # #       matrix:
 # #         dotnet-runtime: [linux-x64, win-x64]
 # #     # The type of runner that the job will run on
-# #     runs-on: ${{ fromJson(os-parameters).(matrix.dotnet_runtime).runs-on }}
+# #     runs-on: ${{ fromJson(os-parameters).(matrix.dotnet-runtime).runs-on }}
 # #     env:
 # #       os-parameters: |
 # #         {
@@ -220,10 +220,10 @@ jobs:
 # #     # Steps represent a sequence of tasks that will be executed as part of the job
 # #     steps:
 # #       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-# #       - uses: actions/checkout@v2
+# #       - uses: actions/checkout@v3
 
 # #       - name: Setup .NET
-# #         uses: actions/setup-dotnet@v1
+# #         uses: actions/setup-dotnet@v3
 # #         with:
 # #           dotnet-version: 7.x
 # #           include-prerelease: true
