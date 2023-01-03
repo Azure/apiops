@@ -9,8 +9,8 @@ on:
         type: string
 
 jobs:
-  generate_extractor_artifact:
-    name: Generate extractor artifact
+  generate_extractor_artifacts:
+    name: Generate extractor artifacts
     strategy:
       matrix:
         dotnet-runtime: [linux-x64, win-x64]
@@ -45,8 +45,8 @@ jobs:
           name: ${{ format('extractor.{0}', matrix.dotnet-runtime) }}
           path: ${{ format('{0}/extractor.{1}', runner.temp, matrix.dotnet-runtime) }}
 
-  generate_publisher_artifact:
-    name: Generate publisher artifact
+  generate_publisher_artifacts:
+    name: Generate publisher artifacts
     strategy:
       matrix:
         dotnet-runtime: [linux-x64, win-x64]
@@ -116,6 +116,28 @@ jobs:
         with:
           name: GitHub artifacts
           path: ${{ runner.temp }}/github_artifacts
+
+  generate_release:
+    name: Generate release
+    needs: [generate_extractor_artifacts, generate_publisher_artifacts, generate_github_pipeline_artifacts]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+      - name: Display artifacts
+        run: ls -R
+      # - name: Release
+      #   uses: softprops/action-gh-release@v1
+      #   with:
+      #     files: |
+      #       ${{github.workspace}}/finalartifacts/extractor
+      #       ${{github.workspace}}/finalartifacts/publisher
+      #       ${{github.workspace}}/finalartifacts/Azure_DevOps.zip
+      #       ${{github.workspace}}/finalartifacts/Github.zip
+      #     name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
+      #     tag_name: ${{ github.event.inputs.Release_Version }}
+      #     generate_release_notes: true
+
 # jobs:
 #   generate_artifacts:
 #     name: Generate artifacts
