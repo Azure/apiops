@@ -35,7 +35,7 @@ jobs:
           Write-Information "Generating extractor..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
           $outputDirectory = Join-Path ${{ runner.temp }} "extractor.{{ matrix.dotnet-runtime }}"
-          & dotnet publish $extractorPath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
+          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
         shell: pwsh
 
@@ -44,6 +44,42 @@ jobs:
         with:
           name: "extractor.{{ matrix.dotnet-runtime }}"
           path: ${{ runner.temp }}/extractor.{{ matrix.dotnet-runtime }}
+
+  generate_publisher_artifact:
+    name: Generate publisher artifact
+    strategy:
+      matrix:
+        dotnet-runtime: [linux-x64, win-x64]
+    # Dynamically set the runner OS based on the .NET runtime
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v1
+        with:
+          dotnet-version: 7.x
+
+      - name: Generate executable
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          Write-Information "Generating publisher..."
+          $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
+          $outputDirectory = Join-Path ${{ runner.temp }} "publisher.{{ matrix.dotnet-runtime }}"
+          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputDirectory
+          if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: "publisher.{{ matrix.dotnet-runtime }}"
+          path: ${{ runner.temp }}/publisher.{{ matrix.dotnet-runtime }}
 # jobs:
 #   generate_artifacts:
 #     name: Generate artifacts
