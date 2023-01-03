@@ -28,7 +28,7 @@ jobs:
       - name: Generate executables
         run: |
           set -euxo pipefail
-          
+
           echo "Generating extractor..."
           dotnet publish ${{ github.workspace }}/tools/code/extractor/extractor.csproj --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o extractor
 
@@ -36,6 +36,17 @@ jobs:
           dotnet publish ${{ github.workspace }}/tools/code/publisher/publisher.csproj --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true -o publisher
 
           echo "Execution complete."
+        shell: bash
+
+      - name: Replace versions in YAML
+        run: |
+          set -euxo pipefail
+          
+          sed -i 's/desired-version-goes-here/${{ github.event.inputs.Release_Version }}/g' ${{ github.workspace }}/tools/github_workflows/run-extractor.yaml
+          sed -i 's/desired-version-goes-here/${{ github.event.inputs.Release_Version }}/g' ${{ github.workspace }}/tools/github_workflows/run-publisher-with-env.yaml
+
+          echo "Execution complete."
+        shell: bash
 
 # # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 # jobs:
