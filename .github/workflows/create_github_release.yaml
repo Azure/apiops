@@ -80,6 +80,41 @@ jobs:
         with:
           name: "publisher.{{ matrix.dotnet-runtime }}"
           path: ${{ runner.temp }}/publisher.{{ matrix.dotnet-runtime }}
+
+  generate_github_pipeline_artifacts:
+    name: Generate GitHub artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Setup artifact contents
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          $artifactsFolderPath = Join-Path ${{ runner.temp }} "github_artifacts"
+          
+          Write-Information "Copying GitHub workflows..."
+          $sourceFolderPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "*"
+          $outputFolderPath = Join-Path $artifactsFolderPath ".github" "workflows"
+          Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
+
+          Write-Information "Zipping artifacts..."
+          $sourceFolderPath = Join-Path $artifactsFolderPath "*"
+          $outputFilePath = Join-Path $artifactsFolderPath "github.zip"
+          Get-ChildItem -Path $sourceFolderPath | Compress-Archive -DestinationPath $outputFilePath
+
+          Write-Information "Execution complete."
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: GitHub artifacts
+          path: ${{ runner.temp }}/github_artifacts
 # jobs:
 #   generate_artifacts:
 #     name: Generate artifacts
