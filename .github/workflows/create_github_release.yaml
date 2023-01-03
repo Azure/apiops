@@ -26,7 +26,7 @@ jobs:
       matrix:
         dotnet-runtime: [linux-x64, win-x64]
     # The type of runner that the job will run on
-    runs-on: ${{ fromJson(inputs.runtime-parameters).(matrix.dotnet-runtime).runs-on }}
+    runs-on: ${{ (fromJson(inputs.runtime-parameters)).(matrix.dotnet-runtime).runs-on }}
     steps:
       - name: Validate variables
         run: |
