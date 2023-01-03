@@ -40,8 +40,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
           Get-ChildItem -Path $outputFolderPath -Recurse
-          $extractorPath = Join-Path $outputFolderPath "extractor"
-          Rename-Item -Path $extractorPath -NewName ${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}
+          $exeFileName = "${{ matrix.dotnet-runtime }}".Contains("win") ? "extractor.exe" : "extractor"
+          $exeFolderPath = Join-Path $outputFolderPath $exeFileName
+          Rename-Item -Path $exeFolderPath -NewName ${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -50,7 +51,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           path: ${{ format('{0}/{1}/extractor.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
-
+          
   generate_publisher_artifacts:
     name: Generate publisher artifacts
     strategy:
@@ -81,8 +82,10 @@ jobs:
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputFolderPath
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-          $publisherPath = Join-Path $outputFolderPath "publisher"
-          Rename-Item -Path $publisherPath -NewName ${{ format('publisher.{0}.exe', matrix.dotnet-runtime) }}
+          Get-ChildItem -Path $outputFolderPath -Recurse
+          $exeFileName = "${{ matrix.dotnet-runtime }}".Contains("win") ? "publisher.exe" : "publisher"
+          $exeFolderPath = Join-Path $outputFolderPath $exeFileName
+          Rename-Item -Path $exeFolderPath -NewName ${{ format('publisher.{0}.exe', matrix.dotnet-runtime) }}
 
           Write-Information "Execution complete."
         shell: pwsh
