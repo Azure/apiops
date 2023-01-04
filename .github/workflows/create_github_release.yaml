@@ -116,9 +116,8 @@ jobs:
           Copy-Item -Path $sourceFolderPath -Destination $destinationFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
-          $sourceFolderPath = Join-Path $artifactsFolderPath "*"
           $destinationFilePath = Join-Path ${{ runner.temp }} "Github.zip"
-          [System.IO.Compression.ZipFile]::CreateFromDirectory($sourceFolderPath, $destinationFilePath)
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($artifactsFolderPath, $destinationFilePath)
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -151,9 +150,8 @@ jobs:
           Copy-Item -Path $sourceFolderPath -Destination $destinationFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
-          $sourceFolderPath = Join-Path $artifactsFolderPath "*"
           $destinationFilePath = Join-Path ${{ runner.temp }} "Azure_DevOps.zip"
-          [System.IO.Compression.ZipFile]::CreateFromDirectory($sourceFolderPath, $destinationFilePath)
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($artifactsFolderPath, $destinationFilePath)
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -170,6 +168,7 @@ jobs:
         generate_extractor_artifacts,
         generate_publisher_artifacts,
         generate_github_pipeline_artifacts,
+        generate_ado_pipeline_artifacts
       ]
     runs-on: ubuntu-latest
     steps:
