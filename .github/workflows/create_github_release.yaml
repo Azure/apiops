@@ -111,15 +111,14 @@ jobs:
 
           Write-Information "Copying GitHub workflows..."
           $sourceFolderPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "*"
-          Get-ChildItem $sourceFolderPath -Recurse
-          $outputFolderPath = Join-Path $artifactsFolderPath ".github" "workflows"
-          New-Item -Path $outputFolderPath -ItemType "Directory"
-          Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
-          Get-ChildItem $outputFolderPath -Recurse
+          $destinationFolderPath = Join-Path $artifactsFolderPath ".github" "workflows"
+          New-Item -Path $destinationFolderPath -ItemType "Directory"
+          Copy-Item -Path $sourceFolderPath -Destination $destinationFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
-          $outputFilePath = Join-Path ${{ runner.temp }} "Github.zip"
-          Get-ChildItem -Path $artifactsFolderPath | Compress-Archive -DestinationPath $outputFilePath
+          $sourceFolderPath = Join-Path $artifactsFolderPath "*"
+          $destinationFilePath = Join-Path ${{ runner.temp }} "Github.zip"
+          Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -147,13 +146,14 @@ jobs:
 
           Write-Information "Copying Azure DevOps pipelines..."
           $sourceFolderPath = Join-Path ${{ github.workspace }} "tools" "azdo_pipelines" "*"
-          $outputFolderPath = Join-Path $artifactsFolderPath "tools" "pipelines"
-          New-Item -Path $outputFolderPath -ItemType "Directory"
-          Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
+          $destinationFolderPath = Join-Path $artifactsFolderPath "tools" "pipelines"
+          New-Item -Path $destinationFolderPath -ItemType "Directory"
+          Copy-Item -Path $sourceFolderPath -Destination $destinationFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
-          $outputFilePath = Join-Path ${{ runner.temp }} "Azure_DevOps.zip"
-          Get-ChildItem -Path $artifactsFolderPath | Compress-Archive -DestinationPath $outputFilePath
+          $sourceFolderPath = Join-Path $artifactsFolderPath "*"
+          $destinationFilePath = Join-Path ${{ runner.temp }} "Azure_DevOps.zip"
+          Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath
 
           Write-Information "Execution complete."
         shell: pwsh
