@@ -95,7 +95,7 @@ jobs:
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -111,9 +111,11 @@ jobs:
 
           Write-Information "Copying GitHub workflows..."
           $sourceFolderPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "*"
+          Get-ChildItem $sourceFolderPath -Recurse
           $outputFolderPath = Join-Path $artifactsFolderPath ".github" "workflows"
           New-Item -Path $outputFolderPath -ItemType "Directory"
           Copy-Item -Path $sourceFolderPath -Destination $outputFolderPath -Recurse
+          Get-ChildItem $outputFolderPath -Recurse
 
           Write-Information "Zipping artifacts..."
           $outputFilePath = Join-Path ${{ runner.temp }} "Github.zip"
