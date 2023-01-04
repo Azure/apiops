@@ -34,7 +34,7 @@ jobs:
 
           Write-Information "Generating extractor..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
-          $outputFolderPath = Join-Path ${{ runner.temp }} ${{ matrix.dotnet-runtime }}
+          $outputFolderPath = ${{ runner.temp }}
 
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputFolderPath
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
@@ -49,7 +49,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/{1}/extractor.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/extractor.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
 
   generate_publisher_artifacts:
     name: Generate publisher artifacts
@@ -76,7 +76,7 @@ jobs:
 
           Write-Information "Generating publisher..."
           $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
-          $outputFolderPath = Join-Path ${{ runner.temp }} ${{ matrix.dotnet-runtime }}
+          $outputFolderPath = ${{ runner.temp }}
 
           & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output $outputFolderPath
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
@@ -91,7 +91,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/{1}/publisher.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/publisher.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
@@ -99,6 +99,26 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
+      - name: Update versions in YAML
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          $runExtractorPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "run-extractor.yaml"
+          (Get-Content -Path $runExtractorPath) |
+            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+              Set-Content -Path $runExtractorPath
+
+          $runPublisherWithEnvPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "run-publisher-with-env.yaml"
+          (Get-Content -Path $runExtractorPath) |
+            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+              Set-Content -Path $runPublisherWithEnvPath
+
+          Write-Information "Execution complete."
+        shell: pwsh
 
       - name: Setup artifact contents
         run: |
@@ -117,6 +137,8 @@ jobs:
 
           Write-Information "Zipping artifacts..."
           $destinationFilePath = Join-Path ${{ runner.temp }} "Github.zip"
+
+          # We use System.IO.Compression.ZipFile instead of Compress-Archive because of this issue: https://github.com/PowerShell/Microsoft.PowerShell.Archive/issues/66
           [System.IO.Compression.ZipFile]::CreateFromDirectory($artifactsFolderPath, $destinationFilePath)
 
           Write-Information "Execution complete."
@@ -133,6 +155,26 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
+      - name: Update versions in YAML
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          $runExtractorPath = Join-Path ${{ github.workspace }} "tools" "azdo_pipelines" "run-extractor.yaml"
+          (Get-Content -Path $runExtractorPath) |
+            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+              Set-Content -Path $runExtractorPath
+
+          $runPublisherWithEnvPath = Join-Path ${{ github.workspace }} "tools" "azdo_pipelines" "run-publisher-with-env.yaml"
+          (Get-Content -Path $runExtractorPath) |
+            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+              Set-Content -Path $runPublisherWithEnvPath
+
+          Write-Information "Execution complete."
+        shell: pwsh
 
       - name: Setup artifact contents
         run: |
@@ -151,6 +193,8 @@ jobs:
 
           Write-Information "Zipping artifacts..."
           $destinationFilePath = Join-Path ${{ runner.temp }} "Azure_DevOps.zip"
+
+          # We use System.IO.Compression.ZipFile instead of Compress-Archive because of this issue: https://github.com/PowerShell/Microsoft.PowerShell.Archive/issues/66
           [System.IO.Compression.ZipFile]::CreateFromDirectory($artifactsFolderPath, $destinationFilePath)
 
           Write-Information "Execution complete."
