@@ -33,14 +33,14 @@ jobs:
           $InformationPreference = "Continue"
 
           Write-Information "Generating extractor..."
-          $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "extractor" "extractor.csproj"
+          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
           $outputFolderPath = "${{ runner.temp }}"
 
-          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output "$outputFolderPath"
+          & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
           $exeFileName = "${{ matrix.dotnet-runtime }}".Contains("win") ? "extractor.exe" : "extractor"
-          $exeFolderPath = Join-Path $outputFolderPath $exeFileName
+          $exeFolderPath = Join-Path "$outputFolderPath" "$exeFileName"
           Rename-Item -Path "$exeFolderPath" -NewName "${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}"
 
           Write-Information "Execution complete."
@@ -75,14 +75,14 @@ jobs:
           $InformationPreference = "Continue"
 
           Write-Information "Generating publisher..."
-          $sourcePath = Join-Path ${{ github.workspace }} "tools" "code" "publisher" "publisher.csproj"
+          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
           $outputFolderPath = "${{ runner.temp }}"
 
-          & dotnet publish $sourcePath --self-contained --runtime ${{ matrix.dotnet-runtime }} -p:PublishSingleFile=true --output "$outputFolderPath"
+          & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
           $exeFileName = "${{ matrix.dotnet-runtime }}".Contains("win") ? "publisher.exe" : "publisher"
-          $exeFolderPath = Join-Path $outputFolderPath $exeFileName
+          $exeFolderPath = Join-Path "$outputFolderPath" "$exeFileName"
           Rename-Item -Path "$exeFolderPath" -NewName "${{ format('publisher.{0}.exe', matrix.dotnet-runtime) }}"
 
           Write-Information "Execution complete."
@@ -107,12 +107,12 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
-          $runExtractorPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "run-extractor.yaml"
+          $runExtractorPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "run-extractor.yaml"
           (Get-Content -Path "$runExtractorPath") |
             ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
               Set-Content -Path "$runExtractorPath"
 
-          $runPublisherWithEnvPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "run-publisher-with-env.yaml"
+          $runPublisherWithEnvPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "run-publisher-with-env.yaml"
           (Get-Content -Path "$runPublisherWithEnvPath") |
             ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
               Set-Content -Path "$runPublisherWithEnvPath"
@@ -127,16 +127,16 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
-          $artifactsFolderPath = Join-Path ${{ runner.temp }} "github_artifacts"
+          $artifactsFolderPath = Join-Path "${{ runner.temp }}" "github_artifacts"
 
           Write-Information "Copying GitHub workflows..."
-          $sourceFolderPath = Join-Path ${{ github.workspace }} "tools" "github_workflows" "*"
-          $destinationFolderPath = Join-Path $artifactsFolderPath ".github" "workflows"
+          $sourceFolderPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "*"
+          $destinationFolderPath = Join-Path "$artifactsFolderPath" ".github" "workflows"
           New-Item -Path "$destinationFolderPath" -ItemType "Directory"
           Copy-Item -Path "$sourceFolderPath" -Destination "$destinationFolderPath" -Recurse
 
           Write-Information "Zipping artifacts..."
-          $destinationFilePath = Join-Path ${{ runner.temp }} "Github.zip"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" "Github.zip"
 
           # We use System.IO.Compression.ZipFile instead of Compress-Archive because of this issue: https://github.com/PowerShell/Microsoft.PowerShell.Archive/issues/66
           [System.IO.Compression.ZipFile]::CreateFromDirectory("$artifactsFolderPath", "$destinationFilePath")
@@ -163,12 +163,12 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
-          $runExtractorPath = Join-Path ${{ github.workspace }} "tools" "azdo_pipelines" "run-extractor.yaml"
+          $runExtractorPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "run-extractor.yaml"
           (Get-Content -Path "$runExtractorPath") |
             ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
               Set-Content -Path "$runExtractorPath"
 
-          $runPublisherWithEnvPath = Join-Path ${{ github.workspace }} "tools" "azdo_pipelines" "run-publisher-with-env.yaml"
+          $runPublisherWithEnvPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "run-publisher-with-env.yaml"
           (Get-Content -Path "$runExtractorPath") |
             ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
               Set-Content -Path "$runPublisherWithEnvPath"
@@ -183,16 +183,16 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
-          $artifactsFolderPath = Join-Path ${{ runner.temp }} "azdo_artifacts"
+          $artifactsFolderPath = Join-Path "${{ runner.temp }}" "azdo_artifacts"
 
           Write-Information "Copying Azure DevOps pipelines..."
-          $sourceFolderPath = Join-Path ${{ github.workspace }} "tools" "azdo_pipelines" "*"
+          $sourceFolderPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "*"
           $destinationFolderPath = Join-Path "$artifactsFolderPath" "tools" "pipelines"
           New-Item -Path "$destinationFolderPath" -ItemType "Directory"
           Copy-Item -Path "$sourceFolderPath" -Destination "$destinationFolderPath" -Recurse
 
           Write-Information "Zipping artifacts..."
-          $destinationFilePath = Join-Path ${{ runner.temp }} "Azure_DevOps.zip"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" "Azure_DevOps.zip"
 
           # We use System.IO.Compression.ZipFile instead of Compress-Archive because of this issue: https://github.com/PowerShell/Microsoft.PowerShell.Archive/issues/66
           [System.IO.Compression.ZipFile]::CreateFromDirectory("$artifactsFolderPath", "$destinationFilePath")
