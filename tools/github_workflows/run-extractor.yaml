@@ -86,7 +86,7 @@ jobs:
 
           Write-Information "Downloading extractor..."
           $extractorFileName = "${{ runner.os }}" -like "*win*" ? "extractor.win-x64.exe" : "extractor.linux-x64.exe"
-          $uri = "https://github.com/guythetechie/apiops/releases/download/${{ env.apiops_release_version }}/$extractorFileName"
+          $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$extractorFileName"
           $destinationFilePath = Join-Path "${{ runner.temp }}" "extractor.exe"
           Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
 

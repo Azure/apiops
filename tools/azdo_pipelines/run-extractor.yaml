@@ -132,7 +132,7 @@ stages:
       - job: create_artifacts_pull_request
         displayName: Create artifacts pull request
         pool:
-          vmImage: ubuntu-latest
+          vmImage: windows-latest
         steps:
           - task: DownloadPipelineArtifact@2
             displayName: Download pipeline artifact
