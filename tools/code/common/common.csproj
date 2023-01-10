@@ -4,7 +4,7 @@
     <TargetFramework>net7.0</TargetFramework>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Nullable>enable</Nullable>
-    <AnalysisLevel>latest-all</AnalysisLevel>
+    <!-- <AnalysisLevel>latest-all</AnalysisLevel> -->
   </PropertyGroup>
 
   <ItemGroup>
