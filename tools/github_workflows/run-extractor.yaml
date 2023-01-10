@@ -42,9 +42,29 @@ jobs:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/apimartifacts  # change this to the artifacts folder
           API_SPECIFICATION_FORMAT: ${{ github.event.inputs.API_SPECIFICATION_FORMAT }} 
         run: |
-          wget https://github.com/Azure/apiops/releases/download/$apiops_release_version/extractor
-          chmod +x ./extractor
-          ./extractor
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          Write-Information "Downloading extractor..."
+          $extractorFileName = "${{ runner.os }}" -like "*win*" ? "extractor.win-x64.exe" : "extractor.linux-x64.exe"
+          $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$extractorFileName"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" "extractor.exe"
+          Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
+
+          if ("${{ runner.os }}" -like "*linux*")
+          {
+            Write-Information "Setting file permissions..."
+            & chmod +x "$destinationFilePath"
+            if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
+          }
+
+          & "$destinationFilePath"              
+          if ($LASTEXITCODE -ne 0) { throw "Running extractor failed."}
+
+          Write-Information "Execution complete."
+        shell: pwsh
       
       - name: Run extractor with Config Yaml
         if: ${{ github.event.inputs.CONFIGURATION_YAML_PATH != 'Extract All APIs' }}
@@ -59,9 +79,29 @@ jobs:
           API_SPECIFICATION_FORMAT: ${{ github.event.inputs.API_SPECIFICATION_FORMAT }} 
           CONFIGURATION_YAML_PATH:  ${{ GITHUB.WORKSPACE }}/${{ github.event.inputs.CONFIGURATION_YAML_PATH }}
         run: |
-          wget https://github.com/Azure/apiops/releases/download/$apiops_release_version/extractor
-          chmod +x ./extractor
-          ./extractor
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          Write-Information "Downloading extractor..."
+          $extractorFileName = "${{ runner.os }}" -like "*win*" ? "extractor.win-x64.exe" : "extractor.linux-x64.exe"
+          $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$extractorFileName"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" "extractor.exe"
+          Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
+
+          if ("${{ runner.os }}" -like "*linux*")
+          {
+            Write-Information "Setting file permissions..."
+            & chmod +x "$destinationFilePath"
+            if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
+          }
+
+          & "$destinationFilePath"              
+          if ($LASTEXITCODE -ne 0) { throw "Running extractor failed."}
+
+          Write-Information "Execution complete."
+        shell: pwsh
 
       - name: publish artifact
         uses: actions/upload-artifact@v2
