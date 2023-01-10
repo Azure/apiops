@@ -118,8 +118,8 @@ stages:
               API_MANAGEMENT_SERVICE_NAME: ${{ parameters.APIM_INSTANCE_NAME }}
               API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: $(Build.ArtifactStagingDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
               API_SPECIFICATION_FORMAT: ${{ parameters.API_SPECIFICATION_FORMAT }}
-              ? ${{ if ne( parameters['CONFIGURATION_YAML_PATH'], 'Extract All' ) }}
-              : CONFIGURATION_YAML_PATH: ${{ parameters.CONFIGURATION_YAML_PATH }}
+              ${{ if ne( parameters['CONFIGURATION_YAML_PATH'], 'Extract All' ) }}:
+                CONFIGURATION_YAML_PATH: ${{ parameters.CONFIGURATION_YAML_PATH }}
           - task: PublishPipelineArtifact@1
             displayName: Publish pipeline artifact
             inputs:
