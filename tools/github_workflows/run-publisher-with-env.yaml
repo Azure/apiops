@@ -68,7 +68,7 @@ jobs:
 
           Write-Information "Downloading publisher..."
           $publisherFileName = "${{ runner.os }}" -like "*win*" ? "publisher.win-x64.exe" : "publisher.linux-x64.exe"
-          $uri = "https://github.com/guythetechie/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
+          $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
           $destinationFilePath = Join-Path "${{ runner.temp }}" "publisher.exe"
           Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
 

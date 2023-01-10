@@ -77,7 +77,7 @@ stages:
 
                 Write-Information "Downloading extractor..."
                 $extractorFileName = "$(Agent.OS)" -like "*win*" ? "extractor.win-x64.exe" : "extractor.linux-x64.exe"
-                $uri = "https://github.com/guythetechie/apiops/releases/download/$(apiops_release_version)/$extractorFileName"
+                $uri = "https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/$extractorFileName"
                 $destinationFilePath = Join-Path "$(Agent.TempDirectory)" "extractor.exe"
                 Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
 
