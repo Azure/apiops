@@ -5,10 +5,13 @@ has_children: false
 nav_order: 5
 ---
 > **Note**
-> Please note that the instructions on this page pertain to new and simplified setup which was introduced with release v.3.0.0
+> Please note that the instructions on this page pertain to new and simplified setup which was introduced with release v3.0.0
 <br />
 The older setup [can be found here](https://azure.github.io/apiops/apiops/3-apimTools/apimtools-github-2-4-new.html).
  
+> **Note**
+> Starting with release v4.0.0 both windows and linux build agents are supported. Thus you will notice that starting with v4.0.0 there are separate binaries (extractor and publisher) get generated for each OS.
+
 ## Configure APIM tools in GitHub
 
 
