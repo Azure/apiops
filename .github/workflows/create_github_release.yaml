@@ -169,7 +169,7 @@ jobs:
               Set-Content -Path "$runExtractorPath"
 
           $runPublisherWithEnvPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "run-publisher-with-env.yaml"
-          (Get-Content -Path "$runExtractorPath") |
+          (Get-Content -Path "$runPublisherWithEnvPath") |
             ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
               Set-Content -Path "$runPublisherWithEnvPath"
 
