@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev # change this to match the dev environment created in settings 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
           
       - name: Run extractor without Config Yaml
         if: ${{ github.event.inputs.CONFIGURATION_YAML_PATH == 'Extract All APIs' }}
@@ -115,7 +115,7 @@ jobs:
     needs: extract
     runs-on: [ubuntu-latest]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
           
       - name: Download artifacts-from-portal
         uses: actions/download-artifact@v2
