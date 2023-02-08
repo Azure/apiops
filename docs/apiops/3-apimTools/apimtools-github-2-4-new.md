@@ -5,10 +5,13 @@ has_children: false
 nav_order: 5
 ---
 > **Note**
-> Please note that the instructions on this page pertain to new and simplified setup which was introduced with release v.3.0.0
+> Please note that the instructions on this page pertain to new and simplified setup which was introduced with release v3.0.0
 <br />
 The older setup [can be found here](https://azure.github.io/apiops/apiops/3-apimTools/apimtools-github-2-4-new.html).
  
+> **Note**
+> Starting with release v4.0.0 both windows and linux build agents are supported. Thus you will notice that starting with v4.0.0 there are separate binaries (extractor and publisher) get generated for each OS.
+
 ## Configure APIM tools in GitHub
 
 
@@ -25,7 +28,7 @@ The older setup [can be found here](https://azure.github.io/apiops/apiops/3-apim
     - az ad sp create-for-rbac -n "apiopslab" --role Contributor --scopes /subscriptions/{subscription-id}/resourceGroups/{prod-resource-group} --sdk-auth
     - The output of the above az cli commands will be a json object as the one shown below. In the next step we will extract the four properties highlighted within the red box and and store them as secrets within each of your github repository environments. Note that for this guide we will create two Github [environments](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment), but in an enterprise setting you will probably have more environments between dev and production (e.g. QA). ![sp command](../../assets/images/sp_command_output.png)
 4.  To create an environment you will need to head to the settings menu in your Github repository and crete an environment called dev. Then add 6 secrets (4 from the command you issued above in addition to the apim instance name and resource group). Make sure to use the same names shown below as they will be referenced within the different workflows. ![github dev environment](../../assets/images/github_dev_environment.png)
-5. Repeat the same process for the production apim instance (remember to use the information from the json object generated for the production apim instance in the service principal command above). Also for hte production environment we will need to add a protection rule to ensure that the production stage only gets triggered after manual approval. Here is the completed production environment settings with one reviewer selected. Its recommended you have at least two approvers in an enterprise setting. ![github prod environment](../../assets/images/github_prod_environment.png)
+5. Repeat the same process for the production apim instance (remember to use the information from the json object generated for the production apim instance in the service principal command above). Also for the production environment we will need to add a protection rule to ensure that the production stage only gets triggered after manual approval. Here is the completed production environment settings with one reviewer selected. Its recommended you have at least two approvers in an enterprise setting. ![github prod environment](../../assets/images/github_prod_environment.png)
 6. Here are the two completed environments: ![github environment](../../assets/images/Github_Environments.png)
 
 7. If you open the **.github/workflows/run-extractor.yaml** and the **.github/workflows/run-publisher-with-env.yaml** files your will notice that the current release is set in an environment variable called **apiops_release_version**. You can use a secret variable instead if you would like to set it up in once place, but we felt that the secret would obscure the current version and would make it hard to track which version you are currently on. Feel free to experiment with other methods where you can simply store the release version in one location and parse it in both workflows.
