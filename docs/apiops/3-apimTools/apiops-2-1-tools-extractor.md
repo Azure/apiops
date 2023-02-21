@@ -22,7 +22,7 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH | Folder where the APIM artifacts will be saved |
 | API_SPECIFICATION_FORMAT | OpenAPI specification format. Valid options are **JSON** or **YAML**. If the variable is missing or invalid, **YAML** will be used by default |
 | CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to specify select apis to extract. A sample yaml extractor configuration file to signal to the extractor to extract select apis. This is an optional parameter and will only come into play if you want different teams to manage different apis. You typically will have one configuration per team. Note: You can call the file whatever you want as long as you reference the right file within your extractor pipeline.
-| AZURE_CLOUD_ENVIRONMENT | Azure Authority Host Service url that will be used. This is a optional parameter and will default to **AzurePublicCloud** if not specified. <br> **AzurePublicCloud** (https://management.azure.com/) <br> **AzureChinaCloud** (https://management.chinacloudapi.cn/) <br> **AzureGermanCloud** (https://management.microsoftazure.de/) <br> **AzureUSGovernment** (https://management.usgovcloudapi.net/)
+| AZURE_CLOUD_ENVIRONMENT | Azure Authority Host Service url that will be used. This is a optional parameter and will default to **AzurePublicCloud** if not specified. 
 | Logging__LogLevel__Default:  | The allowed values are either "Information", "Debug", or "Trace". Table below shows the description of each logging level.
 
 Here are the different logging levels available. By default the logging level is set to "Information". 
@@ -57,6 +57,16 @@ The figures below demonstrates specifying the the openapi specification format i
 ![openapi_specification_format_azdo](../../assets/images/openapi_specification_format_azdo.png)
 
 ![openapi_specification_format_Github](../../assets/images/openapi_specification_format_Github.png)
+
+### AZURE_CLOUD_ENVIRONMENT
+The Azure Authority Host Service url is controlled by the configuration variable ``AZURE_CLOUD_ENVIRONMENT``. Here are the options:
+
+| Value | Url
+| - | - |
+| AzurePublicCloud | https://management.azure.com/ |
+| AzureChinaCloud | https://management.chinacloudapi.cn/ |
+| AzureGermanCloud | https://management.microsoftazure.de/ |
+| AzureUSGovernment | https://management.usgovcloudapi.net/ |
 
 ### Artifacts
 The extractor will export the artifacts listed below.
