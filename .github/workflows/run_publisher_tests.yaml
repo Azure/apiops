@@ -6,28 +6,84 @@ on:
     branches:
       - integration-tests
 
+env:
+  EXTRACTOR_ARTIFACT_NAME: extractor
+  PUBLISHER_ARTIFACT_NAME: publisher
+
 jobs:
-  compile_extractor:
-    name: Compile extractor
+  get_extractor:
+    name: Create extractor artifact
     runs-on: ubuntu-latest
     steps:
-      - name: Compile extractor
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 7.x
+
+      - name: Generate executable
+        shell: pwsh
         run: |
-          echo "Successfully compiled extractor."
-  compile_publisher:
-    name: Compile publisher
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
+          $outputFolderPath = "${{ runner.temp }}"
+          & dotnet publish "$sourcePath" --self-contained --runtime "linux-x64" -p:PublishSingleFile=true --output "$outputFolderPath"
+          if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
+
+          $exeFilePath = Join-Path "$outputFolderPath" "extractor"
+          "EXE_FILE_PATH=$exeFilePath" >> ${{ github.env }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.EXTRACTOR_ARTIFACT_NAME }}
+          path: ${{ env.EXE_FILE_PATH }}
+  get_publisher:
+    name: Create publisher artifact
     runs-on: ubuntu-latest
     steps:
-      - name: Compile publisher
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 7.x
+
+      - name: Generate executable
+        shell: pwsh
         run: |
-          echo "Successfully compiled publisher."
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
+          $outputFolderPath = "${{ runner.temp }}"
+          & dotnet publish "$sourcePath" --self-contained --runtime "linux-x64" -p:PublishSingleFile=true --output "$outputFolderPath"
+          if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
+
+          $exeFilePath = Join-Path "$outputFolderPath" "publisher"
+          "EXE_FILE_PATH=$exeFilePath" >> ${{ github.env }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.PUBLISHER_ARTIFACT_NAME }}
+          path: ${{ env.EXE_FILE_PATH }}
   run_tests:
     name: Run tests
     runs-on: ubuntu-latest
     environment: dev
     needs:
-      - compile_extractor
-      - compile_publisher
+      - get_extractor
+      - get_publisher
     steps:
       - name: Run tests
         run: |
