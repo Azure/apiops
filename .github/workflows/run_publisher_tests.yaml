@@ -2,11 +2,9 @@ name: Run publisher integration tests
 
 on:
   workflow_dispatch:
-    inputs:
-      dummy:
-        description: 'Dummy'
-        default: 'somevalue'
-        required: false
+  push:
+    branches:
+      - integration-tests
 
 jobs:
   compile_extractor:
