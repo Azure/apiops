@@ -117,8 +117,16 @@ internal class Publisher : BackgroundService
         var serviceDirectoryInfo = publisherParameters.ServiceDirectory.GetDirectoryInfo();
         var commitDictionary = await Git.GetFilesFromCommit(commitId, serviceDirectoryInfo);
 
-        return commitDictionary.ToImmutableDictionary(kvp => MatchCommitStatusToAction(kvp.Key),
-                                                      kvp => kvp.Value);
+        var fileActions = from kvp in commitDictionary
+                          from fileAction in from file in kvp.Value
+                                             let commitStatus = kvp.Key
+                                             let action = MatchCommitStatusToAction(commitStatus)
+                                             select (File: file, Action: action)
+                          group fileAction.File by fileAction.Action;
+
+        return fileActions.ToImmutableDictionary(group => group.Key,
+                                                 group => group.DistinctBy(file => file.FullName)
+                                                               .ToImmutableList());
     }
 
     private static Action MatchCommitStatusToAction(CommitStatus commitStatus) =>
