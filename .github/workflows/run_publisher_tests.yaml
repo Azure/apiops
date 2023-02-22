@@ -126,25 +126,3 @@ jobs:
             "APIM_INSTANCE_NAME=$apimInstanceName" >> ${{ github.env }}
 
           azPSVersion: 'latest'
-      - name: Run tests
-        shell: pwsh
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $VerbosePreference = "Continue"
-          $InformationPreference = "Continue"
-          
-          Install-Module -Name Pester -Force -SkipPublisherCheck
-          $pesterContainerParameters = @{
-            Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "Publisher.Tests.ps1"
-            Data = @{
-              ResourceGroupName = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
-              ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
-              ExtractorExePath = "${{  }}"
-              PublisherExePath = "${{  }}"
-              TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts"
-            }
-          }
-          $container = New-PesterContainer @pesterContainerParameters
-
-          Invoke-Pester -Container $container -Output "Detailed"
