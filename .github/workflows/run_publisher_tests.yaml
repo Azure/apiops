@@ -44,6 +44,7 @@ jobs:
         with:
           name: ${{ env.EXTRACTOR_ARTIFACT_NAME }}
           path: ${{ env.EXE_FILE_PATH }}
+          retention-days: 1
   get_publisher:
     name: Create publisher artifact
     runs-on: ubuntu-latest
@@ -77,14 +78,51 @@ jobs:
         with:
           name: ${{ env.PUBLISHER_ARTIFACT_NAME }}
           path: ${{ env.EXE_FILE_PATH }}
+          retention-days: 1
   run_tests:
     name: Run tests
     runs-on: ubuntu-latest
     environment: dev
+    permissions:
+      id-token: write
+      contents: read
     needs:
       - get_extractor
       - get_publisher
     steps:
-      - name: Run tests
-        run: |
-          echo "Successfully ran tests"
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: ${{ runner.temp }}
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
+      - name: Setup test environment
+        uses: azure/powershell@v1
+        with:
+          inlineScript: |
+            Set-StrictMode -Version Latest
+            $ErrorActionPreference = "Stop"
+            $VerbosePreference = "Continue"
+            $InformationPreference = "Continue"
+
+            $resourceGroup = Get-AzResourceGroup -Name "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
+            $apimInstanceName = (New-Guid).Guid.Substring(0, 8)
+            $apimInstanceParameters = @{
+                "ResourceGroupName" = $resourceGroup.ResourceGroupName
+                "Name"              = $apimInstanceName
+                "Location"          = $resourceGroup.Location
+                "Organization"      = "apiops"
+                "AdminEmail"        = "admin@apiops.com"
+                "Sku"               = "Consumption"
+            }
+            $apimInstance = New-AzApiManagement @apimInstanceParameters
+
+            Install-Module -Name Pester -Force -SkipPublisherCheck
+          azPSVersion: 'latest'
