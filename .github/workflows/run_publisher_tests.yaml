@@ -98,6 +98,16 @@ jobs:
         with:
           path: ${{ runner.temp }}
 
+      - name: Make files executable
+        run: |
+          extractorExePath="${{ runner.temp }}/extractor"
+          chmod +x "$extractorExePath"
+          echo "EXTRACTOR_EXE_PATH=$extractorExePath" >> ${{ github.env }}
+
+          publisherExePath="${{ runner.temp}}/publisher"
+          chmod +x "$publisherExePath"
+          echo "PUBLISHER_EXE_PATH=$publisherExePath" >> ${{ github.env }}
+
       - name: Login to Azure
         uses: azure/login@v1
         with:
@@ -128,7 +138,7 @@ jobs:
             $apimInstance = New-AzApiManagement @apimInstanceParameters
             "APIM_INSTANCE_NAME=$apimInstanceName" >> ${{ github.env }}
           azPSVersion: 'latest'
-          
+
       - name: Run tests
         uses: azure/powershell@v1
         with:
@@ -144,8 +154,8 @@ jobs:
               Data = @{
                 ResourceGroupName = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
                 ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
-                ExtractorExePath = "${{  }}"
-                PublisherExePath = "${{  }}"
+                ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
+                PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
                 TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts"
               }
             }
