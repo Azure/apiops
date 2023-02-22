@@ -1,84 +1,67 @@
-BeforeDiscovery {
-    $parameters = @{        
-        testArtifactsPath = "C:\Users\user\source\repos\github\Azure\apiops\tools\tests\artifacts"
-        extractorSourcePath = "C:\Users\user\source\repos\github\Azure\apiops\tools\code\extractor\extractor.csproj"
-        publisherSourcePath = "C:\Users\user\source\repos\github\Azure\apiops\tools\code\publisher\publisher.csproj"
-    }
-}
+param (
+    [Parameter(Mandatory)]
+    [string]
+    $ResourceGroupName,
+    [Parameter(Mandatory)]
+    [string]
+    $ApiManagementInstanceName,
+    [Parameter(Mandatory)]
+    [string]
+    $ExtractorExePath,
+    [Parameter(Mandatory)]
+    [string]
+    $PublisherExePath,
+    [Parameter(Mandatory)]
+    [string]
+    $TestArtifactsPath
+)
 
-Describe "Publisher tests" -ForEach $parameters {
+Describe "Publisher tests" {
     BeforeAll {
         Set-StrictMode -Version Latest
         $ErrorActionPreference = "Stop"
         $VerbosePreference = "Continue"
         $InformationPreference = "Continue"
-    
-        Write-Information "Creating resource group..."
-        $resourceGroupParameters = @{
-            Name     = "apiops-test-rg"
-            Location = "eastus"
-            Force    = $true
-        }
-        $resourceGroup = New-AzResourceGroup @resourceGroupParameters
-
-        Write-Information "Creating APIM instance..."
-        $apimInstanceParameters = @{
-            "ResourceGroupName" = $resourceGroup.ResourceGroupName
-            "Name"              = "apiopststr-apim"
-            "Location"          = $resourceGroup.Location
-            "Organization"      = "apiops"
-            "AdminEmail"        = "admin@apiops.com"
-            "Sku"               = "Consumption"
-        }
-        $apimInstance = New-AzApiManagement @apimInstanceParameters
-
-        Write-Information "Compiling extractor..."
-        $extractorOutputFolderPath = Join-Path $TestDrive "extractor"
-        & dotnet publish $extractorSourcePath --self-contained --runtime "win-x64" -p:PublishSingleFile=true --output "$extractorOutputFolderPath"
-        $extractorFilePath = Join-Path $extractorOutputFolderPath "extractor.exe"
-
-        Write-Information "Compiling publisher..."
-        $publisherOutputFolderPath = Join-Path $TestDrive "publisher"
-        & dotnet publish $publisherSourcePath --self-contained --runtime "win-x64" -p:PublishSingleFile=true --output "$publisherOutputFolderPath"
-        $publisherFilePath = Join-Path $publisherOutputFolderPath "publisher.exe"    
-    
+        
         Write-Information "Running publisher..."
         $env:AZURE_BEARER_TOKEN = (Get-AzAccessToken).Token
         $env:AZURE_SUBSCRIPTION_ID = (Get-AzContext).Subscription.Id
-        $env:AZURE_RESOURCE_GROUP_NAME = $apimInstance.ResourceGroupName
-        $env:API_MANAGEMENT_SERVICE_NAME = $apimInstance.Name            
-        $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $testArtifactsPath        
-        $output = & $publisherFilePath
+        $env:AZURE_RESOURCE_GROUP_NAME = $ResourceGroupName
+        $env:API_MANAGEMENT_SERVICE_NAME = $ApiManagementInstanceName           
+        $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $TestArtifactsPath        
+        $output = & $PublisherExePath
+        $output
         if ($LASTEXITCODE -ne 0) {
-            throw "Publisher failed. Output is $($output | Out-String)"
+            throw "Publisher failed."
         }
             
         Write-Information "Running extractor..."
         $extractorArtifactsPath = Join-Path $TestDrive "extractor artifacts"
         $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $extractorArtifactsPath        
-        $output = & $extractorFilePath
+        $output = & $ExtractorExePath
+        $output
         if ($LASTEXITCODE -ne 0) {
-            throw "Extractor failed. Output is $($output | Out-String)"
+            throw "Extractor failed."
         }
     }
 
-    Context "Policy fragments" -ForEach $parameters {
+    Context "Policy fragments" {
         BeforeDiscovery {
-            $policyFragmentsFolder = Join-Path $testArtifactsPath "policy fragments"
+            $policyFragmentsFolder = Join-Path $TestArtifactsPath "policy fragments"
             $policyFragments = $policyFragmentsFolder | Get-ChildItem -Directory
             $parameters = $policyFragments | ForEach-Object {
                 @{
-                    name          = $_.Name
-                    artifactsPath = $_.FullName
+                    name                = $_.Name
+                    artifactsFolderPath = $_.FullName
                 }
             }
         }
 
         It "Publishes XML successfully (<_.name>)" -ForEach $parameters {
-            $testXmlPath = Join-Path $artifactsPath "policy.xml"
+            $testXmlPath = Join-Path $artifactsFolderPath "policy.xml"
             $testXmlContent = Get-Content -Path $testXmlPath -Raw
 
-            $extractorXmlPath = Join-Path $extractorArtifactsPath "policy.xml"
+            $extractorXmlPath = Join-Path $extractorArtifactsPath "policy fragments" "$name" "policy.xml"
             $extractorXmlContent = Get-Content -Path $extractorXmlPath -Raw
 
             $extractorXmlContent | Should -Be $testXmlContent
