@@ -35,8 +35,9 @@ steps:
   - checkout: self
     fetchDepth: 0
 
-  - script: spectral lint "$(Build.SourcesDirectory)\${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
+  - script: spectral lint "$(Build.SourcesDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}/apis/**/specification.{json,yml,yaml}" -r https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
     displayName: "Lint API definition"
+    
 
   - task: AzureCLI@2
     displayName: Set publishing variables
@@ -60,7 +61,7 @@ steps:
 
   # replacetokens@3 task will need to be installed to use
   - ${{ if ne(parameters.CONFIGURATION_YAML_PATH, '') }}:
-      - task: replacetokens@3
+      - task: qetza.replacetokens.replacetokens-task.replacetokens@3
         displayName: "Perform namevalue secret substitution in ${{ parameters.CONFIGURATION_YAML_PATH }}"
         inputs:
           targetFiles: ${{ parameters.CONFIGURATION_YAML_PATH }}
