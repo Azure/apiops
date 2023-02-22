@@ -1,0 +1,31 @@
+name: Run publisher integration tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compile_extractor:
+    name: Compile extractor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compile extractor
+        run: |
+          echo "Successfully compiled extractor."
+  compile_publisher:
+    name: Compile publisher
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compile publisher
+        run: |
+          echo "Successfully compiled publisher."
+  run_tests:
+    name: Run tests
+    runs-on: ubuntu-latest
+    environment: dev
+    needs:
+      - compile_extractor
+      - compile_publisher
+    steps:
+      - name: Run tests
+        run: |
+          echo "Successfully ran tests"

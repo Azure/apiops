@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -85,8 +86,8 @@ public static class HttpPipelineExtensions
     private static Response Validate(this Response response, Uri requestUri)
     {
         return response.IsError
-            ? throw new InvalidOperationException($"HTTP request to URI {requestUri} failed with status code {response.Status}. Content is '{response.Content}'.")
-            : response;
+                ? throw new HttpRequestException(message: $"HTTP request to URI {requestUri} failed with status code {response.Status}. Content is '{response.Content}'.", inner: null, statusCode: (HttpStatusCode)response.Status)
+                : response;
     }
 
     private static async ValueTask WaitForLongRunningOperation(this HttpPipeline pipeline, Response response, CancellationToken cancellationToken)
