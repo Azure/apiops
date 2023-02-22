@@ -92,10 +92,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
       - name: Download artifacts
         uses: actions/download-artifact@v3
         with:
           path: ${{ runner.temp }}
+
       - name: Login to Azure
         uses: azure/login@v1
         with:
@@ -103,6 +105,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           enable-AzPSSession: true
+
       - name: Setup test environment
         uses: azure/powershell@v1
         with:
@@ -124,5 +127,29 @@ jobs:
             }
             $apimInstance = New-AzApiManagement @apimInstanceParameters
             "APIM_INSTANCE_NAME=$apimInstanceName" >> ${{ github.env }}
+          azPSVersion: 'latest'
+          
+      - name: Run tests
+        uses: azure/powershell@v1
+        with:
+          inlineScript: |
+            Set-StrictMode -Version Latest
+            $ErrorActionPreference = "Stop"
+            $VerbosePreference = "Continue"
+            $InformationPreference = "Continue"
+          
+            Install-Module -Name Pester -Force -SkipPublisherCheck
+            $pesterContainerParameters = @{
+              Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "Publisher.Tests.ps1"
+              Data = @{
+                ResourceGroupName = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
+                ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
+                ExtractorExePath = "${{  }}"
+                PublisherExePath = "${{  }}"
+                TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts"
+              }
+            }
+            $container = New-PesterContainer @pesterContainerParameters
 
+            Invoke-Pester -Container $container -Output "Detailed"
           azPSVersion: 'latest'
