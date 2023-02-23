@@ -157,7 +157,6 @@ jobs:
                 ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
                 PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
                 TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts"
-                tools\tests\artifacts\policy fragments
               }
             }
             $container = New-PesterContainer @pesterContainerParameters
