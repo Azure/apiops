@@ -156,7 +156,8 @@ jobs:
                 ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
                 ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
                 PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
-                TestArtifactsPath = "$(Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts")"
+                TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts"
+                tools\tests\artifacts\policy fragments
               }
             }
             $container = New-PesterContainer @pesterContainerParameters
