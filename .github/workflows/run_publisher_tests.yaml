@@ -150,7 +150,7 @@ jobs:
           
             Install-Module -Name Pester -Force -SkipPublisherCheck
 
-            $configurationParameters = @{
+            $configuration = New-PesterConfiguration -HashTable @{
               Run = @{
                 Exit = $true
                 Container = @{
@@ -165,5 +165,5 @@ jobs:
                 }
               }
             }
-            Invoke-Pester -Configuration $configurationParameters
+            Invoke-Pester -Configuration $configuration
           azPSVersion: 'latest'
