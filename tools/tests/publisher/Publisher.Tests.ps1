@@ -48,7 +48,7 @@ Describe "Publisher tests" {
     Context "Policy fragments" {
         BeforeDiscovery {
             $policyFragmentsFolder = Join-Path $TestArtifactsPath "policy fragments"
-            $policyFragments = $policyFragmentsFolder | Get-ChildItem -Directory
+            $policyFragments = "$policyFragmentsFolder" | Get-ChildItem -Directory
             $parameters = $policyFragments | ForEach-Object {
                 @{
                     name                = $_.Name
