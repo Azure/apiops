@@ -150,18 +150,22 @@ jobs:
           
             Install-Module -Name Pester -Force -SkipPublisherCheck
 
+            $containerParameters = @{
+              Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "Publisher.Tests.ps1"
+              Data = @{
+                ResourceGroupName = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
+                ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
+                ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
+                PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
+                TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
+              }
+            }
+            $container = New-PesterContainer @containerParameters
+
             $configuration = New-PesterConfiguration -HashTable @{
               Run = @{
                 Exit = $true
-                Container = @{
-                  Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "Publisher.Tests.ps1"
-                  Data = @{
-                    ResourceGroupName = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
-                    ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
-                    ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
-                    PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
-                    TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
-                  }
+                Container = $container
                 }
               }
             }
