@@ -165,5 +165,5 @@ jobs:
                 }
               }
             }
-            Invoke-Pester @configurationParameters
+            Invoke-Pester -Configuration $configurationParameters
           azPSVersion: 'latest'
