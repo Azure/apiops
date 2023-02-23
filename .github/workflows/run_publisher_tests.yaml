@@ -8,7 +8,9 @@ on:
 
 env:
   EXTRACTOR_ARTIFACT_NAME: extractor
+  EXTRACTOR_EXE_FILE_NAME: extractor.exe
   PUBLISHER_ARTIFACT_NAME: publisher
+  PUBLISHER_EXE_FILE_NAME: publisher.exe
 
 jobs:
   get_extractor:
@@ -36,7 +38,8 @@ jobs:
           & dotnet publish "$sourcePath" --self-contained --runtime "linux-x64" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
-          $exeFilePath = Join-Path "$outputFolderPath" "extractor"
+          Join-Path "$outputFolderPath" "extractor" | Rename-Item "${{ env.EXTRACTOR_EXE_FILE_NAME }}"
+          $exeFilePath = Join-Path "$outputFolderPath" "${{ env.EXTRACTOR_EXE_FILE_NAME }}"
           "EXE_FILE_PATH=$exeFilePath" >> ${{ github.env }}
 
       - name: Upload artifact
@@ -70,7 +73,8 @@ jobs:
           & dotnet publish "$sourcePath" --self-contained --runtime "linux-x64" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-          $exeFilePath = Join-Path "$outputFolderPath" "publisher"
+          Join-Path "$outputFolderPath" "publisher" | Rename-Item "${{ env.PUBLISHER_EXE_FILE_NAME }}"
+          $exeFilePath = Join-Path "$outputFolderPath" "${{ env.PUBLISHER_EXE_FILE_NAME }}"
           "EXE_FILE_PATH=$exeFilePath" >> ${{ github.env }}
 
       - name: Upload artifact
@@ -100,11 +104,11 @@ jobs:
 
       - name: Make files executable
         run: |
-          extractorExePath="${{ runner.temp }}/extractor"
+          extractorExePath="${{ runner.temp}}/${{ env.EXTRACTOR_EXE_FILE_NAME }}"
           chmod +x "$extractorExePath"
           echo "EXTRACTOR_EXE_PATH=$extractorExePath" >> ${{ github.env }}
 
-          publisherExePath="${{ runner.temp}}/publisher"
+          publisherExePath="${{ runner.temp}}/${{ env.PUBLISHER_EXE_FILE_NAME }}"
           chmod +x "$publisherExePath"
           echo "PUBLISHER_EXE_PATH=$publisherExePath" >> ${{ github.env }}
 
@@ -147,17 +151,32 @@ jobs:
             $ErrorActionPreference = "Stop"
             $VerbosePreference = "Continue"
             $InformationPreference = "Continue"
+
+            Write-Information "Running publisher..."
+            $publisherTestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
+            $env:AZURE_BEARER_TOKEN = (Get-AzAccessToken).Token
+            $env:AZURE_SUBSCRIPTION_ID = (Get-AzContext).Subscription.Id
+            $env:AZURE_RESOURCE_GROUP_NAME = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
+            $env:API_MANAGEMENT_SERVICE_NAME = "${{ env.APIM_INSTANCE_NAME }}"        
+            $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $publisherTestArtifactsPath      
+            $output = & "${{ env.PUBLISHER_EXE_PATH }}"
+            $output
+            if ($LASTEXITCODE -ne 0) { throw "Publisher failed." }
+                
+            Write-Information "Running extractor..."
+            $extractorArtifactsPath = Join-Path $TestDrive "extractor artifacts"
+            $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $extractorArtifactsPath        
+            $output = & "${{ env.EXTRACTOR_EXE_PATH }}"
+            $output
+            if ($LASTEXITCODE -ne 0) { throw "Extractor failed." }
           
             Install-Module -Name Pester -Force -SkipPublisherCheck
 
             $containerParameters = @{
-              Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "Publisher.Tests.ps1"
+              Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "*.Tests.ps1"
               Data = @{
-                ResourceGroupName = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
-                ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
-                ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
-                PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
-                TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
+                PublisherArtifactsPath = "$publisherTestArtifactsPath"
+                ExtractorArtifactsPath = "$extractorArtifactsPath"
               }
             }
             $container = New-PesterContainer @containerParameters
