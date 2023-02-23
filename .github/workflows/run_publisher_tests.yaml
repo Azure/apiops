@@ -166,7 +166,6 @@ jobs:
               Run = @{
                 Exit = $true
                 Container = $container
-                }
               }
             }
             Invoke-Pester -Configuration $configuration
