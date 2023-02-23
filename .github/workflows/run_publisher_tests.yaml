@@ -126,7 +126,7 @@ jobs:
             $InformationPreference = "Continue"
 
             $resourceGroup = Get-AzResourceGroup -Name "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
-            $apimInstanceName = "e0390156" // (New-Guid).Guid.Substring(0, 8)
+            $apimInstanceName = "apiopse0390156"
             $apimInstanceParameters = @{
                 "ResourceGroupName" = $resourceGroup.ResourceGroupName
                 "Name"              = $apimInstanceName
