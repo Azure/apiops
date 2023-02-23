@@ -48,8 +48,6 @@ Describe "Publisher tests" {
     Context "Policy fragments" {
         BeforeDiscovery {
             $policyFragmentsFolder = Join-Path $TestArtifactsPath "policy fragments"
-            Write-Information "Path is $TestArtifactsPath"
-            Get-ChildItem "/home/runner/work" -Recurse | ForEach-Object { Write-Information "Child path is $($_.FullName)" }
             $policyFragments = "$policyFragmentsFolder" | Get-ChildItem -Directory
             $parameters = $policyFragments | ForEach-Object {
                 @{

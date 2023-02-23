@@ -1,0 +1,6 @@
+<fragment>
+	<!-- Validates whether Request Content  Authorization Headers or Not from Request. -->
+	<check-header name="Authorization" failed-check-httpcode="401" failed-check-error-message="No Authorization header found in Request" ignore-case="false" />
+	<!-- fetch audience from named value and append to.-->
+	<set-variable name="audience" value="@((string)context.Variables["audience"])" />
+</fragment>

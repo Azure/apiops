@@ -149,6 +149,10 @@ jobs:
             $InformationPreference = "Continue"
           
             Install-Module -Name Pester -Force -SkipPublisherCheck
+
+            $pesterConfiguration = New-PesterConfiguration
+            $pesterConfiguration.Run.Exit = $true
+
             $pesterContainerParameters = @{
               Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "Publisher.Tests.ps1"
               Data = @{
@@ -156,10 +160,10 @@ jobs:
                 ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
                 ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
                 PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
-                TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts"
+                TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
               }
             }
-            $container = New-PesterContainer @pesterContainerParameters
+            $pesterContainer = New-PesterContainer @pesterContainerParameters
 
-            Invoke-Pester -Container $container -Output "Detailed"
+            Invoke-Pester -Configuration $pesterConfiguration -Container $container -Output "Detailed"
           azPSVersion: 'latest'
