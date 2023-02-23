@@ -25,9 +25,6 @@ BeforeDiscovery {
 }
 
 Describe "service policy <_.FileName>" -ForEach $parameters {
-    BeforeDiscovery {
-    }
-
     It "Publishes XML successfully" {
         $publisherXmlPath = Join-Path "$PublisherArtifactsPath" "$FileName"
         $publisherXmlContent = Get-Content -Path "$publisherXmlPath" -Raw

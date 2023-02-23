@@ -38,7 +38,7 @@ jobs:
           & dotnet publish "$sourcePath" --self-contained --runtime "linux-x64" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
-          Join-Path "$outputFolderPath" "extractor" | Rename-Item "${{ env.EXTRACTOR_EXE_FILE_NAME }}"
+          Join-Path "$outputFolderPath" "extractor" | Get-Item | Rename-Item "${{ env.EXTRACTOR_EXE_FILE_NAME }}"
           $exeFilePath = Join-Path "$outputFolderPath" "${{ env.EXTRACTOR_EXE_FILE_NAME }}"
           "EXE_FILE_PATH=$exeFilePath" >> ${{ github.env }}
 
@@ -73,7 +73,7 @@ jobs:
           & dotnet publish "$sourcePath" --self-contained --runtime "linux-x64" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-          Join-Path "$outputFolderPath" "publisher" | Rename-Item "${{ env.PUBLISHER_EXE_FILE_NAME }}"
+          Join-Path "$outputFolderPath" "publisher" | Get-Item | Rename-Item "${{ env.PUBLISHER_EXE_FILE_NAME }}"
           $exeFilePath = Join-Path "$outputFolderPath" "${{ env.PUBLISHER_EXE_FILE_NAME }}"
           "EXE_FILE_PATH=$exeFilePath" >> ${{ github.env }}
 

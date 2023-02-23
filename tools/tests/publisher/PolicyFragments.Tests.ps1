@@ -27,9 +27,6 @@ BeforeDiscovery {
 }
 
 Describe "policy fragment <_.name>" -ForEach $parameters {
-    BeforeDiscovery {
-    }
-
     It "Publishes XML successfully" {
         $xmlPathSection = Join-Path "$policyFragmentsPathSection" "$name" "policy.xml"
 
