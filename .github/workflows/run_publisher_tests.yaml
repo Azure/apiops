@@ -150,20 +150,20 @@ jobs:
           
             Install-Module -Name Pester -Force -SkipPublisherCheck
 
-            $pesterConfiguration = New-PesterConfiguration
-            $pesterConfiguration.Run.Exit = $true
-
-            $pesterContainerParameters = @{
-              Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "Publisher.Tests.ps1"
-              Data = @{
-                ResourceGroupName = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
-                ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
-                ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
-                PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
-                TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
+            $configurationParameters = @{
+              Run = @{
+                Exit = $true
+                Container = @{
+                  Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "Publisher.Tests.ps1"
+                  Data = @{
+                    ResourceGroupName = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
+                    ApiManagementInstanceName = "${{ env.APIM_INSTANCE_NAME }}"
+                    ExtractorExePath = "${{ env.EXTRACTOR_EXE_PATH }}"
+                    PublisherExePath = "${{ env.PUBLISHER_EXE_PATH }}"
+                    TestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
+                  }
+                }
               }
             }
-            $pesterContainer = New-PesterContainer @pesterContainerParameters
-
-            Invoke-Pester -Configuration $pesterConfiguration -Container $pesterContainer -Output "Detailed"
+            Invoke-Pester @configurationParameters
           azPSVersion: 'latest'
