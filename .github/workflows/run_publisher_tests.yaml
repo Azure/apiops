@@ -71,14 +71,14 @@ jobs:
             $env:AZURE_RESOURCE_GROUP_NAME = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
             $env:API_MANAGEMENT_SERVICE_NAME = "${{ env.APIM_INSTANCE_NAME }}"        
             $publisherProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"            
-            & dotnet run "$publisherProjectPath"     
+            & dotnet run --project "$publisherProjectPath"     
             if ($LASTEXITCODE -ne 0) { throw "Running publisher failed." }
 
             Write-Information "Running extractor..."
             $extractorArtifactsPath = Join-Path "${{ runner.temp }}" "extractor artifacts"
             $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $extractorArtifactsPath
             $extractorProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
-            & dotnet run "$extractorProjectPath"     
+            & dotnet run --project "$extractorProjectPath"     
             if ($LASTEXITCODE -ne 0) { throw "Running extractor failed." }
 
             Write-Information "Running integration tests..."
