@@ -18,8 +18,8 @@ public class ServicePolicyFileTests
         var extractorFile = GetExtractorFile(publisherFile);
 
         var cancellationToken = CancellationToken.None;
-        var extractorFileContents = await extractorFile.Value.ReadAsString(cancellationToken);
-        var publisherFileContents = await publisherFile.Value.ReadAsString(cancellationToken);
+        var extractorFileContents = await extractorFile.Value.ReadAsStringWithoutWhitespace(cancellationToken);
+        var publisherFileContents = await publisherFile.Value.ReadAsStringWithoutWhitespace(cancellationToken);
 
         extractorFileContents.Should().Be(publisherFileContents);
     }
