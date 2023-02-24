@@ -88,7 +88,7 @@ jobs:
             $testResultsHtmlPath = Join-Path "${{ runner.temp }}" "testresults.html"
             & dotnet test "$testProjectPath" --logger "console;verbosity=detailed" --logger "html;LogFileName=$testResultsHtmlPath"
             $result = $LASTEXITCODE
-            Get-Content -Path "$testProjectPath" -Raw >> $env:GITHUB_STEP_SUMMARY
+            Get-Content -Path "$testResultsHtmlPath" -Raw >> $env:GITHUB_STEP_SUMMARY
             if ($result -ne 0) { throw "Running test failed."}
 
           azPSVersion: 'latest'
