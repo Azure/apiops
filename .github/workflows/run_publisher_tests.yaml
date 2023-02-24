@@ -6,83 +6,7 @@ on:
     branches:
       - integration-tests
 
-env:
-  EXTRACTOR_ARTIFACT_NAME: extractor
-  EXTRACTOR_EXE_FILE_NAME: extractor.exe
-  PUBLISHER_ARTIFACT_NAME: publisher
-  PUBLISHER_EXE_FILE_NAME: publisher.exe
-
 jobs:
-  get_extractor:
-    name: Create extractor artifact
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v3
-        with:
-          dotnet-version: 7.x
-
-      - name: Generate executable
-        shell: pwsh
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $VerbosePreference = "Continue"
-          $InformationPreference = "Continue"
-
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
-          $outputFolderPath = "${{ runner.temp }}"
-          & dotnet publish "$sourcePath" --self-contained --runtime "linux-x64" -p:PublishSingleFile=true --output "$outputFolderPath"
-          if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
-
-          Join-Path "$outputFolderPath" "extractor" | Get-Item | Rename-Item "${{ env.EXTRACTOR_EXE_FILE_NAME }}"
-          $exeFilePath = Join-Path "$outputFolderPath" "${{ env.EXTRACTOR_EXE_FILE_NAME }}"
-          "EXE_FILE_PATH=$exeFilePath" >> ${{ github.env }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ env.EXTRACTOR_ARTIFACT_NAME }}
-          path: ${{ env.EXE_FILE_PATH }}
-          retention-days: 1
-  get_publisher:
-    name: Create publisher artifact
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v3
-        with:
-          dotnet-version: 7.x
-
-      - name: Generate executable
-        shell: pwsh
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $VerbosePreference = "Continue"
-          $InformationPreference = "Continue"
-
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
-          $outputFolderPath = "${{ runner.temp }}"
-          & dotnet publish "$sourcePath" --self-contained --runtime "linux-x64" -p:PublishSingleFile=true --output "$outputFolderPath"
-          if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
-
-          Join-Path "$outputFolderPath" "publisher" | Get-Item | Rename-Item "${{ env.PUBLISHER_EXE_FILE_NAME }}"
-          $exeFilePath = Join-Path "$outputFolderPath" "${{ env.PUBLISHER_EXE_FILE_NAME }}"
-          "EXE_FILE_PATH=$exeFilePath" >> ${{ github.env }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ env.PUBLISHER_ARTIFACT_NAME }}
-          path: ${{ env.EXE_FILE_PATH }}
-          retention-days: 1
   run_tests:
     name: Run tests
     runs-on: ubuntu-latest
@@ -90,27 +14,14 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    needs:
-      - get_extractor
-      - get_publisher
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
         with:
-          path: ${{ runner.temp }}
-
-      - name: Make files executable
-        run: |
-          extractorExePath="${{ runner.temp}}/${{ env.EXTRACTOR_EXE_FILE_NAME }}"
-          chmod +x "$extractorExePath"
-          echo "EXTRACTOR_EXE_PATH=$extractorExePath" >> ${{ github.env }}
-
-          publisherExePath="${{ runner.temp}}/${{ env.PUBLISHER_EXE_FILE_NAME }}"
-          chmod +x "$publisherExePath"
-          echo "PUBLISHER_EXE_PATH=$publisherExePath" >> ${{ github.env }}
+          dotnet-version: 7.x
 
       - name: Login to Azure
         uses: azure/login@v1
@@ -154,38 +65,27 @@ jobs:
 
             Write-Information "Running publisher..."
             $publisherTestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
+            $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $publisherTestArtifactsPath
             $env:AZURE_BEARER_TOKEN = (Get-AzAccessToken).Token
             $env:AZURE_SUBSCRIPTION_ID = (Get-AzContext).Subscription.Id
             $env:AZURE_RESOURCE_GROUP_NAME = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
             $env:API_MANAGEMENT_SERVICE_NAME = "${{ env.APIM_INSTANCE_NAME }}"        
-            $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $publisherTestArtifactsPath      
-            $output = & "${{ env.PUBLISHER_EXE_PATH }}"
-            $output
-            if ($LASTEXITCODE -ne 0) { throw "Publisher failed." }
-                
+            $publisherProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"            
+            & dotnet run "$publisherProjectPath"     
+            if ($LASTEXITCODE -ne 0) { throw "Running publisher failed." }
+
             Write-Information "Running extractor..."
-            $extractorArtifactsPath = Join-Path $TestDrive "extractor artifacts"
-            $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $extractorArtifactsPath        
-            $output = & "${{ env.EXTRACTOR_EXE_PATH }}"
-            $output
-            if ($LASTEXITCODE -ne 0) { throw "Extractor failed." }
-          
-            Install-Module -Name Pester -Force -SkipPublisherCheck
+            $extractorArtifactsPath = Join-Path "${{ runner.temp }}" "extractor artifacts"
+            $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $extractorArtifactsPath
+            $extractorProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
+            & dotnet run "$extractorProjectPath"     
+            if ($LASTEXITCODE -ne 0) { throw "Running extractor failed." }
 
-            $containerParameters = @{
-              Path = Join-Path "${{ github.workspace }}" "tools" "tests" "publisher" "*.Tests.ps1"
-              Data = @{
-                PublisherArtifactsPath = "$publisherTestArtifactsPath"
-                ExtractorArtifactsPath = "$extractorArtifactsPath"
-              }
-            }
-            $container = New-PesterContainer @containerParameters
+            Write-Information "Running integration tests..."
+            $env:EXTRACTOR_ARTIFACTS_PATH = $extractorArtifactsPath
+            $env:PUBLISHER_ARTIFACTS_PATH = $publisherTestArtifactsPath
+            $testProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "publisher.integration.tests.csproj"
+            & dotnet test "$testProjectPath"
+            if ($LASTEXITCODE -ne 0) { throw "Running test failed."}
 
-            $configuration = New-PesterConfiguration -HashTable @{
-              Run = @{
-                Exit = $true
-                Container = $container
-              }
-            }
-            Invoke-Pester -Configuration $configuration
           azPSVersion: 'latest'
