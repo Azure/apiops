@@ -85,7 +85,10 @@ jobs:
             $env:EXTRACTOR_ARTIFACTS_PATH = $extractorArtifactsPath
             $env:PUBLISHER_ARTIFACTS_PATH = $publisherTestArtifactsPath
             $testProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "publisher.integration.tests.csproj"
-            & dotnet test "$testProjectPath" --logger "console;verbosity=detailed"
-            if ($LASTEXITCODE -ne 0) { throw "Running test failed."}
+            $testResultsHtmlPath = Join-Path "${{ runner.temp }}" "testresults.html"
+            & dotnet test "$testProjectPath" --logger "console;verbosity=detailed" --logger "html;LogFileName=$testResultsHtmlPath"
+            $result = $LASTEXITCODE
+            Get-Content -Path "$testProjectPath" -Raw >> $env:GITHUB_STEP_SUMMARY
+            if ($result -ne 0) { throw "Running test failed."}
 
           azPSVersion: 'latest'
