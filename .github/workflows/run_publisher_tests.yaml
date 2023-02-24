@@ -41,7 +41,7 @@ jobs:
             $InformationPreference = "Continue"
 
             $resourceGroup = Get-AzResourceGroup -Name "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
-            $apimInstanceName = "apiopse0390156"
+            $apimInstanceName = "apiopse90156"
             $apimInstanceParameters = @{
                 "ResourceGroupName" = $resourceGroup.ResourceGroupName
                 "Name"              = $apimInstanceName
@@ -85,7 +85,7 @@ jobs:
             $env:EXTRACTOR_ARTIFACTS_PATH = $extractorArtifactsPath
             $env:PUBLISHER_ARTIFACTS_PATH = $publisherTestArtifactsPath
             $testProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "publisher.integration.tests.csproj"
-            & dotnet test "$testProjectPath"
+            & dotnet test "$testProjectPath" --logger "console;verbosity=detailed"
             if ($LASTEXITCODE -ne 0) { throw "Running test failed."}
 
           azPSVersion: 'latest'
