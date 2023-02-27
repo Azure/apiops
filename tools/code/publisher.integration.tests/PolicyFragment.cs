@@ -1,7 +1,6 @@
 ﻿using FluentAssertions;
 using NUnit.Framework;
 using NUnit.Framework.Internal;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -18,8 +17,8 @@ public class PolicyFragmentPolicyFileTests
         var extractorFile = GetExtractorFile(publisherFile);
 
         var cancellationToken = CancellationToken.None;
-        var extractorFileContents = await extractorFile.Value.ReadAsStringWithoutWhitespace(cancellationToken);
-        var publisherFileContents = await publisherFile.Value.ReadAsStringWithoutWhitespace(cancellationToken);
+        var extractorFileContents = await extractorFile.Value.ReadAsString(cancellationToken);
+        var publisherFileContents = await publisherFile.Value.ReadAsString(cancellationToken);
 
         extractorFileContents.Should().Be(publisherFileContents);
     }
@@ -27,7 +26,8 @@ public class PolicyFragmentPolicyFileTests
     private static IEnumerable<TestCaseData> GetTestCaseData()
     {
         return GetPublisherFiles()
-                .Select(file => new TestCaseData(file).SetArgDisplayNames(file.Value.Name));
+                .Select(file => new TestCaseData(file).SetName($"{nameof(PolicyFragmentPolicyFileTests)} | Extractor matches publisher | {file.Value.Name})"));
+
     }
 
     private static IEnumerable<PolicyFragmentPolicyFile> GetPublisherFiles()

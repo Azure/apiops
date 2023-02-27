@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using NUnit.Framework;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
 namespace publisher.integration.tests;
@@ -31,6 +32,7 @@ public class Fixture
     private static IConfiguration GetConfiguration()
     {
         return new ConfigurationBuilder().AddEnvironmentVariables()
+                                         .AddUserSecrets(typeof(Fixture).Assembly)
                                          .Build();
     }
 
