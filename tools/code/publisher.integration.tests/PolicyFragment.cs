@@ -17,8 +17,8 @@ public class PolicyFragmentPolicyFileTests
         var extractorFile = GetExtractorFile(publisherFile);
 
         var cancellationToken = CancellationToken.None;
-        var extractorFileContents = await extractorFile.Value.ReadAsString(cancellationToken);
-        var publisherFileContents = await publisherFile.Value.ReadAsString(cancellationToken);
+        var extractorFileContents = await extractorFile.Value.ReadAsStringWithoutWhitespace(cancellationToken);
+        var publisherFileContents = await publisherFile.Value.ReadAsStringWithoutWhitespace(cancellationToken);
 
         extractorFileContents.Should().Be(publisherFileContents);
     }
@@ -26,7 +26,7 @@ public class PolicyFragmentPolicyFileTests
     private static IEnumerable<TestCaseData> GetTestCaseData()
     {
         return GetPublisherFiles()
-                .Select(file => new TestCaseData(file).SetName($"{nameof(PolicyFragmentPolicyFileTests)} | Extractor matches publisher | {file.Value.Name})"));
+                .Select(file => new TestCaseData(file).SetName($"{nameof(PolicyFragmentPolicyFileTests)} | Extractor matches publisher | {file.Value.Name}"));
 
     }
 

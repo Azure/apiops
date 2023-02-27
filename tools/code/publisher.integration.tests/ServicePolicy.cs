@@ -27,7 +27,7 @@ public class ServicePolicyFileTests
     private static IEnumerable<TestCaseData> GetTestCaseData()
     {
         return GetPublisherFiles()
-                .Select(file => new TestCaseData(file).SetName($"{nameof(ServicePolicyFileTests)} | Extractor matches publisher | {file.Value.Name})"));
+                .Select(file => new TestCaseData(file).SetName($"{nameof(ServicePolicyFileTests)} | Extractor matches publisher | {file.Value.Name}"));
     }
 
     private static IEnumerable<ServicePolicyFile> GetPublisherFiles()
