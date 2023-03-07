@@ -50,10 +50,7 @@ jobs:
             $env:AZURE_RESOURCE_GROUP_NAME = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
 
             $testProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "publisher.integration.tests.csproj"
-            $testResultsHtmlPath = Join-Path "${{ runner.temp }}" "testresults.html"
-            & dotnet test "$testProjectPath" --logger "console;verbosity=detailed" --logger "html;LogFileName=$testResultsHtmlPath"
-            $result = $LASTEXITCODE
-            Get-Content -Path "$testResultsHtmlPath" -Raw >> $env:GITHUB_STEP_SUMMARY
-            if ($result -ne 0) { throw "Running test failed."}
+            & dotnet test "$testProjectPath" --logger "console;verbosity=detailed"
+            if ($$LASTEXITCODE -ne 0) { throw "Running test failed."}
 
           azPSVersion: "latest"
