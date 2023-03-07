@@ -1,7 +1,10 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,16 +15,23 @@ internal static class ProductGroup
 {
     public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
     {
-        var productGroupsFile = new ProductGroupsFile(productDirectory);
-
-        var productGroups = await List(productUri, listRestResources, cancellationToken)
-                                    .Select(SerializeProductGroup)
-                                    .ToJsonArray(cancellationToken);
-
-        if (productGroups.Any())
+        try
         {
-            logger.LogInformation("Writing product groups file {filePath}...", productGroupsFile.Path);
-            await productGroupsFile.OverwriteWithJson(productGroups, cancellationToken);
+            var productGroupsFile = new ProductGroupsFile(productDirectory);
+
+            var productGroups = await List(productUri, listRestResources, cancellationToken)
+                                        .Select(SerializeProductGroup)
+                                        .ToJsonArray(cancellationToken);
+
+            if (productGroups.Any())
+            {
+                logger.LogInformation("Writing product groups file {filePath}...", productGroupsFile.Path);
+                await productGroupsFile.OverwriteWithJson(productGroups, cancellationToken);
+            }
+        }
+        catch (HttpRequestException exception) when (exception.StatusCode is HttpStatusCode.BadRequest && exception.Message.Contains("MethodNotAllowedInPricingTier", StringComparison.OrdinalIgnoreCase))
+        {
+            await ValueTask.CompletedTask;
         }
     }
 
