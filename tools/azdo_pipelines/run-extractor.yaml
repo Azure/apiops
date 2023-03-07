@@ -188,14 +188,6 @@ stages:
                     if ($LASTEXITCODE -ne 0) { throw "Setting $artifactFolderPath to contents of $extractorArtifactsFolderPath failed." }
                 }
 
-                Write-Information "Validating that changes exist to be published..."
-                $gitStatus = git -C "$temporaryFolderPath" status --porcelain
-                if ($LASTEXITCODE -ne 0) { throw "Getting git status failed." }
-                if ([string]::IsNullOrWhiteSpace($gitStatus)) {
-                    Write-Information "No changes exist to be published."
-                    return
-                }
-
                 Write-Information "Setting git user information..."
                 git config --global user.email "azuredevopsagent@azuredevops.com"
                 git config --global user.name "Azure Devops agent"
@@ -203,6 +195,14 @@ stages:
                 Write-Information "Adding changes..."
                 git -C "$temporaryFolderPath" add --all
                 if ($LASTEXITCODE -ne 0) { throw "Adding Git changes failed." }
+
+                Write-Information "Validating that changes exist to be published..."
+                $gitStatus = git -C "$temporaryFolderPath" status --porcelain
+                if ($LASTEXITCODE -ne 0) { throw "Getting git status failed." }
+                if ([string]::IsNullOrWhiteSpace($gitStatus)) {
+                    Write-Information "No changes exist to be published."
+                    return
+                }
 
                 Write-Information "Committing changes"
                 git -C "$temporaryFolderPath" commit --message "Initial commit"
