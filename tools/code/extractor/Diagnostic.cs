@@ -1,10 +1,7 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,16 +11,9 @@ internal static class Diagnostic
 {
     public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        try
-        {
-            await List(serviceUri, listRestResources, cancellationToken)
-                    .ForEachParallel(async diagnosticName => await Export(serviceDirectory, serviceUri, diagnosticName, getRestResource, logger, cancellationToken),
-                                     cancellationToken);
-        }
-        catch (HttpRequestException exception) when (exception.StatusCode is HttpStatusCode.InternalServerError && exception.Message.Contains("Request processing failed due to internal error", StringComparison.OrdinalIgnoreCase))
-        {
-            await ValueTask.CompletedTask;
-        }
+        await List(serviceUri, listRestResources, cancellationToken)
+                .ForEachParallel(async diagnosticName => await Export(serviceDirectory, serviceUri, diagnosticName, getRestResource, logger, cancellationToken),
+                                 cancellationToken);
     }
 
     private static IAsyncEnumerable<DiagnosticName> List(ServiceUri serviceUri, ListRestResources listRestResources, CancellationToken cancellationToken)
