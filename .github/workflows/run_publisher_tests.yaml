@@ -2,9 +2,6 @@ name: Run publisher integration tests
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - integration-tests
 
 jobs:
   run_tests:

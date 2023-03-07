@@ -5,6 +5,7 @@ using Azure.ResourceManager;
 using Azure.ResourceManager.ApiManagement;
 using Azure.ResourceManager.ApiManagement.Models;
 using Azure.ResourceManager.Resources;
+using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
 using Medallion.Shell;
 using Microsoft.Extensions.Configuration;
@@ -129,28 +130,26 @@ public class Fixture
 
     private static async ValueTask<ApiManagementServiceResource> GetOrCreateApiManagementService(IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
-        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
-        var resourceGroup = await GetResourceGroup(serviceProvider, cancellationToken);
-        var services = resourceGroup.GetApiManagementServices();
+        var option = await TryGetApiManagementService(serviceProvider, cancellationToken);
 
-        var serviceName = configuration.GetValue("AZURE_API_MANAGEMENT_SERVICE_NAME");
+        return await option.IfNoneAsync(async () => await CreateService(serviceProvider, cancellationToken));
+    }
+
+    private static async ValueTask<Option<ApiManagementServiceResource>> TryGetApiManagementService(IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    {
+        var services = await GetServices(serviceProvider, cancellationToken);
+        var serviceName = GetServiceName(serviceProvider);
         bool serviceExists = await services.ExistsAsync(serviceName, cancellationToken);
 
-        if (serviceExists)
-        {
-            return await services.GetAsync(serviceName, cancellationToken);
-        }
-        else
-        {
-            var location = resourceGroup.Data.Location;
-            var sku = new ApiManagementServiceSkuProperties(ApiManagementServiceSkuType.Consumption, capacity: 0);
-            var publisherEmail = "admin@apiops.com";
-            var publisherName = "admin";
-            var serviceData = new ApiManagementServiceData(location, sku, publisherEmail, publisherName);
+        return serviceExists
+                ? Option<ApiManagementServiceResource>.Some(await services.GetAsync(serviceName, cancellationToken))
+                : Option<ApiManagementServiceResource>.None;
+    }
 
-            var operation = await services.CreateOrUpdateAsync(WaitUntil.Started, serviceName, serviceData, cancellationToken);
-            return await operation.WaitForCompletionAsync(cancellationToken);
-        }
+    private static async ValueTask<ApiManagementServiceCollection> GetServices(IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    {
+        var resourceGroup = await GetResourceGroup(serviceProvider, cancellationToken);
+        return resourceGroup.GetApiManagementServices();
     }
 
     private static async ValueTask<ResourceGroupResource> GetResourceGroup(IServiceProvider serviceProvider, CancellationToken cancellationToken)
@@ -161,6 +160,28 @@ public class Fixture
         var resourceGroupName = configuration.GetValue("AZURE_RESOURCE_GROUP_NAME");
 
         return await subscription.GetResourceGroupAsync(resourceGroupName, cancellationToken);
+    }
+
+    private static string GetServiceName(IServiceProvider serviceProvider)
+    {
+        var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+        return configuration.GetValue("AZURE_API_MANAGEMENT_SERVICE_NAME");
+    }
+
+    private static async ValueTask<ApiManagementServiceResource> CreateService(IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    {
+        var resourceGroup = await GetResourceGroup(serviceProvider, cancellationToken);
+        var services = resourceGroup.GetApiManagementServices();
+        var serviceName = GetServiceName(serviceProvider);
+
+        var location = resourceGroup.Data.Location;
+        var sku = new ApiManagementServiceSkuProperties(ApiManagementServiceSkuType.Consumption, capacity: 0);
+        var publisherEmail = "admin@apiops.com";
+        var publisherName = "admin";
+        var serviceData = new ApiManagementServiceData(location, sku, publisherEmail, publisherName);
+
+        var operation = await services.CreateOrUpdateAsync(WaitUntil.Started, serviceName, serviceData, cancellationToken);
+        return await operation.WaitForCompletionAsync(cancellationToken);
     }
 
     private static async ValueTask RunPublisher(IServiceProvider serviceProvider, CancellationToken cancellationToken)
@@ -249,14 +270,14 @@ public class Fixture
         await ValueTask.CompletedTask;
         TestContext.WriteLine("Cleaning up...");
 
-        //var cancellationToken = CancellationToken.None;
-        //var option = await TryGetApiManagementService(serviceProvider, cancellationToken);
+        var cancellationToken = CancellationToken.None;
+        var option = await TryGetApiManagementService(serviceProvider, cancellationToken);
 
-        //await option.IterAsync(async resource =>
-        //{
-        //    TestContext.WriteLine("Deleting APIM resource...");
-        //    await resource.DeleteAsync(WaitUntil.Completed, cancellationToken);
-        //});
+        await option.IterAsync(async resource =>
+        {
+            TestContext.WriteLine("Deleting APIM resource...");
+            await resource.DeleteAsync(WaitUntil.Completed, cancellationToken);
+        });
 
         TestContext.WriteLine("Cleanup complete.");
     }
