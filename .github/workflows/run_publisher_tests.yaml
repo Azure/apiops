@@ -44,7 +44,7 @@ jobs:
             $env:EXTRACTOR_ARTIFACTS_PATH = Join-Path "${{ runner.temp }}" "extractor artifacts"
             $env:AZURE_BEARER_TOKEN = (Get-AzAccessToken).Token
             $env:AZURE_CLOUD_ENVIRONMENT = "AzurePublicCloud"
-            $env:AZURE_API_MANAGEMENT_SERVICE_NAME = "${{ env.APIM_INSTANCE_NAME }}"
+            $env:AZURE_API_MANAGEMENT_SERVICE_NAME = "apiopse90156"
             $env:AZURE_RESOURCE_GROUP_NAME = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
 
             $testProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "publisher.integration.tests.csproj"
