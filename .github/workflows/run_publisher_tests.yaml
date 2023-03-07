@@ -2,10 +2,6 @@ name: Run publisher integration tests
 
 on:
   workflow_dispatch:
-    inputs:
-      dummy:
-        required: false
-        description: Dummy
 
 jobs:
   run_tests:
