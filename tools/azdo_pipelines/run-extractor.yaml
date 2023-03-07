@@ -188,6 +188,14 @@ stages:
                     if ($LASTEXITCODE -ne 0) { throw "Setting $artifactFolderPath to contents of $extractorArtifactsFolderPath failed." }
                 }
 
+                Write-Information "Validating that changes exist to be published..."
+                $gitStatus = git -C "$temporaryFolderPath" status --porcelain
+                if ($LASTEXITCODE -ne 0) { throw "Getting git status failed." }
+                if ([string]::IsNullOrWhiteSpace($gitStatus)) {
+                    Write-Information "No changes exist to be published."
+                    return
+                }
+                
                 Write-Information "Setting git user information..."
                 git config --global user.email "azuredevopsagent@azuredevops.com"
                 git config --global user.name "Azure Devops agent"
@@ -196,17 +204,15 @@ stages:
                 git -C "$temporaryFolderPath" add --all
                 if ($LASTEXITCODE -ne 0) { throw "Adding Git changes failed." }
 
-                Write-Information "Validating that changes exist to be published..."
-                $gitStatus = git -C "$temporaryFolderPath" status --porcelain
-                if ($LASTEXITCODE -ne 0) { throw "Getting git status failed." }
-                if ([string]::IsNullOrWhiteSpace($gitStatus)) {
+                Write-Information "Committing changes"
+                $commitOutput = git -C "$temporaryFolderPath" commit --message "Initial commit"
+                if ($LASTEXITCODE -ne 0) { 
+                  if ($commitOutput.Contains("nothing to commit, working tree clean")) {
                     Write-Information "No changes exist to be published."
                     return
+                  }
+                  throw "Committing Git changes failed." 
                 }
-
-                Write-Information "Committing changes"
-                git -C "$temporaryFolderPath" commit --message "Initial commit"
-                if ($LASTEXITCODE -ne 0) { throw "Committing Git changes failed." }
 
                 Write-Information "Pushing changes"
                 git -C "$temporaryFolderPath" -c http.extraheader="AUTHORIZATION: Bearer $(System.AccessToken)" push --set-upstream origin "$temporaryBranchName"
