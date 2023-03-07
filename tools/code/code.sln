@@ -9,7 +9,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "extractor", "extractor\extr
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "publisher", "publisher\publisher.csproj", "{78E515AA-F7EF-4280-A416-EA74C2640A46}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "publisher.integration.tests", "publisher.integration.tests\publisher.integration.tests.csproj", "{F4762698-736D-4F5A-98D0-40D7CC9905AD}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "publisher.integration.tests", "publisher.integration.tests\publisher.integration.tests.csproj", "{F4762698-736D-4F5A-98D0-40D7CC9905AD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

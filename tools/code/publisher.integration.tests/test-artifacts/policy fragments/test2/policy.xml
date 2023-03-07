@@ -1,0 +1,14 @@
+<!-- IMPORTANT: - Policy fragment are included as-is whenever they are referenced. - If using variables. Ensure they are setup before use. - Copy and paste your code here or simply start coding -->
+<fragment>
+	<!--Use consumer correlation id or generate new one-->
+	<set-variable name="correlation-id" value="@(context.Request.Headers.GetValueOrDefault("x-correlation-id", Guid.NewGuid().ToString()))" />
+	<!--Set header for end-to-end correlation-->
+	<set-header name="x-correlation-id" exists-action="override">
+		<value>@((string)context.Variables["correlation-id"])</value>
+	</set-header>
+	<!--Trace the correlation id-->
+	<trace source="Global APIM Policy" severity="information">
+		<message>@(String.Format("{0} | {1}", context.Api.Name, context.Variables["correlation-id"]))</message>
+		<metadata name="correlation-id" value="@((string)context.Variables["correlation-id"])" />
+	</trace>
+</fragment>

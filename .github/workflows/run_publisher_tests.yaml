@@ -30,30 +30,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           enable-AzPSSession: true
-
-      - name: Setup test environment
-        uses: azure/powershell@v1
-        with:
-          inlineScript: |
-            Set-StrictMode -Version Latest
-            $ErrorActionPreference = "Stop"
-            $VerbosePreference = "Continue"
-            $InformationPreference = "Continue"
-
-            $resourceGroup = Get-AzResourceGroup -Name "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
-            $apimInstanceName = "apiopse90156"
-            $apimInstanceParameters = @{
-                "ResourceGroupName" = $resourceGroup.ResourceGroupName
-                "Name"              = $apimInstanceName
-                "Location"          = $resourceGroup.Location
-                "Organization"      = "apiops"
-                "AdminEmail"        = "admin@apiops.com"
-                "Sku"               = "Consumption"
-            }
-            $apimInstance = New-AzApiManagement @apimInstanceParameters
-            "APIM_INSTANCE_NAME=$apimInstanceName" >> ${{ github.env }}
-          azPSVersion: 'latest'
-
+          
       - name: Run tests
         uses: azure/powershell@v1
         with:
@@ -63,27 +40,13 @@ jobs:
             $VerbosePreference = "Continue"
             $InformationPreference = "Continue"
 
-            Write-Information "Running publisher..."
-            $publisherTestArtifactsPath = Join-Path "${{ github.workspace }}" "tools" "tests" "artifacts-publisher"
-            $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $publisherTestArtifactsPath
+            $env:PUBLISHER_ARTIFACTS_PATH = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "test-artifacts"
+            $env:EXTRACTOR_ARTIFACTS_PATH = Join-Path "${{ runner.temp }}" "extractor artifacts"
             $env:AZURE_BEARER_TOKEN = (Get-AzAccessToken).Token
-            $env:AZURE_SUBSCRIPTION_ID = (Get-AzContext).Subscription.Id
+            $env:AZURE_CLOUD_ENVIRONMENT = "AzurePublicCloud"
+            $env:AZURE_API_MANAGEMENT_SERVICE_NAME = "${{ env.APIM_INSTANCE_NAME }}"
             $env:AZURE_RESOURCE_GROUP_NAME = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
-            $env:API_MANAGEMENT_SERVICE_NAME = "${{ env.APIM_INSTANCE_NAME }}"        
-            $publisherProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"            
-            & dotnet run --project "$publisherProjectPath"     
-            if ($LASTEXITCODE -ne 0) { throw "Running publisher failed." }
 
-            Write-Information "Running extractor..."
-            $extractorArtifactsPath = Join-Path "${{ runner.temp }}" "extractor artifacts"
-            $env:API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH = $extractorArtifactsPath
-            $extractorProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
-            & dotnet run --project "$extractorProjectPath"     
-            if ($LASTEXITCODE -ne 0) { throw "Running extractor failed." }
-
-            Write-Information "Running integration tests..."
-            $env:EXTRACTOR_ARTIFACTS_PATH = $extractorArtifactsPath
-            $env:PUBLISHER_ARTIFACTS_PATH = $publisherTestArtifactsPath
             $testProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "publisher.integration.tests.csproj"
             $testResultsHtmlPath = Join-Path "${{ runner.temp }}" "testresults.html"
             & dotnet test "$testProjectPath" --logger "console;verbosity=detailed" --logger "html;LogFileName=$testResultsHtmlPath"
@@ -91,4 +54,4 @@ jobs:
             Get-Content -Path "$testResultsHtmlPath" -Raw >> $env:GITHUB_STEP_SUMMARY
             if ($result -ne 0) { throw "Running test failed."}
 
-          azPSVersion: 'latest'
+          azPSVersion: "latest"
