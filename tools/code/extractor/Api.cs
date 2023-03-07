@@ -141,10 +141,11 @@ internal static class Api
         {
             DefaultApiSpecification.Wadl => "wadl-link",
             DefaultApiSpecification.OpenApi openApi =>
-                openApi.Version switch
+                (openApi.Version, openApi.Format) switch
                 {
-                    OpenApiSpecVersion.OpenApi2_0 => "swagger-link",
-                    OpenApiSpecVersion.OpenApi3_0 => "openapi-link",
+                    (OpenApiSpecVersion.OpenApi2_0, _) => "swagger-link",
+                    (OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml) => "openapi-link",
+                    (OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Json) => "openapi+json-link",
                     _ => throw new NotSupportedException()
                 },
             _ => throw new NotSupportedException()
@@ -155,13 +156,6 @@ internal static class Api
         logger.LogInformation("Writing API specification file {filePath}...", specificationFile.Path);
         switch (defaultSpecification)
         {
-            // APIM exports OpenApiv3 to YAML. Convert to JSON if needed.
-            case DefaultApiSpecification.OpenApi openApi when openApi.Version is OpenApiSpecVersion.OpenApi3_0 && openApi.Format is OpenApiFormat.Json:
-                {
-                    var bytes = ConvertYamlStreamToJson(downloadFileStream);
-                    await specificationFile.OverwriteWithBytes(bytes, cancellationToken);
-                    break;
-                }
             // APIM exports OpenApiv2 to JSON. Convert to YAML if needed.
             case DefaultApiSpecification.OpenApi openApi when openApi.Version is OpenApiSpecVersion.OpenApi2_0 && openApi.Format is OpenApiFormat.Yaml:
                 {
@@ -173,12 +167,6 @@ internal static class Api
                 await specificationFile.OverwriteWithStream(downloadFileStream, cancellationToken);
                 break;
         }
-    }
-
-    private static byte[] ConvertYamlStreamToJson(Stream stream)
-    {
-        var yaml = ConvertStreamToYamlObject(stream);
-        return JsonSerializer.SerializeToUtf8Bytes(yaml, new JsonSerializerOptions { WriteIndented = true });
     }
 
     private static object ConvertStreamToYamlObject(Stream stream)
