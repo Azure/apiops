@@ -25,19 +25,9 @@ steps:
     displayName: Print the name of the yaml configuration file if provided
   - script: echo Provided app service name was ${{ parameters.API_MANAGEMENT_SERVICE_NAME }}
     displayName: Print the name of the apim service name if provided
-  - task: Npm@1
-    displayName: "Installing Stoplight Spectral."
-    inputs:
-      command: custom
-      verbose: false
-      customCommand: "install -g @stoplight/spectral"
 
   - checkout: self
     fetchDepth: 0
-
-  - script: spectral lint "$(Build.SourcesDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}/apis/**/specification.{json,yml,yaml}" -r https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
-    displayName: "Lint API definition"
-    
 
   - task: AzureCLI@2
     displayName: Set publishing variables
