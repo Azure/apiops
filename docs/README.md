@@ -1,7 +1,7 @@
 
 <img src="assets/images/apim-logo-transparent.png">
 
-#  Code Of Conduct
+#  Code Of Conduct2
 
 Before we dive into learning about the APIOPs tool we would like to share some guidance on how to navigate the associated Github repo as you learn your way around the tool:
 - Always refer to the [wiki](https://github.com/Azure/apiops/wiki) for detailed configuration setup
