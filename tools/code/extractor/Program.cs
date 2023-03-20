@@ -258,7 +258,7 @@ public static class Program
         public override void Process(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
         {
             RemoveAuthorizationHeader(message);
-            Process(message, pipeline);
+            ProcessNext(message, pipeline);
         }
 
         public override async ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
