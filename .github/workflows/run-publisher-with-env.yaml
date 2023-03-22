@@ -1,0 +1,194 @@
+name: Run Publisher with Environment
+
+on:
+  workflow_call:
+    inputs:
+      API_MANAGEMENT_ENVIRONMENT:
+        required: true
+        type: string
+      CONFIGURATION_YAML_PATH:
+        required: false
+        type: string
+      COMMIT_ID:
+        required: false
+        type: string
+      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH:
+        required: true
+        type: string
+
+env:
+  apiops_release_version: v4.1.2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.API_MANAGEMENT_ENVIRONMENT }}
+    steps:
+      # Run Spectral
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "14"
+      - run: npm install -g @stoplight/spectral
+      - run: spectral lint "${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}\apis\*.{json,yml,yaml}" --ruleset https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
+
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      # Add this step for each APIM environment and pass specific set of secrets that you want replaced in the env section below
+      - name: "Perform namevalue secret substitution in configuration.${{ inputs.API_MANAGEMENT_ENVIRONMENT}}.yaml"
+        if: (inputs.API_MANAGEMENT_ENVIRONMENT == 'prod' )
+        uses: cschleiden/replace-tokens@v1.1
+        with:
+          tokenPrefix: "{#"
+          tokenSuffix: "#}"
+          files: ${{ format('["**/configuration.{0}.yaml"]', inputs.API_MANAGEMENT_ENVIRONMENT) }}
+        # specify environment specific secrets to be replaced. For example the QA environment could have a different set sercrets to
+        # replace within the configuration.[environment].yaml file
+        env:
+          testSecretValue: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+
+      - name: Run publisher without Config Yaml but with Commit ID
+        if: ( inputs.CONFIGURATION_YAML_PATH == '' &&  inputs.COMMIT_ID != '')
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+          API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
+          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+          COMMIT_ID: ${{ inputs.COMMIT_ID }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          Write-Information "Downloading publisher..."
+          $publisherFileName = "${{ runner.os }}" -like "*win*" ? "publisher.win-x64.exe" : "publisher.linux-x64.exe"
+          $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" "publisher.exe"
+          Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
+
+          if ("${{ runner.os }}" -like "*linux*")
+          {
+            Write-Information "Setting file permissions..."
+            & chmod +x "$destinationFilePath"
+            if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
+          }
+
+          & "$destinationFilePath"              
+          if ($LASTEXITCODE -ne 0) { throw "Running publisher failed."}
+
+          Write-Information "Execution complete."
+        shell: pwsh
+
+      - name: Run publisher without Config Yaml or Commit ID
+        if: ( inputs.CONFIGURATION_YAML_PATH == '' &&  inputs.COMMIT_ID == '')
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+          API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
+          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          Write-Information "Downloading publisher..."
+          $publisherFileName = "${{ runner.os }}" -like "*win*" ? "publisher.win-x64.exe" : "publisher.linux-x64.exe"
+          $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" "publisher.exe"
+          Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
+
+          if ("${{ runner.os }}" -like "*linux*")
+          {
+            Write-Information "Setting file permissions..."
+            & chmod +x "$destinationFilePath"
+            if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
+          }
+
+          & "$destinationFilePath"              
+          if ($LASTEXITCODE -ne 0) { throw "Running publisher failed."}
+
+          Write-Information "Execution complete."
+        shell: pwsh
+
+      - name: Run publisher with Config Yaml and Commit id
+        if: ( inputs.CONFIGURATION_YAML_PATH != '' &&  inputs.COMMIT_ID != '')
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+          API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
+          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+          CONFIGURATION_YAML_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.CONFIGURATION_YAML_PATH }}
+          COMMIT_ID: ${{ inputs.COMMIT_ID }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          Write-Information "Downloading publisher..."
+          $publisherFileName = "${{ runner.os }}" -like "*win*" ? "publisher.win-x64.exe" : "publisher.linux-x64.exe"
+          $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" "publisher.exe"
+          Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
+
+          if ("${{ runner.os }}" -like "*linux*")
+          {
+            Write-Information "Setting file permissions..."
+            & chmod +x "$destinationFilePath"
+            if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
+          }
+
+          & "$destinationFilePath"              
+          if ($LASTEXITCODE -ne 0) { throw "Running publisher failed."}
+
+          Write-Information "Execution complete."
+        shell: pwsh
+
+      - name: Run publisher with Config Yaml but without Commit id
+        if: ( inputs.CONFIGURATION_YAML_PATH != '' &&  inputs.COMMIT_ID == '')
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP_NAME: ${{ secrets.AZURE_RESOURCE_GROUP_NAME }}
+          API_MANAGEMENT_SERVICE_NAME: ${{ secrets.API_MANAGEMENT_SERVICE_NAME }}
+          API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+          CONFIGURATION_YAML_PATH: ${{ GITHUB.WORKSPACE }}/${{ inputs.CONFIGURATION_YAML_PATH }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $VerbosePreference = "Continue"
+          $InformationPreference = "Continue"
+
+          Write-Information "Downloading publisher..."
+          $publisherFileName = "${{ runner.os }}" -like "*win*" ? "publisher.win-x64.exe" : "publisher.linux-x64.exe"
+          $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" "publisher.exe"
+          Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
+
+          if ("${{ runner.os }}" -like "*linux*")
+          {
+            Write-Information "Setting file permissions..."
+            & chmod +x "$destinationFilePath"
+            if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
+          }
+
+          & "$destinationFilePath"              
+          if ($LASTEXITCODE -ne 0) { throw "Running publisher failed."}
+
+          Write-Information "Execution complete."
+        shell: pwsh
