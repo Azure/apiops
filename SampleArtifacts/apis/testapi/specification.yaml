@@ -37,6 +37,13 @@ paths:
       responses:
         '200':
           description: ''
+  /test:
+    get:
+      description: 'test'
+      parameters: []
+      responses:
+        '200':
+          description: OK
 components:
   securitySchemes:
     apiKeyHeader:
