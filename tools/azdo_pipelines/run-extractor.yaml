@@ -33,7 +33,7 @@ parameters:
 trigger: none
 
 variables:
-  - group: apim-automation
+  - group: apim-automation-team1
   - name: System.Debug
     value: true
 
