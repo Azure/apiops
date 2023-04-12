@@ -130,7 +130,6 @@ public sealed record ApiModel
                 .AddPropertyIfNotNull("apiVersionSet", ApiVersionSet?.Serialize())
                 .AddPropertyIfNotNull("apiVersionSetId", ApiVersionSetId)
                 .AddPropertyIfNotNull("authenticationSettings", AuthenticationSettings?.Serialize())
-                .AddPropertyIfNotNull("contact", Contact?.Serialize())
                 .AddPropertyIfNotNull("description", Description)
                 .AddPropertyIfNotNull("displayName", DisplayName)
                 .AddPropertyIfNotNull("format", Format?.Serialize())
