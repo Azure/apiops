@@ -71,6 +71,7 @@ internal static class Api
     {
         var apiInformationFile = new ApiInformationFile(apiDirectory);
         var contentJson = apiModel.Serialize();
+        contentJson["properties"]?.AsObject().Remove("contact");
 
         logger.LogInformation("Writing API information file {filePath}...", apiInformationFile.Path);
         await apiInformationFile.OverwriteWithJson(contentJson, cancellationToken);
