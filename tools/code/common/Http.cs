@@ -24,9 +24,11 @@ public static class HttpPipelineExtensions
         {
             var responseJson = await pipeline.GetJsonObject(nextLink, cancellationToken);
 
+            // This is a workaround for the fact that the Azure REST APIs return inconsistent JSON for list operations.
+            // Sometimes the JSON returned is a simple array of JSON objects, and sometimes it is an object with a "value" property that is an array of JSON objects.
             var values = responseJson.TryGetJsonArrayProperty("value")
                                      .Map(jsonArray => jsonArray.Choose(node => node as JsonObject))
-                         ?? Enumerable.Empty<JsonObject>();
+                         ?? responseJson.Choose(node => node.Value as JsonObject);
 
             foreach (var value in values)
             {
