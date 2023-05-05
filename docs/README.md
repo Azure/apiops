@@ -43,6 +43,10 @@ This guide will guide you through the concept of APIOps. It applies the concepts
 ## Wiki
 The Wiki covers all of our supported resources. Think about it as being more resource-focused with deeper dives, as opposed to the aforementioned guide which is more scenario-based and holistic. So in essence you need to read both to have a successful adoption of the tool. [The wiki can be found on wiki tab within this repo or by following this link](https://github.com/Azure/apiops/wiki).
 
+# Roadmap
+To stay up-to-date with the APIOps roadmap, please follow it closely.
+To stay updated on the APIOps roadmap, please make sure to monitor it closely [here](https://github.com/Azure/apiops/projects?query=is%3Aopen).
+
 # Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
