@@ -30,6 +30,7 @@ internal static class ProductGroup
         var configurationArtifacts = GetConfigurationProductGroups(configurationJson);
 
         return GetProductGroupsFiles(files, serviceDirectory)
+                .Where(file => File.Exists(file.Path.ToString()))
                 .Select(file =>
                 {
                     var productName = GetProductName(file);

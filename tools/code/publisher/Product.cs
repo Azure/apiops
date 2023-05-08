@@ -1,12 +1,14 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
 using MoreLinq;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web;
 
 namespace publisher;
 
@@ -75,7 +77,11 @@ internal static class Product
         var uri = GetProductUri(productName, serviceUri);
 
         logger.LogInformation("Deleting product {productName}...", productName);
-        await deleteRestResource(uri.Uri, cancellationToken);
+        var builder = new UriBuilder(uri.Uri);
+        var query = HttpUtility.ParseQueryString(builder.Query);
+        query["deleteSubscriptions"] = "true";
+        builder.Query = query.ToString();
+        await deleteRestResource(builder.Uri, cancellationToken);
     }
 
     public static ProductUri GetProductUri(ProductName productName, ServiceUri serviceUri)
