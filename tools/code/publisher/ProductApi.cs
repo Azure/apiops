@@ -30,6 +30,7 @@ internal static class ProductApi
         var configurationArtifacts = GetConfigurationProductApis(configurationJson);
 
         return GetProductApisFiles(files, serviceDirectory)
+                .Where(file => File.Exists(file.Path.ToString()))
                 .Select(file =>
                 {
                     var productName = GetProductName(file);
