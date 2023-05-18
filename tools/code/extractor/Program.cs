@@ -200,6 +200,12 @@ public static class Program
                            ?.Get<IEnumerable<string>>();
     }
 
+    private static IEnumerable<string>? GetLoggerNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("loggerNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+
     private static DefaultApiSpecification GetApiSpecification(IConfiguration configuration)
     {
         var configurationFormat = configuration.TryGetValue("API_SPECIFICATION_FORMAT")
