@@ -1,5 +1,6 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,9 +10,10 @@ namespace extractor;
 
 internal static class Product
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? productNamesToExport, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
+                .Where(productName => ShouldExport(productName, productNamesToExport))
                 .ForEachParallel(async productName => await Export(serviceDirectory, serviceUri, productName, apiNamesToExport, listRestResources, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
@@ -22,6 +24,12 @@ internal static class Product
         var productJsonObjects = listRestResources(productsUri.Uri, cancellationToken);
         return productJsonObjects.Select(json => json.GetStringProperty("name"))
                                  .Select(name => new ProductName(name));
+    }
+
+    private static bool ShouldExport(ProductName productName, IEnumerable<string>? productNamesToExport)
+    {
+        return productNamesToExport is null
+               || productNamesToExport.Any(productNameToExport => productNameToExport.Equals(productName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ProductName productName, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)

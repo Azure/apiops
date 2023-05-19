@@ -185,6 +185,9 @@ public static class Program
             ApiNamesToExport = GetApiNamesToExport(configuration),
             LoggerNamesToExport = GetLoggerNamesToExport(configuration),
             NamedValueNamesToExport = GetNamedValueNamesToExport(configuration),
+            ProductNamesToExport = GetProductNamesToExport(configuration),
+            BackendNamesToExport = GetBackendNamesToExport(configuration),
+            TagNamesToExport = GetTagNamesToExport(configuration),
             DefaultApiSpecification = GetApiSpecification(configuration),
             ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
             DownloadResource = provider.GetRequiredService<DownloadResource>(),
@@ -211,6 +214,24 @@ public static class Program
     private static IEnumerable<string>? GetNamedValueNamesToExport(IConfiguration configuration)
     {
         return configuration.TryGetSection("namedValueNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+
+    private static IEnumerable<string>? GetProductNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("productNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+
+    private static IEnumerable<string>? GetBackendNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("backendNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+
+    private static IEnumerable<string>? GetTagNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("tagNames")
                            ?.Get<IEnumerable<string>>();
     }
 

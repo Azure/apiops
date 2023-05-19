@@ -1,5 +1,6 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,9 +10,11 @@ namespace extractor;
 
 internal static class Backend
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? backendNamesToExport, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
+                // Filter out tags that should not be exported
+                .Where(backendName => ShouldExport(backendName, backendNamesToExport))
                 .ForEachParallel(async backendName => await Export(serviceDirectory, serviceUri, backendName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
@@ -22,6 +25,12 @@ internal static class Backend
         var backendJsonObjects = listRestResources(backendsUri.Uri, cancellationToken);
         return backendJsonObjects.Select(json => json.GetStringProperty("name"))
                                  .Select(name => new BackendName(name));
+    }
+
+    private static bool ShouldExport(BackendName backendName, IEnumerable<string>? backendNamesToExport)
+    {
+        return backendNamesToExport is null
+               || backendNamesToExport.Any(backendNameToExport => backendNameToExport.Equals(backendName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, BackendName backendName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
