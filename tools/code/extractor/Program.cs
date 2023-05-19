@@ -184,6 +184,7 @@ public static class Program
         {
             ApiNamesToExport = GetApiNamesToExport(configuration),
             LoggerNamesToExport = GetLoggerNamesToExport(configuration),
+            NamedValueNamesToExport = GetNamedValueNamesToExport(configuration),
             DefaultApiSpecification = GetApiSpecification(configuration),
             ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
             DownloadResource = provider.GetRequiredService<DownloadResource>(),
@@ -204,6 +205,12 @@ public static class Program
     private static IEnumerable<string>? GetLoggerNamesToExport(IConfiguration configuration)
     {
         return configuration.TryGetSection("loggerNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+
+    private static IEnumerable<string>? GetNamedValueNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("namedValueNames")
                            ?.Get<IEnumerable<string>>();
     }
 
