@@ -183,6 +183,7 @@ public static class Program
         return new Extractor.Parameters
         {
             ApiNamesToExport = GetApiNamesToExport(configuration),
+            LoggerNamesToExport = GetLoggerNamesToExport(configuration),
             DefaultApiSpecification = GetApiSpecification(configuration),
             ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
             DownloadResource = provider.GetRequiredService<DownloadResource>(),
