@@ -30,7 +30,7 @@ internal static class NamedValue
     private static bool ShouldExport(NamedValueName namedValueName, IEnumerable<string>? namedValueNamesToExport)
     {
         return namedValueNamesToExport is null
-               || namedValueNamesToExport.Any(namedValueNameToExport => namedValueNameToExport.Equals(namedValueName.ToString(), StringComparison.OrdinalIgnoreCase);
+               || namedValueNamesToExport.Any(namedValueNameToExport => namedValueNameToExport.Equals(namedValueName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, NamedValueName namedValueName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
