@@ -1,4 +1,3 @@
-
 <img src="assets/images/apim-logo-transparent.png">
 
 #  Code Of Conduct
