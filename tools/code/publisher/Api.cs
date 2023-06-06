@@ -275,7 +275,7 @@ internal static class Api
         // For WSDL files, we need to set the import query parameter to true.
         if (specificationFile is ApiSpecificationFile.Wsdl)
         {
-            putUri = putUri.SetQueryParam("import", true).ToUri();
+            putUri = putUri.SetQueryParam("import", "true").ToUri();
         }
 
         var apiJson = await GetApiJson(apiName, apiInformationFile, specificationFile, configurationApiJson, cancellationToken);
@@ -319,7 +319,7 @@ internal static class Api
 
     private static async ValueTask<JsonObject> GetApiSpecificationJson(ApiSpecificationFile specificationFile, CancellationToken cancellationToken)
     {
-        return new JsonObject
+        var json = new JsonObject
         {
             ["properties"] = new JsonObject
             {
@@ -339,6 +339,13 @@ internal static class Api
                 }
             }
         };
+
+        if (specificationFile is ApiSpecificationFile.Wsdl)
+        {
+            json["properties"]!["apiType"] = "soap";
+        }
+
+        return json;
     }
 
     private static async ValueTask<string> GetOpenApiV3SpecificationText(ApiSpecificationFile.OpenApi openApiSpecificationFile)
