@@ -1,4 +1,5 @@
 using common;
+using Flurl;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Extensions;
@@ -269,8 +270,16 @@ internal static class Api
         logger.LogInformation("Putting API {apiName}...", apiName);
 
         var apiUri = GetApiUri(apiName, serviceUri);
+        var putUri = apiUri.Uri;
+
+        // For WSDL files, we need to set the import query parameter to true.
+        if (specificationFile is ApiSpecificationFile.Wsdl)
+        {
+            putUri = putUri.SetQueryParam("import", true).ToUri();
+        }
+
         var apiJson = await GetApiJson(apiName, apiInformationFile, specificationFile, configurationApiJson, cancellationToken);
-        await putRestResource(apiUri.Uri, apiJson, cancellationToken);
+        await putRestResource(putUri, apiJson, cancellationToken);
 
         // Handle GraphQL specification
         if (specificationFile is ApiSpecificationFile.GraphQl graphQlSpecificationFile)
