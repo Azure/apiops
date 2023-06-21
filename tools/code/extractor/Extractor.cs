@@ -21,6 +21,11 @@ internal class Extractor : BackgroundService
         public required ILogger Logger { get; init; }
         public required IHostApplicationLifetime ApplicationLifetime { get; init; }
         public IEnumerable<string>? ApiNamesToExport { get; init; }
+        public IEnumerable<string>? LoggerNamesToExport { get; init; }
+        public IEnumerable<string>? NamedValueNamesToExport { get; init; }
+        public IEnumerable<string>? ProductNamesToExport { get; init; }
+        public IEnumerable<string>? BackendNamesToExport { get; init; }
+        public IEnumerable<string>? TagNamesToExport { get; init; }
     }
 
     private readonly Parameters parameters;
@@ -64,6 +69,11 @@ internal class Extractor : BackgroundService
                              parameters.ServiceUri,
                              parameters.DefaultApiSpecification,
                              parameters.ApiNamesToExport,
+                             parameters.LoggerNamesToExport,
+                             parameters.NamedValueNamesToExport,
+                             parameters.ProductNamesToExport,
+                             parameters.BackendNamesToExport,
+                             parameters.TagNamesToExport,
                              parameters.ListRestResources,
                              parameters.GetRestResource,
                              parameters.DownloadResource,

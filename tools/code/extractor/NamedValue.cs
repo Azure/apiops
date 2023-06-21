@@ -1,5 +1,6 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,9 +10,11 @@ namespace extractor;
 
 internal static class NamedValue
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? namedValueNamesToExport, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
+                // Filter out namedValues that should not be exported
+                .Where(namedValueName => ShouldExport(namedValueName, namedValueNamesToExport))
                 .ForEachParallel(async namedValueName => await Export(serviceDirectory, serviceUri, namedValueName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
@@ -22,6 +25,12 @@ internal static class NamedValue
         var namedValueJsonObjects = listRestResources(namedValuesUri.Uri, cancellationToken);
         return namedValueJsonObjects.Select(json => json.GetStringProperty("name"))
                                     .Select(name => new NamedValueName(name));
+    }
+
+    private static bool ShouldExport(NamedValueName namedValueName, IEnumerable<string>? namedValueNamesToExport)
+    {
+        return namedValueNamesToExport is null
+               || namedValueNamesToExport.Any(namedValueNameToExport => namedValueNameToExport.Equals(namedValueName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, NamedValueName namedValueName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)

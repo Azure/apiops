@@ -1,5 +1,6 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,9 +10,11 @@ namespace extractor;
 
 internal static class Tag
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? tagNamesToExport, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
+                // Filter out tags that should not be exported
+                .Where(tagName => ShouldExport(tagName, tagNamesToExport))
                 .ForEachParallel(async tagName => await Export(serviceDirectory, serviceUri, tagName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
@@ -22,6 +25,12 @@ internal static class Tag
         var tagJsonObjects = listRestResources(tagsUri.Uri, cancellationToken);
         return tagJsonObjects.Select(json => json.GetStringProperty("name"))
                              .Select(name => new TagName(name));
+    }
+
+    private static bool ShouldExport(TagName tagName, IEnumerable<string>? tagNamesToExport)
+    {
+        return tagNamesToExport is null
+               || tagNamesToExport.Any(tagNameToExport => tagNameToExport.Equals(tagName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, TagName tagName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
