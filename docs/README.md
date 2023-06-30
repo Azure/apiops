@@ -10,7 +10,12 @@ Before we dive into learning about the APIOPs tool we would like to share some g
 - Please read this guide before opening any issues
 - This is an open source project and hence we are always accepting contributions from the community so make sure you fork and submit your PRs. We take them seriously and they help us make the tool better
 
+## Video Guide
+
+[![IMAGE ALT TEXT](http://img.youtube.com/vi/ID2eGm48oWc/0.jpg)](http://www.youtube.com/watch?v=ID2eGm48oWc "Video Title")
+
 #  Versions
+
 Please note that starting with release V.3.0.0 we changed the way the updates to the system get delivered. Thus when reading the docs you will notice that there are some sections that are designated with the <= V.3.0.0 and >= V.3.0.0 suffixes to distinguish between the old and the new update delivery methodology. We recommend switching to the new methodology whenever possible as it greatly simplifies fetching the latest version of the code. 
 
 ## Old method (version < 3.0.0)
@@ -40,9 +45,11 @@ This guide will guide you through the concept of APIOps. It applies the concepts
 [This Guide is delivered using Github Pages and Just-The-Docs theme](https://azure.github.io/apiops/).
 
 ## Wiki
+
 The Wiki covers all of our supported resources. Think about it as being more resource-focused with deeper dives, as opposed to the aforementioned guide which is more scenario-based and holistic. So in essence you need to read both to have a successful adoption of the tool. [The wiki can be found on wiki tab within this repo or by following this link](https://github.com/Azure/apiops/wiki).
 
 # Roadmap
+
 To stay up-to-date with the APIOps roadmap, please follow it closely.
 To stay updated on the APIOps roadmap, please make sure to monitor it closely [here](https://github.com/Azure/apiops/projects?query=is%3Aopen).
 
