@@ -68,7 +68,6 @@ stages:
                     if ($subscriptionCount -eq 1) {
                         $subscriptionId = az account list --query "[0].id" --output tsv
                         Write-Host "Setting AZURE_SUBSCRIPTION_ID environment variable to: $subscriptionId"
-                        #$env:AZURE_SUBSCRIPTION_ID = $subscriptionId
                         Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_SUBSCRIPTION_ID]$($subscriptionId)"
                     } 
                     elseif ($subscriptionCount -gt 1) {
