@@ -184,6 +184,7 @@ public static class Program
         {
             ApiNamesToExport = GetApiNamesToExport(configuration),
             LoggerNamesToExport = GetLoggerNamesToExport(configuration),
+            DiagnosticNamesToExport = GetDiagnosticNamesToExport(configuration),
             NamedValueNamesToExport = GetNamedValueNamesToExport(configuration),
             ProductNamesToExport = GetProductNamesToExport(configuration),
             BackendNamesToExport = GetBackendNamesToExport(configuration),
@@ -208,6 +209,12 @@ public static class Program
     private static IEnumerable<string>? GetLoggerNamesToExport(IConfiguration configuration)
     {
         return configuration.TryGetSection("loggerNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+
+    private static IEnumerable<string>? GetDiagnosticNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("diagnosticNames")
                            ?.Get<IEnumerable<string>>();
     }
 

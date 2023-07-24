@@ -14,6 +14,7 @@ internal static class Service
         DefaultApiSpecification defaultSpecification,
         IEnumerable<string>? apiNamesToExport,
         IEnumerable<string>? loggerNamesToExport,
+        IEnumerable<string>? diagnosticNamesToExport,
         IEnumerable<string>? namedValueNamesToExport,
         IEnumerable<string>? productNamesToExport,
         IEnumerable<string>? backendNamesToExport,
@@ -37,7 +38,7 @@ internal static class Service
         await Logger.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, loggerNamesToExport, cancellationToken);
 
         logger.LogInformation("Exporting diagnostics...");
-        await Diagnostic.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, cancellationToken);
+        await Diagnostic.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, diagnosticNamesToExport, cancellationToken);
 
         logger.LogInformation("Exporting backends...");
         await Backend.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, backendNamesToExport, cancellationToken);
