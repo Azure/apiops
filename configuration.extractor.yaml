@@ -3,12 +3,12 @@
 # More information about workspaces can be found here https://learn.microsoft.com/en-us/azure/api-management/workspaces-overview
 
  apiNames:
-  - api1
-  - api2
+  - apiName1
+  - apiName2
 
  backendNames:
-  - backend1
-  - backend2
+  - backendName1
+  - backendName2
 
  diagnosticNames:
  - diagnosticName1
