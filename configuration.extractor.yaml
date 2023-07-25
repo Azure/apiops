@@ -1,6 +1,7 @@
 # Note: Since the introduction of workspaces we recommend using workspaces instead of using this file to inform apiops about extracting select artifacts instead of extracting everything. 
 # We are keeping support for this file as not everyone will be able to use workspaces.
 # More information about workspaces can be found here https://learn.microsoft.com/en-us/azure/api-management/workspaces-overview
+# Possible values: apiNames, diagnosticNames, loggerNames, namedValueNames, productNames, backendNames, tagNames & subscriptionNames.
 
  apiNames:
   - api1
