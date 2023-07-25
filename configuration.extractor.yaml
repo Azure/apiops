@@ -7,6 +7,14 @@
   - api1
   - api2
 
+ backendNames:
+  - backend1
+  - backend2
+
+ diagnosticNames:
+ - diagnostic1
+ - diagnostic2
+
  loggerNames:
   - loggerName1
   - loggerName2
@@ -19,9 +27,9 @@
   - productName2
   - productName2
 
- backendNames:
-  - backend1
-  - backend2
+ subscriptionNames:
+ - subscription1
+ - subscription2
 
  tagNames:
   - tag1
