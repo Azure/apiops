@@ -11,8 +11,8 @@
   - backend2
 
  diagnosticNames:
- - diagnostic1
- - diagnostic2
+ - diagnosticName1
+ - diagnosticName2
 
  loggerNames:
   - loggerName1
@@ -27,9 +27,9 @@
   - productName2
 
  subscriptionNames:
- - subscription1
- - subscription2
+ - subscriptionName1
+ - subscriptionName2
 
  tagNames:
-  - tag1
-  - tag2
+  - tagName1
+  - tagName2
