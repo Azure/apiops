@@ -3,8 +3,16 @@
 # More information about workspaces can be found here https://learn.microsoft.com/en-us/azure/api-management/workspaces-overview
 
  apiNames:
-  - api1
-  - api2
+  - apiName1
+  - apiName2
+
+ backendNames:
+  - backendName1
+  - backendName2
+
+ diagnosticNames:
+ - diagnosticName1
+ - diagnosticName2
 
  loggerNames:
   - loggerName1
@@ -15,13 +23,13 @@
   - namedValueName2
 
  productNames:
-  - productName2
+  - productName1
   - productName2
 
- backendNames:
-  - backend1
-  - backend2
+ subscriptionNames:
+ - subscriptionName1
+ - subscriptionName2
 
  tagNames:
-  - tag1
-  - tag2
+  - tagName1
+  - tagName2

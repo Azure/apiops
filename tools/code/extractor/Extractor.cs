@@ -27,8 +27,9 @@ internal class Extractor : BackgroundService
         public IEnumerable<string>? ProductNamesToExport { get; init; }
         public IEnumerable<string>? BackendNamesToExport { get; init; }
         public IEnumerable<string>? TagNamesToExport { get; init; }
+        public IEnumerable<string>? SubscriptionNamesToExport { get; init; }
     }
-
+    
     private readonly Parameters parameters;
 
     public Extractor(Parameters parameters)
@@ -76,6 +77,7 @@ internal class Extractor : BackgroundService
                              parameters.ProductNamesToExport,
                              parameters.BackendNamesToExport,
                              parameters.TagNamesToExport,
+                             parameters.SubscriptionNamesToExport,
                              parameters.ListRestResources,
                              parameters.GetRestResource,
                              parameters.DownloadResource,

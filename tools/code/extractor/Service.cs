@@ -19,6 +19,7 @@ internal static class Service
         IEnumerable<string>? productNamesToExport,
         IEnumerable<string>? backendNamesToExport,
         IEnumerable<string>? tagNamesToExport,
+        IEnumerable<string>? subscriptionNamesToExport,
         ListRestResources listRestResources,
         GetRestResource getRestResource,
         DownloadResource downloadResource,
@@ -59,6 +60,6 @@ internal static class Service
         await Api.ExportAll(serviceDirectory, serviceUri, defaultSpecification, apiNamesToExport, listRestResources, getRestResource, downloadResource, logger, cancellationToken);
 
         logger.LogInformation("Exporting subscriptions...");
-        await Subscription.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, cancellationToken);
+        await Subscription.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, subscriptionNamesToExport, cancellationToken);
     }
 }
