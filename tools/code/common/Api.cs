@@ -136,7 +136,7 @@ public sealed record ApiModel
                 .AddPropertyIfNotNull("displayName", DisplayName)
                 .AddPropertyIfNotNull("format", Format?.Serialize())
                 .AddPropertyIfNotNull("isCurrent", IsCurrent)
-                .AddPropertyIfNotNull("IsOnline", IsOnline)
+                .AddPropertyIfNotNull("isOnline", IsOnline)
                 .AddPropertyIfNotNull("license", License?.Serialize())
                 .AddPropertyIfNotNull("path", Path)
                 .AddPropertyIfNotNull("protocols", Protocols?.Select(protocol => protocol.Serialize())
@@ -171,7 +171,7 @@ public sealed record ApiModel
                 Format = jsonObject.TryGetProperty("format")
                                    .Map(ApiFormatOption.Deserialize),
                 IsCurrent = jsonObject.TryGetBoolProperty("isCurrent"),
-                IsOnline  = jsonObject.TryGetBoolProperty("IsOnline"),
+                IsOnline  = jsonObject.TryGetBoolProperty("isOnline"),
                 License = jsonObject.TryGetJsonObjectProperty("license")
                                     .Map(ApiLicenseInformation.Deserialize),
                 Path = jsonObject.TryGetStringProperty("path"),
