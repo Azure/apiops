@@ -12,7 +12,15 @@ Before we dive into learning about the APIOPs tool we would like to share some g
 
 ## Video Guide
 
+Please not that the videos below serve as a good starting point but it is recommended to spend some time reading the detailed documentation found [under the Github page](https://azure.github.io/apiops/) and [the wiki](https://github.com/Azure/apiops/wiki).
+
+Check this video for a 360 overview of the APIOPS tool. 
+
 [![IMAGE ALT TEXT](http://img.youtube.com/vi/ID2eGm48oWc/0.jpg)](http://www.youtube.com/watch?v=ID2eGm48oWc "Video Title")
+
+Check this video for a step by step guide that demonstrates setting up a Dev,QA, and Prod envirionments in Azure DevOps. Keep in mind that we also support Github even though its not demonstrated in this video.
+
+[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/8ZIt_DlNCoo/0.jpg)](https://www.youtube.com/watch?v=8ZIt_DlNCoo)
 
 #  Versions
 
