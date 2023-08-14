@@ -24,24 +24,6 @@ az ad sp create-for-rbac --name myApp --role contributor --scopes /subscriptions
 * Open [Extractor.cs](tools/code/extractor/Extractor.cs) file (or any other source code file)
 * Go to `VS Code Run & Debug` tab
 * Click `Generate C# Assets for Build & Debug` option
-* Open `launch.json` file
-* Add the `env` field to the `configurations` section of `.NET Core Launch (console)`, as shown below:
-
-```json
-"configurations": [
-    "name": ".NET Core Launch (console)"
-    ...
-    “env”: {
-                “AZURE_RESOURCE_GROUP_NAME”: “apiops-rg”,
-                “API_MANAGEMENT_SERVICE_NAME”: “apiops-dev”,
-                “AZURE_CLIENT_ID”: “d36cfc27-3a45-45f0-b75c-59eb23993f49”,
-                “AZURE_CLIENT_SECRET”: “ISx8DU.nUsahajsx3dZlNFV6Tem_mddkQz”,
-                “AZURE_TENANT_ID”: “72f988bf-86f1-41af-91ab-2d7cd011db47”,
-                “AZURE_SUBSCRIPTION_ID”: “0005c093-d9ad-44b4-abe8-f507848419ca”,
-                “API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH”: “/tmp/apiops-extractor”
-            }
-]
-```
-
+* Make a copy of `.env.template` called `.env` and update the values in the file.
 * Place a breakpoint on the opened source code file
 * press F5 to start debugging
