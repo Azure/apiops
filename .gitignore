@@ -357,7 +357,9 @@ MigrationBackup/
 .ionide/
 
 # VSCode
-.vscode/*
+#.vscode/*
 appsettings.json
 /tools/code/extractor/Properties/launchSettings.json
 /tools/code/publisher/Properties/launchSettings.json
+.env.extractor
+.env.publisher
