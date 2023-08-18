@@ -11,7 +11,7 @@
             "cwd": "${workspaceFolder}/tools/code/extractor",
             "console": "internalConsole",
             "stopAtEntry": false,
-            "envFile": "${workspaceFolder}/.env.extractor"
+            "envFile": "${workspaceFolder}/tools/code/.env.extractor"
         },
         {
             "name": "Launch Publisher",
@@ -23,7 +23,7 @@
             "cwd": "${workspaceFolder}/tools/code/publisher",
             "console": "internalConsole",
             "stopAtEntry": false,
-            "envFile": "${workspaceFolder}/.env.publisher"
+            "envFile": "${workspaceFolder}/tools/code/.env.publisher"
         },
         {
             "name": ".NET Core Attach",
