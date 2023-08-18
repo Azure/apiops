@@ -361,4 +361,5 @@ MigrationBackup/
 appsettings.json
 /tools/code/extractor/Properties/launchSettings.json
 /tools/code/publisher/Properties/launchSettings.json
-.env
+.env.extractor
+.env.publisher
