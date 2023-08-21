@@ -1,3 +1,5 @@
+Kindly observe that even though the extractor and publisher binaries are not tightly integrated with the CI/CD pipelines we furnish, it is highly recommended to execute them within the provided pipelines. You can consider utilizing the techniques outlined below for running them as an internal development loop, while utilizing the pipelines we offer for executing the binaries can be seen as an external development loop.
+
 # Debug Instructions using Visual Studio Code Dev Container
 This option allows you to run the extractor and publisher binaries on your local machine inside a container. Thus you won't need to install any SDKs on your local machine.
 
