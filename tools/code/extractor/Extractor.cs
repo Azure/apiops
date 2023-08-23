@@ -83,7 +83,7 @@ internal class Extractor : BackgroundService
                              parameters.ListRestResources,
                              parameters.GetRestResource,
                              parameters.DownloadResource,
-                             parameters.Logger,                            
+                             parameters.Logger,                     
                              cancellationToken);
     }
 }
