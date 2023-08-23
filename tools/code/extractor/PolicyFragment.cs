@@ -11,10 +11,10 @@ namespace extractor;
 
 internal static class PolicyFragment
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? policyFragmentNameToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? policyFragmentNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
-                .Where(policyFragmentName => ShouldExport(policyFragmentName, policyFragmentNameToExport))
+                .Where(policyFragmentName => ShouldExport(policyFragmentName, policyFragmentNamesToExport))
                 .ForEachParallel(async policyFragmentName => await Export(serviceDirectory, serviceUri, policyFragmentName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
@@ -26,10 +26,10 @@ internal static class PolicyFragment
         return policyFragmentJsonObjects.Select(json => json.GetStringProperty("name"))
                                         .Select(name => new PolicyFragmentName(name));
     }
-    private static bool ShouldExport(PolicyFragmentName policyFragmentName, IEnumerable<string>? policyFragmentNameToExport)
+    private static bool ShouldExport(PolicyFragmentName policyFragmentName, IEnumerable<string>? policyFragmentNamesToExport)
     {
-        return policyFragmentNameToExport is null
-               || policyFragmentNameToExport.Any(policyFragmentNameToExport => policyFragmentNameToExport.Equals(policyFragmentName.ToString(), StringComparison.OrdinalIgnoreCase));
+        return policyFragmentNamesToExport is null
+               || policyFragmentNamesToExport.Any(policyFragmentNameToExport => policyFragmentNameToExport.Equals(policyFragmentName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, PolicyFragmentName policyFragmentName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)

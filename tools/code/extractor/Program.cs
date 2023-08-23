@@ -190,7 +190,7 @@ public static class Program
             BackendNamesToExport = GetBackendNamesToExport(configuration),
             TagNamesToExport = GetTagNamesToExport(configuration),
             SubscriptionNamesToExport = GetSubscriptionNamesToExport(configuration),
-            PolicyfragmentNamesToExport = GetPolicyfragmentsNameToExport(configuration),
+            PolicyFragmentNamesToExport = GetPolicyfragmentsNamesToExport(configuration),
             DefaultApiSpecification = GetApiSpecification(configuration),
             ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
             DownloadResource = provider.GetRequiredService<DownloadResource>(),
@@ -249,7 +249,7 @@ public static class Program
         return configuration.TryGetSection("subscriptionNames")
                            ?.Get<IEnumerable<string>>();
     }
-    private static IEnumerable<string>? GetPolicyfragmentsNameToExport(IConfiguration configuration)
+    private static IEnumerable<string>? GetPolicyfragmentsNamesToExport(IConfiguration configuration)
     {
         return configuration.TryGetSection("policyfragmentNames")
                            ?.Get<IEnumerable<string>>();
