@@ -25,4 +25,8 @@
     </None>
   </ItemGroup>
 
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="C:\myProgram\extract\setenv.bat" />
+  </Target>
+
 </Project>

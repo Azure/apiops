@@ -20,6 +20,7 @@ internal static class Service
         IEnumerable<string>? backendNamesToExport,
         IEnumerable<string>? tagNamesToExport,
         IEnumerable<string>? subscriptionNamesToExport,
+        IEnumerable<string>? policyfragmentsNameToExport,
         ListRestResources listRestResources,
         GetRestResource getRestResource,
         DownloadResource downloadResource,
@@ -51,7 +52,7 @@ internal static class Service
         await Gateway.ExportAll(serviceDirectory, serviceUri, apiNamesToExport, listRestResources, getRestResource, logger, cancellationToken);
 
         logger.LogInformation("Exporting policy fragments...");
-        await PolicyFragment.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, cancellationToken);
+        await PolicyFragment.ExportAll(serviceDirectory, serviceUri, policyfragmentsNameToExport, listRestResources, getRestResource, logger, cancellationToken);
 
         logger.LogInformation("Exporting service policies...");
         await ServicePolicy.ExportAll(serviceUri, serviceDirectory, listRestResources, getRestResource, logger, cancellationToken);
