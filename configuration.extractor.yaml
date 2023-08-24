@@ -33,3 +33,7 @@
  tagNames:
   - tagName1
   - tagName2
+  
+ policyFragmentNames:
+  -policyFragment1
+  -policyFragment2
