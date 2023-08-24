@@ -190,6 +190,7 @@ public static class Program
             BackendNamesToExport = GetBackendNamesToExport(configuration),
             TagNamesToExport = GetTagNamesToExport(configuration),
             SubscriptionNamesToExport = GetSubscriptionNamesToExport(configuration),
+            PolicyFragmentNamesToExport = GetPolicyFragmentNamesToExport(configuration),
             DefaultApiSpecification = GetApiSpecification(configuration),
             ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
             DownloadResource = provider.GetRequiredService<DownloadResource>(),
@@ -246,6 +247,11 @@ public static class Program
     private static IEnumerable<string>? GetSubscriptionNamesToExport(IConfiguration configuration)
     {
         return configuration.TryGetSection("subscriptionNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+    private static IEnumerable<string>? GetPolicyFragmentNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("policyFragmentNames")
                            ?.Get<IEnumerable<string>>();
     }
 
