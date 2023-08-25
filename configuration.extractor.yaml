@@ -35,5 +35,5 @@
   - tagName2
   
  policyFragmentNames:
-  -policyFragment1
-  -policyFragment2
+  - policyFragment1
+  - policyFragment2
