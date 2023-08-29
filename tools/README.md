@@ -15,8 +15,8 @@ This option allows you to run the extractor and publisher binaries on your local
   az ad sp create-for-rbac --name myApp --role contributor --scopes /subscriptions/{subscription-id}/resourceGroups/exampleRG --sdk-auth
   ```
 * The output is a JSON object with the role assignment credentials. Copy this JSON object for later. You'll only need the sections with the clientId, clientSecret, subscriptionId, and tenantId values.
-* Update the values in the `.env.extractor` file to include the information required for the extractor to run sucessfully.
-* Update the values in the `.env.publisher` file to include the information required for the publisher to run sucessfully
+* Copy and rename `./tools/code/.env.extractor.template` to `./tools/code/.env.extractor` and update the values to include the information required for the extractor to run sucessfully. This file will not be committed to source control
+* Copy and rename `./tools/code/.env.publisher.template` to `./tools/code/.env.publisher` and update the values to include the information required for the publisher to run sucessfully. This file will not be committed to source control
 * Place a breakpoint on the opened source code file
 * Run the "Launch Extractor" from the debugger section in VS Code to debug the extractor
 * Run the "Launch Publisher" from the debugger section in VS Code to debug the publisher
@@ -40,8 +40,8 @@ This option allows you to run the extractor and publisher binaries in a containe
   az ad sp create-for-rbac --name myApp --role contributor --scopes /subscriptions/{subscription-id}/resourceGroups/exampleRG --sdk-auth
   ```
 * The output is a JSON object with the role assignment credentials. Copy this JSON object for later. You'll only need the sections with the clientId, clientSecret, subscriptionId, and tenantId values.
-* Update the values in the `.env.extractor` file to include the information required for the extractor to run sucessfully.
-* Update the values in the `.env.publisher` file to include the information required for the publisher to run sucessfully
+* Copy and rename `./tools/code/.env.extractor.template` to `./tools/code/.env.extractor` and update the values to include the information required for the extractor to run sucessfully. This file will not be committed to source control
+* Copy and rename `./tools/code/.env.publisher.template` to `./tools/code/.env.publisher` and update the values to include the information required for the publisher to run sucessfully. This file will not be committed to source control
 * Place a breakpoint on the opened source code file
 * Run the "Launch Extractor" from the debugger section in VS Code (remember that Github Codespaces runs VS Code in the browser) to debug the extractor
 * Run the "Launch Publisher" from the debugger section in VS Code (remember that Github Codespaces runs VS Code in the browser) to debug the publisher
