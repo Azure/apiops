@@ -50,8 +50,7 @@ namespace extractor
 
             var responseJson = await getRestResource(subscriptionUri.Uri, cancellationToken);
             var subscriptionModel = SubscriptionModel.Deserialize(subscriptionName, responseJson);
-            if(subscriptionModel.Name == "master" || 
-                SubscriptionModel.GetGenericSubscriptionScope(subscriptionModel.Properties.Scope).Contains("/products"))
+            if(subscriptionModel.Name == "master")
             {
                 logger.LogInformation("Skipping unsupported subscription {name}", subscriptionModel.Name);
                 return;
