@@ -53,12 +53,14 @@ internal static class Api
         var specificationFiles = files.Choose(file => TryGetApiSpecificationFile(file, serviceDirectory))
                                       .Select(specificationFile => (ApiName: GetApiName(specificationFile), SpecificationFile: specificationFile));
 
-        return informationFiles.FullJoin(specificationFiles,
+        var apiFiles = informationFiles.FullJoin(specificationFiles,
                                          firstKeySelector: informationFile => informationFile.ApiName,
                                          secondKeySelector: specificationFile => specificationFile.ApiName,
                                          firstSelector: informationFile => (informationFile.ApiName, (ApiInformationFile?)informationFile.File, (ApiSpecificationFile?)null),
                                          secondSelector: schema => (schema.ApiName, null, schema.SpecificationFile),
                                          bothSelector: (informationFile, specificationFile) => (informationFile.ApiName, informationFile.File, specificationFile.SpecificationFile));
+
+        return apiFiles.OrderBy(a => a.ApiName.ToString());
     }
 
     private static ApiInformationFile? TryGetInformationFile(FileInfo? file, ServiceDirectory serviceDirectory)
