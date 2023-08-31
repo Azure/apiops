@@ -28,13 +28,9 @@ While there is no formal support from Microsoft's APIM product team, the project
 
 ## Advance Notice on Future Developments
 
-Because Microsoft Cloud Solution Architects are closely aligned with the APIM product team, they have the advantage of early access to the product roadmap. This enables them to guide the project's development more effectively.
+As Microsoft Cloud Solution Architects are closely aligned with the APIM product team, they have the advantage of early access to the product roadmap. This enables them to guide the project's development more effectively.
 
 Please be mindful that the project is run on a best-effort basis. Response times can vary depending on the maintainers' availability. We appreciate your understanding and are grateful for your contributions to the success of this open-source project!
 
 Sincerely,  
 The Project Team
-
----
-
-I hope this version provides a clearer understanding of the support structures and roles within the project.
