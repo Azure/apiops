@@ -1,37 +1,36 @@
-# Support
+# Support Documentation
 
-## How to file issues and get help  
+## Filing Issues and Seeking Assistance  
 
-This project uses GitHub Issues to track bugs and feature requests. Please search the existing issues before filing new issues to avoid duplicates.  For new issues, file your bug or feature request as a new Issue.
+We use GitHub Issues as our primary platform for tracking bugs and discussing new features. To avoid redundancy, please look through existing issues before submitting a new one. If you can't find what you're looking for, feel free to open a new issue.
 
 ## Support Policy  
 
-This project operates as an open source initiative, meaning that it lacks official backing from the Microsoft APIM product team. However, it's worth noting that Microsoft Cloud Solution Architects oversee its maintenance. These architects maintain a connection with the product team, granting them early exposure to the APIM roadmap.
+Though this project is an open-source initiative, it does not receive formal support from Microsoft's APIM product team. However, Microsoft Cloud Solution Architects are actively involved in maintaining and overseeing the project. They are in regular communication with the APIM product team, giving them early insights into the product's roadmap.
 
+---
 
+# Project Support Overview
 
+Thank you for your interest in our open-source project! We're committed to assisting you with any questions, issues, or contributions you may have.
 
-# Project Support
+## How to Get Help
 
-Thank you for your interest in our open source project! We're here to help you with any issues, questions, or contributions you might have.
+For reporting bugs, suggesting features, or seeking assistance, the first place to go is the project's [issue tracker](https://github.com/Azure/apiops/issues) on GitHub. Before creating a new issue, please review existing ones to see if someone else has already raised your concern.
 
-## Getting Help
+## Making Contributions
 
-If you encounter any bugs, have feature requests, or need assistance, please check the project's [issue tracker](https://github.com/Azure/apiops/issues) on GitHub. Before submitting a new issue or feature request, please search the existing issues to make sure your concern hasn't already been addressed.
+We highly value community contributions! If you're interested in contributing code, documentation, or other resources, please consult our [contributing guidelines](CONTRIBUTING.md) for directions on how to get started.
 
-## Contributing
+## How to Contact the Maintainers
 
-We welcome contributions from the community! If you'd like to contribute code, documentation, or anything else, please read our [contributing guidelines](CONTRIBUTING.md) for more information on how to get started.
+While there is no formal support from Microsoft's APIM product team, the project maintainers are diligent about monitoring the GitHub [issue tracker](https://github.com/Azure/apiops/issues). This is the most effective way to communicate with them.
 
-## Contacting the Maintainers
+## Advance Notice on Future Developments
 
-While we don't have official support from the Microsoft APIM product team, the maintainers are continously monitoring the project's [issue tracker](https://github.com/Azure/apiops/issues) on GitHub and thus its the best way to get in touch with them.
+As Microsoft Cloud Solution Architects are closely aligned with the APIM product team, they have the advantage of early access to the product roadmap. This enables them to guide the project's development more effectively.
 
-## Early Access to Roadmap
+Please be mindful that the project is run on a best-effort basis. Response times can vary depending on the maintainers' availability. We appreciate your understanding and are grateful for your contributions to the success of this open-source project!
 
-As the Microsoft Cloud Solution Architects are in touch with the product team, they have early access to the APIM roadmap. This enables them to provide insights and guidance on the project's future development.
-
-Please remember that this project operates on a best-effort basis, and response times may vary based on maintainers' availability. We appreciate your understanding and collaboration in making this open source project a success!
-
-Thank you,
+Sincerely,  
 The Project Team
