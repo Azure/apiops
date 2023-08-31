@@ -51,6 +51,7 @@ public static class Program
                 .AddSingleton(GetHttpPipeline)
                 .AddSingleton(GetDeleteRestResource)
                 .AddSingleton(GetListRestResources)
+                .AddSingleton(GetGetRestResource)
                 .AddSingleton(GetPutRestResource)
                 .AddSingleton(GetPublisherParameters)
                 .AddHostedService<Publisher>();
@@ -149,6 +150,30 @@ public static class Program
         };
     }
 
+    private static GetRestResource GetGetRestResource(IServiceProvider provider)
+    {
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(GetRestResource));
+
+        return async (uri, cancellationToken) =>
+        {
+            logger.LogDebug("Beginning request to get REST resource at URI {uri}...", uri);
+
+            var json = await pipeline.GetJsonObject(uri, cancellationToken);
+
+            if (logger.IsEnabled(LogLevel.Trace))
+            {
+                logger.LogTrace("Successfully retrieved REST resource {json} at URI {uri}.", json.ToJsonString(), uri);
+            }
+            else
+            {
+                logger.LogDebug("Successfully retrieved REST resource at URI {uri}.", uri);
+            }
+
+            return json;
+        };
+    }
+
     private static PutRestResource GetPutRestResource(IServiceProvider provider)
     {
         var pipeline = provider.GetRequiredService<HttpPipeline>();
@@ -184,6 +209,7 @@ public static class Program
             ConfigurationJson = GetConfigurationJson(configuration),
             DeleteRestResource = provider.GetRequiredService<DeleteRestResource>(),
             ListRestResources = provider.GetRequiredService<ListRestResources>(),
+            GetRestResource = provider.GetRequiredService<GetRestResource>(),
             Logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(Publisher)),
             PutRestResource = provider.GetRequiredService<PutRestResource>(),
             ServiceDirectory = GetServiceDirectory(configuration),
