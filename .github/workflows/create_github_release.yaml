@@ -13,9 +13,9 @@ jobs:
     name: Generate extractor artifacts
     strategy:
       matrix:
-        dotnet-runtime: [linux-x64, win-x64]
+        dotnet-runtime: [linux-x64, linux-arm64, win-x64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -55,9 +55,9 @@ jobs:
     name: Generate publisher artifacts
     strategy:
       matrix:
-        dotnet-runtime: [linux-x64, win-x64]
+        dotnet-runtime: [linux-x64, linux-arm64, win-x64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -224,8 +224,10 @@ jobs:
           files: |
             ${{github.workspace}}/artifact/extractor.win-x64.exe
             ${{github.workspace}}/artifact/extractor.linux-x64.exe
+            ${{github.workspace}}/artifact/extractor.linux-arm64.exe
             ${{github.workspace}}/artifact/publisher.win-x64.exe
             ${{github.workspace}}/artifact/publisher.linux-x64.exe
+            ${{github.workspace}}/artifact/publisher.linux-arm64.exe
             ${{github.workspace}}/artifact/Github.zip
             ${{github.workspace}}/artifact/Azure_DevOps.zip
           name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
