@@ -352,6 +352,10 @@ internal static class Api
     {
         using var fileStream = openApiSpecificationFile.ReadAsStream();
         var readResult = await new OpenApiStreamReader().ReadAsync(fileStream);
+        if (readResult.OpenApiDiagnostic.Errors.Any())
+        {
+            throw new IOException($"Could not read OpenAPI specification file {openApiSpecificationFile.Path}.");
+        }
         return readResult.OpenApiDocument.Serialize(openApiSpecificationFile.Version, openApiSpecificationFile.Format);
     }
 
