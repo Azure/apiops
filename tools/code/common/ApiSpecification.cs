@@ -1,128 +1,84 @@
-﻿using Microsoft.OpenApi.Readers;
+﻿using Microsoft.OpenApi;
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record ApiSpecificationFile : FileRecord
+public abstract record ApiSpecificationFile : IArtifactFile
 {
-    public ApiSpecificationFormat Format { get; }
+    public abstract ArtifactPath Path { get; }
 
-    public ApiDirectory ApiDirectory { get; }
+    public abstract ApiDirectory ApiDirectory { get; }
 
-    private ApiSpecificationFile(ApiDirectory apiDirectory, ApiSpecificationFormat format)
-        : base(apiDirectory.Path.Append(GetNameFromFormat(format)))
+    public record OpenApi : ApiSpecificationFile
     {
-        Format = format;
+        public override ArtifactPath Path { get; }
 
-        ApiDirectory = apiDirectory;
-    }
+        public override ApiDirectory ApiDirectory { get; }
 
-    public static ApiSpecificationFile From(ApiDirectory apiDirectory, ApiSpecificationFormat format) => new(apiDirectory, format);
+        public OpenApiSpecVersion Version { get; }
 
-    public static ApiSpecificationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        if (Enum.TryParse<ApiSpecificationFormat>(string.Concat(file.Extension.Skip(1)), ignoreCase: true, out var format))
+        public OpenApiFormat Format { get; }
+
+        public OpenApi(OpenApiSpecVersion version, OpenApiFormat format, ApiDirectory apiDirectory)
         {
-            if (GetNameFromFormat(format).Equals(file?.Name))
-            {
-                var apiDirectory = ApiDirectory.TryFrom(serviceDirectory, file.Directory);
-
-                return apiDirectory is null ? null : new(apiDirectory, format);
-            }
-            else
-            {
-                return null;
-            }
+            var fileName = GetFileName(format);
+            Path = apiDirectory.Path.Append(fileName);
+            ApiDirectory = apiDirectory;
+            Version = version;
+            Format = format;
         }
-        else
+
+        private static string GetFileName(OpenApiFormat format) =>
+            format switch
+            {
+                OpenApiFormat.Json => "specification.json",
+                OpenApiFormat.Yaml => "specification.yaml",
+                _ => throw new NotSupportedException()
+            };
+    }
+
+    public record GraphQl : ApiSpecificationFile
+    {
+        public static string Name { get; } = "specification.graphql";
+
+        public override ArtifactPath Path { get; }
+
+        public override ApiDirectory ApiDirectory { get; }
+
+        public GraphQl(ApiDirectory apiDirectory)
         {
-            return null;
+            Path = apiDirectory.Path.Append(Name);
+            ApiDirectory = apiDirectory;
         }
     }
 
-    private static string GetNameFromFormat(ApiSpecificationFormat format) =>
-        TryGetNameFromFormat(format) ?? throw new InvalidOperationException($"File format {format} is invalid.");
-
-    internal static string? TryGetNameFromFormat(ApiSpecificationFormat format) =>
-        format switch
-        {
-            ApiSpecificationFormat.Json => "specification.json",
-            ApiSpecificationFormat.Yaml => "specification.yaml",
-            _ => null
-        };
-}
-
-public enum ApiSpecificationFormat
-{
-    Json,
-    Yaml
-}
-
-public static class ApiSpecification
-{
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiSpecificationFormat format) =>
-        Api.GetUri(serviceProviderUri, serviceName, apiName)
-           .SetQueryParameter("export", "true")
-           .SetQueryParameter("format", FormatToExportString(format));
-
-    internal static string FormatToExportString(ApiSpecificationFormat format) =>
-        format switch
-        {
-            ApiSpecificationFormat.Json => "openapi+json-link",
-            ApiSpecificationFormat.Yaml => "openapi-link",
-            _ => throw new InvalidOperationException($"File format {format} is invalid. Only OpenAPI YAML & JSON are supported.")
-        };
-
-    public static string FormatToString(ApiSpecificationFormat format) =>
-        format switch
-        {
-            ApiSpecificationFormat.Json => "openapi+json",
-            ApiSpecificationFormat.Yaml => "openapi",
-            _ => throw new InvalidOperationException($"File format {format} is invalid. Only OpenAPI YAML & JSON are supported.")
-        };
-
-    public static async ValueTask<Stream> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, Func<Uri, CancellationToken, ValueTask<Stream>> downloader, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ApiName apiName, ApiSpecificationFormat format, CancellationToken cancellationToken)
+    public record Wsdl : ApiSpecificationFile
     {
-        var uri = GetUri(serviceProviderUri, serviceName, apiName, format);
-        var exportJson = await getResource(uri, cancellationToken);
-        var downloadUrl = exportJson.GetJsonObjectProperty("value")
-                                    .GetStringProperty("link");
-        var downloadUri = new Uri(downloadUrl);
+        public static string Name { get; } = "specification.wsdl";
 
-        return await downloader(downloadUri, cancellationToken);
+        public override ArtifactPath Path { get; }
+
+        public override ApiDirectory ApiDirectory { get; }
+
+        public Wsdl(ApiDirectory apiDirectory)
+        {
+            Path = apiDirectory.Path.Append(Name);
+            ApiDirectory = apiDirectory;
+        }
     }
 
-    public static ApiSpecificationFile? TryFindFile(ApiDirectory apiDirectory)
+    public record Wadl : ApiSpecificationFile
     {
-        var directoryFileNames =
-            apiDirectory.Exists()
-            ? new DirectoryInfo(apiDirectory.Path).EnumerateFiles().Select(file => file.Name).ToList()
-            : new List<string>();
+        public static string Name { get; } = "specification.wadl";
 
-        return
-            Enum.GetValues<ApiSpecificationFormat>()
-                .Where(format =>
-                {
-                    var formatFileName = ApiSpecificationFile.TryGetNameFromFormat(format);
-                    return formatFileName is not null && directoryFileNames.Contains(formatFileName);
-                })
-                .Select(format => ApiSpecificationFile.From(apiDirectory, format))
-                .FirstOrDefault();
-    }
+        public override ArtifactPath Path { get; }
 
-    public static async Task<ApiOperationName?> TryFindApiOperationName(ApiSpecificationFile file, ApiOperationDisplayName displayName)
-    {
-        using var stream = file.ReadAsStream();
-        var readResult = await new OpenApiStreamReader().ReadAsync(stream);
-        var operation = readResult.OpenApiDocument.Paths.Values.SelectMany(pathItem => pathItem.Operations.Values)
-                                                               .FirstOrDefault(operation => operation.Summary.Equals((string)displayName, StringComparison.OrdinalIgnoreCase));
+        public override ApiDirectory ApiDirectory { get; }
 
-        return operation is null ? null : ApiOperationName.From(operation.OperationId);
+        public Wadl(ApiDirectory apiDirectory)
+        {
+            Path = apiDirectory.Path.Append(Name);
+            ApiDirectory = apiDirectory;
+        }
     }
 }

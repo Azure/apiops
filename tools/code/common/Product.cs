@@ -1,160 +1,165 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record ProductName : NonEmptyString
+public sealed record ProductsUri : IArtifactUri
 {
-    private ProductName(string value) : base(value)
-    {
-    }
+    public Uri Uri { get; }
 
-    public static ProductName From(string value) => new(value);
+    public ProductsUri(ServiceUri serviceUri)
+    {
+        Uri = serviceUri.AppendPath("products");
+    }
 }
 
-public sealed record ProductDisplayName : NonEmptyString
+public sealed record ProductsDirectory : IArtifactDirectory
 {
-    private ProductDisplayName(string value) : base(value)
-    {
-    }
+    public static string Name { get; } = "products";
 
-    public static ProductDisplayName From(string value) => new(value);
-}
-
-public sealed record ProductsDirectory : DirectoryRecord
-{
-    private static readonly string name = "products";
+    public ArtifactPath Path { get; }
 
     public ServiceDirectory ServiceDirectory { get; }
 
-    private ProductsDirectory(ServiceDirectory serviceDirectory) : base(serviceDirectory.Path.Append(name))
+    public ProductsDirectory(ServiceDirectory serviceDirectory)
     {
+        Path = serviceDirectory.Path.Append(Name);
         ServiceDirectory = serviceDirectory;
     }
-
-    public static ProductsDirectory From(ServiceDirectory serviceDirectory) => new(serviceDirectory);
-
-    public static ProductsDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory) =>
-        name.Equals(directory?.Name) && serviceDirectory.PathEquals(directory.Parent)
-        ? new(serviceDirectory)
-        : null;
 }
 
-public sealed record ProductDirectory : DirectoryRecord
+public sealed record ProductName
 {
+    private readonly string value;
+
+    public ProductName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException($"Product name cannot be null or whitespace.", nameof(value));
+        }
+
+        this.value = value;
+    }
+
+    public override string ToString() => value;
+}
+
+public sealed record ProductUri : IArtifactUri
+{
+    public Uri Uri { get; }
+
+    public ProductUri(ProductName productName, ProductsUri productsUri)
+    {
+        Uri = productsUri.AppendPath(productName.ToString());
+    }
+}
+
+public sealed record ProductDirectory : IArtifactDirectory
+{
+    public ArtifactPath Path { get; }
+
     public ProductsDirectory ProductsDirectory { get; }
-    public ProductDisplayName ProductDisplayName { get; }
 
-    private ProductDirectory(ProductsDirectory productsDirectory, ProductDisplayName productDisplayName) : base(productsDirectory.Path.Append(productDisplayName))
+    public ProductDirectory(ProductName productName, ProductsDirectory productsDirectory)
     {
+        Path = productsDirectory.Path.Append(productName.ToString());
         ProductsDirectory = productsDirectory;
-        ProductDisplayName = productDisplayName;
-    }
-
-    public static ProductDirectory From(ProductsDirectory productsDirectory, ProductDisplayName productDisplayName) => new(productsDirectory, productDisplayName);
-
-    public static ProductDirectory? TryFrom(ServiceDirectory serviceDirectory, DirectoryInfo? directory)
-    {
-        var parentDirectory = directory?.Parent;
-        if (parentDirectory is not null)
-        {
-            var productsDirectory = ProductsDirectory.TryFrom(serviceDirectory, parentDirectory);
-
-            return productsDirectory is null ? null : From(productsDirectory, ProductDisplayName.From(directory!.Name));
-        }
-        else
-        {
-            return null;
-        }
     }
 }
 
-public sealed record ProductInformationFile : FileRecord
+public sealed record ProductInformationFile : IArtifactFile
 {
-    private static readonly string name = "productInformation.json";
+    public static string Name { get; } = "productInformation.json";
+
+    public ArtifactPath Path { get; }
 
     public ProductDirectory ProductDirectory { get; }
 
-    private ProductInformationFile(ProductDirectory productDirectory) : base(productDirectory.Path.Append(name))
+    public ProductInformationFile(ProductDirectory productDirectory)
     {
+        Path = productDirectory.Path.Append(Name);
         ProductDirectory = productDirectory;
-    }
-
-    public static ProductInformationFile From(ProductDirectory productDirectory) => new(productDirectory);
-
-    public static ProductInformationFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        if (name.Equals(file.Name))
-        {
-            var productDirectory = ProductDirectory.TryFrom(serviceDirectory, file.Directory);
-
-            return productDirectory is null ? null : new(productDirectory);
-        }
-        else
-        {
-            return null;
-        }
     }
 }
 
-public static class Product
+public sealed record ProductModel
 {
-    private static readonly JsonSerializerOptions serializerOptions = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
+    public required string Name { get; init; }
 
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("products")
-               .AppendPath(productName);
+    public required ProductContractProperties Properties { get; init; }
 
-    internal static Uri ListUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName) =>
-        Service.GetUri(serviceProviderUri, serviceName)
-               .AppendPath("products");
-
-    public static ProductName GetNameFromFile(ProductInformationFile file)
+    public sealed record ProductContractProperties
     {
-        var jsonObject = file.ReadAsJsonObject();
-        var product = Deserialize(jsonObject);
+        public bool? ApprovalRequired { get; init; }
+        public string? Description { get; init; }
+        public string? DisplayName { get; init; }
+        public ProductStateOption? State { get; init; }
+        public bool? SubscriptionRequired { get; init; }
+        public int? SubscriptionsLimit { get; init; }
+        public string? Terms { get; init; }
 
-        return ProductName.From(product.Name);
+        public JsonObject Serialize() =>
+            new JsonObject()
+                .AddPropertyIfNotNull("approvalRequired", ApprovalRequired)
+                .AddPropertyIfNotNull("description", Description)
+                .AddPropertyIfNotNull("displayName", DisplayName)
+                .AddPropertyIfNotNull("state", State?.Serialize())
+                .AddPropertyIfNotNull("subscriptionRequired", SubscriptionRequired)
+                .AddPropertyIfNotNull("subscriptionsLimit", SubscriptionsLimit)
+                .AddPropertyIfNotNull("terms", Terms);
+
+        public static ProductContractProperties Deserialize(JsonObject jsonObject) =>
+            new()
+            {
+                ApprovalRequired = jsonObject.TryGetBoolProperty("approvalRequired"),
+                Description = jsonObject.TryGetStringProperty("description"),
+                DisplayName = jsonObject.TryGetStringProperty("displayName"),
+                State = jsonObject.TryGetProperty("state")
+                                  .Map(ProductStateOption.Deserialize),
+                SubscriptionRequired = jsonObject.TryGetBoolProperty("subscriptionRequired"),
+                SubscriptionsLimit = jsonObject.TryGetIntProperty("subscriptionsLimit"),
+                Terms = jsonObject.TryGetStringProperty("terms")
+            };
+
+        public sealed record ProductStateOption
+        {
+            private readonly string value;
+
+            private ProductStateOption(string value)
+            {
+                this.value = value;
+            }
+
+            public static ProductStateOption Published => new("published");
+            public static ProductStateOption NotPublished => new("notPublished");
+
+            public override string ToString() => value;
+
+            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
+
+            public static ProductStateOption Deserialize(JsonNode node) =>
+                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
+                    ? value switch
+                    {
+                        _ when nameof(Published).Equals(value, StringComparison.OrdinalIgnoreCase) => Published,
+                        _ when nameof(NotPublished).Equals(value, StringComparison.OrdinalIgnoreCase) => NotPublished,
+                        _ => throw new JsonException($"'{value}' is not a valid {nameof(ProductStateOption)}.")
+                    }
+                        : throw new JsonException("Node must be a string JSON value.");
+        }
     }
 
-    public static Models.Product Deserialize(JsonObject jsonObject) =>
-        JsonSerializer.Deserialize<Models.Product>(jsonObject, serializerOptions) ?? throw new InvalidOperationException("Cannot deserialize JSON.");
+    public JsonObject Serialize() =>
+        new JsonObject()
+            .AddProperty("properties", Properties.Serialize());
 
-    public static JsonObject Serialize(Models.Product product) =>
-        JsonSerializer.SerializeToNode(product, serializerOptions)?.AsObject() ?? throw new InvalidOperationException("Cannot serialize to JSON.");
-
-    public static async ValueTask<Models.Product> Get(Func<Uri, CancellationToken, ValueTask<JsonObject>> getResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName, productName);
-        var json = await getResource(uri, cancellationToken);
-        return Deserialize(json);
-    }
-
-    public static IAsyncEnumerable<Models.Product> List(Func<Uri, CancellationToken, IAsyncEnumerable<JsonObject>> getResources, ServiceProviderUri serviceProviderUri, ServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var uri = ListUri(serviceProviderUri, serviceName);
-        return getResources(uri, cancellationToken).Select(Deserialize);
-    }
-
-    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, Models.Product product, CancellationToken cancellationToken)
-    {
-        var name = ProductName.From(product.Name);
-        var uri = GetUri(serviceProviderUri, serviceName, name);
-        var json = Serialize(product);
-        await putResource(uri, json, cancellationToken);
-    }
-
-    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, CancellationToken cancellationToken)
-    {
-        var uri = GetUri(serviceProviderUri, serviceName, productName);
-        await deleteResource(uri, cancellationToken);
-    }
+    public static ProductModel Deserialize(ProductName name, JsonObject jsonObject) =>
+        new()
+        {
+            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
+            Properties = jsonObject.GetJsonObjectProperty("properties")
+                                   .Map(ProductContractProperties.Deserialize)!
+        };
 }

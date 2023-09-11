@@ -1,74 +1,56 @@
-﻿using System;
-using System.IO;
-using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using Flurl;
+using System;
 
 namespace common;
 
-public sealed record ProductPolicyFile : FileRecord
+public sealed record ProductPoliciesUri : IArtifactUri
 {
-    private static readonly string name = "policy.xml";
+    public Uri Uri { get; }
 
-    public ProductDirectory ProductDirectory { get; }
-
-    private ProductPolicyFile(ProductDirectory productDirectory) : base(productDirectory.Path.Append(name))
+    public ProductPoliciesUri(ProductUri productUri)
     {
-        ProductDirectory = productDirectory;
-    }
-
-    public static ProductPolicyFile From(ProductDirectory productDirectory) => new(productDirectory);
-
-    public static ProductPolicyFile? TryFrom(ServiceDirectory serviceDirectory, FileInfo file)
-    {
-        if (name.Equals(file.Name))
-        {
-            var productDirectory = ProductDirectory.TryFrom(serviceDirectory, file.Directory);
-
-            return productDirectory is null ? null : new(productDirectory);
-        }
-        else
-        {
-            return null;
-        }
+        Uri = productUri.AppendPath("policies");
     }
 }
 
-public static class ProductPolicy
+public sealed record ProductPolicyName
 {
-    internal static Uri GetUri(ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName) =>
-        Product.GetUri(serviceProviderUri, serviceName, productName)
-               .AppendPath("policies")
-               .AppendPath("policy")
-               .SetQueryParameter("format", "rawxml");
+    private readonly string value;
 
-    public static async ValueTask<string?> TryGet(Func<Uri, CancellationToken, ValueTask<JsonObject?>> tryGetResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, CancellationToken cancellationToken)
+    public ProductPolicyName(string value)
     {
-        var uri = GetUri(serviceProviderUri, serviceName, productName);
-        var json = await tryGetResource(uri, cancellationToken);
-
-        return json?.GetJsonObjectProperty("properties")
-                    .GetStringProperty("value");
-    }
-
-    public static async ValueTask Put(Func<Uri, JsonObject, CancellationToken, ValueTask> putResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, string policyText, CancellationToken cancellationToken)
-    {
-        var json = new JsonObject
+        if (string.IsNullOrWhiteSpace(value))
         {
-            ["properties"] = new JsonObject
-            {
-                ["format"] = "rawxml",
-                ["value"] = policyText
-            }
-        };
+            throw new ArgumentException($"Product policy name cannot be null or whitespace.", nameof(value));
+        }
 
-        var uri = GetUri(serviceProviderUri, serviceName, productName);
-        await putResource(uri, json, cancellationToken);
+        this.value = value;
     }
 
-    public static async ValueTask Delete(Func<Uri, CancellationToken, ValueTask> deleteResource, ServiceProviderUri serviceProviderUri, ServiceName serviceName, ProductName productName, CancellationToken cancellationToken)
+    public override string ToString() => value;
+}
+
+public sealed record ProductPolicyUri : IArtifactUri
+{
+    public Uri Uri { get; }
+
+    public ProductPolicyUri(ProductPolicyName policyName, ProductPoliciesUri productPoliciesUri)
     {
-        var uri = GetUri(serviceProviderUri, serviceName, productName);
-        await deleteResource(uri, cancellationToken);
+        Uri = productPoliciesUri.AppendPath(policyName.ToString())
+                                .SetQueryParam("format", "rawxml")
+                                .ToUri();
+    }
+}
+
+public sealed record ProductPolicyFile : IArtifactFile
+{
+    public ArtifactPath Path { get; }
+
+    public ProductDirectory ProductDirectory { get; }
+
+    public ProductPolicyFile(ProductPolicyName policyName, ProductDirectory productDirectory)
+    {
+        Path = productDirectory.Path.Append($"{policyName}.xml");
+        ProductDirectory = productDirectory;
     }
 }

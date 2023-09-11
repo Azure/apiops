@@ -1,0 +1,137 @@
+parameters:
+  - name: API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH
+    type: string
+    displayName: Folder where the artifacts reside
+  - name: ENVIRONMENT
+    type: string
+    displayName: Environment to display
+  - name: RESOURCE_GROUP_NAME
+    type: string
+    displayName: Resource Group Name
+  - name: API_MANAGEMENT_SERVICE_NAME
+    type: string
+    displayName: APIM Instance Name
+    default: ""
+  - name: CONFIGURATION_YAML_PATH
+    type: string
+    displayName: Optional configuration file
+    default: ""
+  - name: COMMIT_ID
+    type: string
+    default: publish-artifacts-in-last-commit
+
+steps:
+  - script: echo Provided configuration was ${{ parameters.CONFIGURATION_YAML_PATH }}
+    displayName: Print the name of the yaml configuration file if provided
+  - script: echo Provided app service name was ${{ parameters.API_MANAGEMENT_SERVICE_NAME }}
+    displayName: Print the name of the apim service name if provided
+
+  - checkout: self
+    fetchDepth: 0
+
+  - task: AzureCLI@2
+    displayName: Set publishing variables
+    inputs:
+      azureSubscription: "$(SERVICE_CONNECTION_NAME)"
+      scriptType: pscore
+      scriptLocation: inlineScript
+      inlineScript: |
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = "Stop"
+        $VerbosePreference = "Continue"
+        $InformationPreference = "Continue"
+
+        Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_BEARER_TOKEN]$(az account get-access-token --query "accessToken" --output tsv)"
+        Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_CLIENT_ID]$env:servicePrincipalId"
+        Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_CLIENT_SECRET]$env:servicePrincipalKey"
+        Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_TENANT_ID]$env:tenantId"
+        if (-not $env:AZURE_SUBSCRIPTION_ID) {
+          $subscriptionCount = az account list --query "length([])" --output tsv
+          if ($subscriptionCount -eq 1) {
+              $subscriptionId = az account list --query "[0].id" --output tsv
+              Write-Host "Setting AZURE_SUBSCRIPTION_ID environment variable to: $subscriptionId"
+              Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_SUBSCRIPTION_ID]$($subscriptionId)"
+          } 
+          elseif ($subscriptionCount -gt 1) {
+              Write-Host "Multiple subscriptions are accessible. Please set the AZURE_SUBSCRIPTION_ID environment variable manually."
+              exit 1
+          }
+        }
+        else {
+          Write-Host "AZURE_SUBSCRIPTION_ID is already set to: $env:AZURE_SUBSCRIPTION_ID"
+        }
+      addSpnToEnvironment: true
+      failOnStandardError: true
+
+  # replacetokens@3 task will need to be installed to use
+  - ${{ if ne(parameters.CONFIGURATION_YAML_PATH, '') }}:
+      - task: qetza.replacetokens.replacetokens-task.replacetokens@3
+        displayName: "Perform namevalue secret substitution in ${{ parameters.CONFIGURATION_YAML_PATH }}"
+        inputs:
+          targetFiles: ${{ parameters.CONFIGURATION_YAML_PATH }}
+          encoding: "auto"
+          writeBOM: true
+          verbosity: "off"
+          actionOnMissing: "warn"
+          keepToken: false
+          tokenPrefix: "{#"
+          tokenSuffix: "#}"
+
+  - task: PowerShell@2
+    displayName: Fetch publisher
+    inputs:
+      targetType: "inline"
+      script: |
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = "Stop"
+        $VerbosePreference = "Continue"
+        $InformationPreference = "Continue"
+
+        Write-Information "Downloading publisher..."
+        $publisherFileName = "$(Agent.OS)" -like "*win*" ? "publisher.win-x64.exe" : "publisher.linux-x64.exe"
+        $uri = "https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/$publisherFileName"
+        $destinationFilePath = Join-Path "$(Agent.TempDirectory)" "publisher.exe"
+        Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
+
+        if ("$(Agent.OS)" -like "*linux*")
+        {
+          Write-Information "Setting file permissions..."
+          & chmod +x "$destinationFilePath"
+          if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
+        }
+
+        Write-Host "##vso[task.setvariable variable=PUBLISHER_FILE_PATH]$destinationFilePath"
+        Write-Information "Execution complete."
+      failOnStderr: true
+      pwsh: true
+
+  - task: PowerShell@2
+    displayName: Run publisher for ${{ parameters.ENVIRONMENT}} environment
+    inputs:
+      targetType: "inline"
+      script: |
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = "Stop"
+        $VerbosePreference = "Continue"
+        $InformationPreference = "Continue"
+
+        & "$(PUBLISHER_FILE_PATH)"                
+        if ($LASTEXITCODE -ne 0) { throw "Running publisher failed."}
+
+        Write-Information "Execution complete."
+      failOnStderr: true
+      pwsh: true
+    env:
+      AZURE_BEARER_TOKEN: $(AZURE_BEARER_TOKEN)
+      AZURE_CLIENT_ID: $(AZURE_CLIENT_ID)
+      AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+      AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+      AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
+      AZURE_RESOURCE_GROUP_NAME: ${{ parameters.RESOURCE_GROUP_NAME }}
+      API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: $(Build.SourcesDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+      ${{ if ne( parameters['API_MANAGEMENT_SERVICE_NAME'], '' ) }}:
+        API_MANAGEMENT_SERVICE_NAME: ${{ parameters.API_MANAGEMENT_SERVICE_NAME }}
+      ${{ if eq( parameters['COMMIT_ID'], 'publish-artifacts-in-last-commit' ) }}:
+        COMMIT_ID: $(Build.SourceVersion)
+      ${{ if ne( parameters['CONFIGURATION_YAML_PATH'], '' ) }}:
+        CONFIGURATION_YAML_PATH: ${{ parameters.CONFIGURATION_YAML_PATH }}

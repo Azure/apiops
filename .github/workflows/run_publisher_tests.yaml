@@ -1,0 +1,53 @@
+name: Run publisher integration tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run_tests:
+    name: Run tests
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 7.x
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
+          
+      - name: Run tests
+        uses: azure/powershell@v1
+        with:
+          inlineScript: |
+            Set-StrictMode -Version Latest
+            $ErrorActionPreference = "Stop"
+            $VerbosePreference = "Continue"
+            $InformationPreference = "Continue"
+
+            $env:PUBLISHER_ARTIFACTS_PATH = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "test-artifacts"
+            $env:EXTRACTOR_ARTIFACTS_PATH = Join-Path "${{ runner.temp }}" "extractor artifacts"
+            $env:PUBLISHER_PROJECT_PATH = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
+            $env:EXTRACTOR_PROJECT_PATH = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
+            $env:AZURE_BEARER_TOKEN = (Get-AzAccessToken).Token
+            $env:AZURE_CLOUD_ENVIRONMENT = "AzurePublicCloud"
+            $env:AZURE_API_MANAGEMENT_SERVICE_NAME = "apiops-$((New-Guid).Guid.Substring(0, 10))"
+            $env:AZURE_RESOURCE_GROUP_NAME = "${{ secrets.AZURE_RESOURCE_GROUP_NAME }}"
+
+            $testProjectPath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher.integration.tests" "publisher.integration.tests.csproj"
+            & dotnet test "$testProjectPath" --logger "console;verbosity=detailed"
+            if ($LASTEXITCODE -ne 0) { throw "Running test failed."}
+
+          azPSVersion: "latest"

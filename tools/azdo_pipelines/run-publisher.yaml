@@ -1,0 +1,67 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+    - tools/*
+
+parameters:
+  - name: API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH
+    type: string
+    displayName: Folder where the artifacts reside
+    default: "artifacts"
+  - name: COMMIT_ID
+    type: string
+    displayName: Choose "publish-all-artifacts-in-repo" only when you want to force republishing all artifacts (e.g. after build failure). Otherwise stick with the default behavior of "publish-artifacts-in-last-commit"
+    default: publish-artifacts-in-last-commit
+    values:
+      - publish-artifacts-in-last-commit
+      - publish-all-artifacts-in-repo
+
+variables:
+  - group: apim-automation
+  - name: System.Debug
+    value: true
+
+stages:
+  - stage: push_changes_to_Dev_APIM
+    displayName: Push changes to Dev APIM
+    jobs:
+      - job: push_changes_to_Dev_APIM
+        displayName: Push changes to Dev APIM
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - template: run-publisher-with-env.yaml
+            parameters:
+              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+              RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME)
+              API_MANAGEMENT_SERVICE_NAME : $(APIM_NAME)
+              ENVIRONMENT: "Dev"
+              COMMIT_ID: ${{ parameters.COMMIT_ID }}
+  - stage: push_changes_to_Prod_APIM
+    displayName: Push changes to Prod APIM
+    jobs:
+      - deployment: push_changes_to_Prod_APIM
+        displayName: Push changes to Prod APIM
+        variables:
+          #setting the testSecretValue to the prod resource group name as an example
+          testSecretValue: $(RESOURCE_GROUP_NAME_Prod)
+        pool:
+          vmImage: ubuntu-latest
+        # creates an environment if it doesn't exist
+        environment: 'Prod'
+        strategy:
+          # default deployment strategy, more coming...
+          runOnce:
+            deploy:
+               steps:
+                 - template: run-publisher-with-env.yaml
+                   parameters:
+                     API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+                     RESOURCE_GROUP_NAME : $(RESOURCE_GROUP_NAME_Prod)
+                     CONFIGURATION_YAML_PATH:  $(Build.SourcesDirectory)/configuration.prod.yaml
+                     ENVIRONMENT: "Prod"
+                     COMMIT_ID: ${{ parameters.COMMIT_ID }}
+              

@@ -1,0 +1,271 @@
+parameters:
+  - name: APIM_INSTANCE_NAME
+    displayName: APIM instance name
+    type: string
+  - name: RESOURCE_GROUP_NAME
+    displayName: APIM instance resource group name
+    type: string
+  - name: APIM_REPOSITORY_NAME
+    type: string
+    displayName: APIM repository for pull request
+  - name: API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH
+    type: string
+    displayName: Folder where you want to extract the artifacts
+  - name: TARGET_BRANCH_NAME
+    type: string
+    displayName: Target branch for pull request
+    default: main
+  - name: CONFIGURATION_YAML_PATH
+    type: string
+    displayName: Optional configuration file
+    values:
+      - Extract All
+      - configuration.extractor.yaml
+  - name: API_SPECIFICATION_FORMAT
+    type: string
+    displayName: API Specification Format
+    values:
+      - OpenAPIV3Yaml
+      - OpenAPIV3Json
+      - OpenAPIV2Yaml
+      - OpenAPIV2Json
+
+trigger: none
+
+variables:
+  - group: apim-automation
+  - name: System.Debug
+    value: true
+
+stages:
+  - stage: create_artifact_from_portal
+    displayName: Create artifact from portal
+    jobs:
+      - job: create_artifact_from_portal
+        displayName: Create artifact from portal
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureCLI@2
+            displayName: Set extraction variables
+            inputs:
+              azureSubscription: "$(SERVICE_CONNECTION_NAME)"
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                Set-StrictMode -Version Latest
+                $ErrorActionPreference = "Stop"
+                $VerbosePreference = "Continue"
+                $InformationPreference = "Continue"
+
+                Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_BEARER_TOKEN]$(az account get-access-token --query "accessToken" --output tsv)"
+                Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_CLIENT_ID]$env:servicePrincipalId"
+                Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_CLIENT_SECRET]$env:servicePrincipalKey"
+                Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_TENANT_ID]$env:tenantId"
+                
+                if (-not $env:AZURE_SUBSCRIPTION_ID) {
+                    $subscriptionCount = az account list --query "length([])" --output tsv
+                    if ($subscriptionCount -eq 1) {
+                        $subscriptionId = az account list --query "[0].id" --output tsv
+                        Write-Host "Setting AZURE_SUBSCRIPTION_ID environment variable to: $subscriptionId"
+                        Write-Host "##vso[task.setvariable issecret=true;variable=AZURE_SUBSCRIPTION_ID]$($subscriptionId)"
+                    } 
+                    elseif ($subscriptionCount -gt 1) {
+                        Write-Host "Multiple subscriptions are accessible. Please set the AZURE_SUBSCRIPTION_ID environment variable manually."
+                        exit 1
+                    }
+                }
+                else {
+                  Write-Host "AZURE_SUBSCRIPTION_ID is already set to: $env:AZURE_SUBSCRIPTION_ID"
+                }
+
+              addSpnToEnvironment: true
+              failOnStandardError: true
+          - task: PowerShell@2
+            displayName: Fetch extractor
+            inputs:
+              targetType: "inline"
+              script: |
+                Set-StrictMode -Version Latest
+                $ErrorActionPreference = "Stop"
+                $VerbosePreference = "Continue"
+                $InformationPreference = "Continue"
+
+                Write-Information "Downloading extractor..."
+                $extractorFileName = "$(Agent.OS)" -like "*win*" ? "extractor.win-x64.exe" : "extractor.linux-x64.exe"
+                $uri = "https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/$extractorFileName"
+                $destinationFilePath = Join-Path "$(Agent.TempDirectory)" "extractor.exe"
+                Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
+
+                if ("$(Agent.OS)" -like "*linux*")
+                {
+                  Write-Information "Setting file permissions..."
+                  & chmod +x "$destinationFilePath"
+                  if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
+                }
+
+                Write-Host "##vso[task.setvariable variable=EXTRACTOR_FILE_PATH]$destinationFilePath"
+                Write-Information "Execution complete."
+              failOnStderr: true
+              pwsh: true
+          - task: PowerShell@2
+            displayName: Run extractor
+            inputs:
+              targetType: "inline"
+              script: |
+                Set-StrictMode -Version Latest
+                $ErrorActionPreference = "Stop"
+                $VerbosePreference = "Continue"
+                $InformationPreference = "Continue"
+
+                & "$(EXTRACTOR_FILE_PATH)"                
+                if ($LASTEXITCODE -ne 0) { throw "Running extractor failed."}
+
+                Write-Information "Execution complete."
+              failOnStderr: true
+              pwsh: true
+            env:
+              AZURE_BEARER_TOKEN: $(AZURE_BEARER_TOKEN)
+              AZURE_CLIENT_ID: $(AZURE_CLIENT_ID)
+              AZURE_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+              AZURE_TENANT_ID: $(AZURE_TENANT_ID)
+              AZURE_SUBSCRIPTION_ID: $(AZURE_SUBSCRIPTION_ID)
+              AZURE_RESOURCE_GROUP_NAME: ${{ parameters.RESOURCE_GROUP_NAME }}
+              API_MANAGEMENT_SERVICE_NAME: ${{ parameters.APIM_INSTANCE_NAME }}
+              API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: $(Build.ArtifactStagingDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+              API_SPECIFICATION_FORMAT: ${{ parameters.API_SPECIFICATION_FORMAT }}
+              ${{ if ne( parameters['CONFIGURATION_YAML_PATH'], 'Extract All' ) }}:
+                CONFIGURATION_YAML_PATH: ${{ parameters.CONFIGURATION_YAML_PATH }}
+          #Running Super Linting Tool on the API(s) - START
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '12.x'
+            displayName: 'Install Node.js'
+
+          - script: |
+              npm install -g @stoplight/spectral-cli
+            displayName: 'Install Spectral'
+
+          - script: |
+              spectral lint --format stylish --format junit --output.junit $(Build.ArtifactStagingDirectory)/spectral-result.xml $(Build.ArtifactStagingDirectory)/${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}/apis/**/specification.{json,yaml,yml} -r https://raw.githubusercontent.com/connectedcircuits/devops-api-linter/main/rules.yaml
+            displayName: 'Run Spectral Linting'
+            continueOnError: true
+            failOnStderr: true
+          
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/spectral-result.xml'
+              searchFolder: $(Build.ArtifactStagingDirectory)
+              testRunTitle: 'Linting results for API $(Build.SourceBranchName)'
+              failTaskOnFailedTests: false
+          #Running Super Linting Tool on the API(s) - END
+          - task: PublishPipelineArtifact@1
+            displayName: Publish pipeline artifact
+            inputs:
+              targetPath: "$(Build.ArtifactStagingDirectory)"
+              artifactType: pipeline
+              artifactName: artifacts-from-portal
+  - stage: create_template_branch
+    displayName: Create template branch
+    jobs:
+      - job: create_artifacts_pull_request
+        displayName: Create artifacts pull request
+        pool:
+          vmImage: windows-latest
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: Download pipeline artifact
+            inputs:
+              source: current
+              artifactName: artifacts-from-portal
+              targetPath: $(Pipeline.Workspace)/artifacts-from-portal
+          - task: PowerShell@2
+            displayName: Create pull request
+            inputs:
+              targetType: "inline"
+              script: |
+                Set-StrictMode -Version Latest
+                $ErrorActionPreference = "Stop"
+                $VerbosePreference = "Continue"
+                $InformationPreference = "Continue"
+
+                Write-Information "Installing Azure DevOps extension..."
+                az extension add --name "azure-devops"
+                az devops configure --defaults organization="$(System.TeamFoundationCollectionUri)" project="$(System.TeamProject)"
+
+                Write-Information "Creating temporary folder..."
+                $temporaryFolderPath = Join-Path "$(Agent.TempDirectory)" "artifacts-from-portal"
+                New-Item -Path "$temporaryFolderPath" -ItemType "Directory"
+
+                $branchName = "${{ parameters.TARGET_BRANCH_NAME }}"
+                $temporaryBranchName = "artifacts-from-portal-build-$(Build.BuildId)"
+                $repositoryName = "${{ parameters.APIM_REPOSITORY_NAME }}"
+                Write-Information "Cloning branch $branchName in repository $repositoryName..."
+                $cloneUrl = az repos show --repository "$repositoryName" --query "remoteUrl" --output tsv
+                Write-Information "Clone URL is $cloneUrl"
+                git -c http.extraheader="AUTHORIZATION: Bearer $(System.AccessToken)" clone --branch "$branchName" --depth 1 "$cloneUrl" "$temporaryFolderPath"
+                if ($LASTEXITCODE -ne 0) { throw "Cloning branch $branchName in repository $repositoryName failed." }
+
+                Write-Information "Creating temporary branch $temporaryBranchName from $branchName..."
+                git -C "$temporaryFolderPath" checkout -b "$temporaryBranchName" "$branchName"
+                if ($LASTEXITCODE -ne 0) { throw "Creating temporary branch $temporaryBranchName from $branchName failed." }
+
+                Write-Information "Creating artifacts folder..."
+                $artifactFolderPath = Join-Path "$temporaryFolderPath" "${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}"
+                if ((Test-Path -Path "$artifactFolderPath") -eq $false) {
+                    New-Item -Path "$artifactFolderPath" -ItemType "Directory"
+                }
+
+                Write-Information "Synchronizing artifacts..."
+                $extractorArtifactsFolderPath = Join-Path "$(Pipeline.Workspace)" "artifacts-from-portal" ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
+                if ("$(Agent.OS)" -like "*win*") {
+                    & robocopy "$extractorArtifactsFolderPath" "$artifactFolderPath" /zb /mir /mt
+                    if ($LASTEXITCODE -gt 7) { throw "Setting $artifactFolderPath to contents of $extractorArtifactsFolderPath failed." }
+                }
+                else {
+                    & rsync --verbose --archive --delete --force --recursive "$extractorArtifactsFolderPath/" "$artifactFolderPath/"
+                    if ($LASTEXITCODE -ne 0) { throw "Setting $artifactFolderPath to contents of $extractorArtifactsFolderPath failed." }
+                }
+
+                Write-Information "Validating that changes exist to be published..."
+                $gitStatus = git -C "$temporaryFolderPath" status --porcelain
+                if ($LASTEXITCODE -ne 0) { throw "Getting git status failed." }
+                if ([string]::IsNullOrWhiteSpace($gitStatus)) {
+                    Write-Information "No changes exist to be published."
+                    return
+                }
+                
+                Write-Information "Setting git user information..."
+                git config --global user.email "azuredevopsagent@azuredevops.com"
+                git config --global user.name "Azure Devops agent"
+
+                Write-Information "Adding changes..."
+                git -C "$temporaryFolderPath" add --all
+                if ($LASTEXITCODE -ne 0) { throw "Adding Git changes failed." }
+
+                Write-Information "Committing changes"
+                $commitOutput = git -C "$temporaryFolderPath" commit --message "Initial commit"
+                if ($LASTEXITCODE -ne 0) { 
+                  if ($commitOutput.Contains("nothing to commit, working tree clean")) {
+                    Write-Information "No changes exist to be published."
+                    return
+                  }
+                  throw "Committing Git changes failed." 
+                }
+
+                Write-Information "Pushing changes"
+                git -C "$temporaryFolderPath" -c http.extraheader="AUTHORIZATION: Bearer $(System.AccessToken)" push --set-upstream origin "$temporaryBranchName"
+                if ($LASTEXITCODE -ne 0) { throw "Pushing Git changes failed." }
+
+                Write-Information "Creating pull request..."
+                az repos pr create --source-branch "$temporaryBranchName" --target-branch "$branchName" --title "Merging artifacts from portal (Build $(Build.BuildId))" --squash --delete-source-branch "true" --repository "$repositoryName"
+                if ($LASTEXITCODE -ne 0) { throw "Creating pull request failed." }
+
+                Write-Information "Deleting temporary folder contents..."
+                Remove-Item -Path "$temporaryFolderPath" -Recurse -Force
+
+                Write-Information "Execution complete."
+              pwsh: true
+            env:
+              AZURE_DEVOPS_EXT_PAT: "$(System.AccessToken)"

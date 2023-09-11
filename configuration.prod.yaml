@@ -1,30 +1,55 @@
-apimServiceName: [your prod apim instance name goes here]
+apimServiceName: [prod or any other target environment apim instance name goes here]
 namedValues:
-  - name: [name goes here. e.g. environment or SearchEngineBackendURL]
-    displayName: [display name  goes here]
-    value: [replacement value in the target environment. e.g. name value can be dev in dev environment and prod in the prod environment]
+  - name: environment
+    properties:
+      displayName: environment
+      value: "https://www.search2.com"
+  - name: mysecretvalue
+    properties:
+      displayName: mysecretvalue
+      keyVault:
+        identityClientId: [identity client id goes here]
+        secretIdentifier: [your url here]
+  - name: testSecret
+    properties:
+      displayName: testSecret
+      value: "{#testSecretValue#}"
+  - name: helloworldfromfuncapp-key
+    properties:
+      displayName: helloworldfromfuncapp-key
+      value: "{#helloworldfromfuncappkey#}"
+  - name: 634e022983908257b35630b0
+    properties:
+      displayName: helloworldfromlogicapp_manual-invoke_634e022983908257b35630b0
+      value: "{#helloworldfromlogicapp#}"  
 loggers:
-    - name: [suorce environment app insight name goes here. e.g. apim-lab-insights]
-      loggerType: applicationInsights
-      description: [app insight description goes here]
-      resourceId: "/subscriptions/[Azure subscription id for the target environment goes here]/resourceGroups/
-                   [resource group name for the target environment goes here]/providers/microsoft.insights/components/
-                   [suorce environment app insight name goes here. e.g. apim-lab-prod-insights]"
-      credentials:
-        instrumentationKey: "{{destination environment namevalue key for the application insights goes here. e.g. Logger-Credentials--62390d98217d201158b4bfb3}}"
-      isBuffered: true
+    - name: apim-lab-insights
+      properties:
+        loggerType: applicationInsights
+        description: prod application insights
+        resourceId: "/subscriptions/[your guid here]/resourceGroups/
+                   rg-apim-lab-prod/providers/microsoft.insights/components/apim-lab-prod-insights"
+        credentials:
+          instrumentationKey: "{{Logger-Credentials--62825ade46346113589affc1}}"
+        isBuffered: true
 diagnostics:
    - name: applicationinsights
-     verbosity: Error
+     properties:
+       verbosity: Error
+       loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
+backends:
+  - name: helloworldfromfuncapp
+    properties:
+      url: "https://helloworldfromprodfuncapp.azurewebsites.net/api"
+      resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Web/sites/helloworldfromprodfuncapp"
+  - name: LogicApp_helloworldfromlogicapp_rg-apim-lab_77fadbdc74f14ce88962b34400a1f170
+    properties:
+      url: "https://prod-75.eastus.logic.azure.com/workflows/[guid goes here]/triggers"
+      resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Logic/workflows/helloworldfromprodlogicapp"
 apis:
-  - name: "[target api to apply application insights to]"
+  - name: demo-conference-api
     diagnostics:
       - name: applicationinsights
-        verbosity: Error
-        loggerId: "/subscriptions/[Azure subscription id for the target environment goes here]/resourceGroups/[resource group name for the target environment goes here]/
-                   providers/Microsoft.ApiManagement/service/[apim instance name for the target environment goes here]/loggers/[suorce environment app insight name goes here]"
-        
-
-
-
-        
+        properties:
+          verbosity: Error
+          loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
