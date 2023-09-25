@@ -23,7 +23,7 @@ namedValues:
       displayName: helloworldfromlogicapp_manual-invoke_634e022983908257b35630b0
       value: "{#helloworldfromlogicapp#}"  
 loggers:
-    - name: [source (not destination) application insights name that you are overriding. Refer to the [wiki](https://github.com/Azure/apiops/wiki/APIM-resources#loggers) on options to override the logger name in higher environment]
+    - name: [source (not destination) application insights name that you are overriding. Refer to the wiki at https://github.com/Azure/apiops/wiki/APIM-resources#loggers on options to override the logger name in higher environment]
       properties:
         loggerType: applicationInsights
         description: prod application insights
