@@ -23,12 +23,11 @@ namedValues:
       displayName: helloworldfromlogicapp_manual-invoke_634e022983908257b35630b0
       value: "{#helloworldfromlogicapp#}"  
 loggers:
-    - name: apim-lab-insights
+    - name: [source (not destination) application insights name that you are overriding. Refer to the [wiki](https://github.com/Azure/apiops/wiki/APIM-resources#loggers) on options to override the logger name in higher environment]
       properties:
         loggerType: applicationInsights
         description: prod application insights
-        resourceId: "/subscriptions/[your guid here]/resourceGroups/
-                   rg-apim-lab-prod/providers/microsoft.insights/components/apim-lab-prod-insights"
+        resourceId: "/subscriptions/[your guid here]/resourceGroups/rg-apim-lab-prod/providers/microsoft.insights/components/[destination environment application insights name]"
         credentials:
           instrumentationKey: "{{Logger-Credentials--62825ade46346113589affc1}}"
         isBuffered: true
@@ -36,7 +35,7 @@ diagnostics:
    - name: applicationinsights
      properties:
        verbosity: Error
-       loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/apim-lab-prod-insights"
+       loggerId: "/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.ApiManagement/service/apim-prod-wk-05102022/loggers/[application insights name you chose for the destination environment]"
 backends:
   - name: helloworldfromfuncapp
     properties:
