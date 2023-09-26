@@ -59,7 +59,7 @@ internal static class Git
 
     private static ImmutableDictionary<CommitStatus, ImmutableList<FileInfo>> ParseDiffTreeOutput(string output, DirectoryInfo baseDirectory)
     {
-        return output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+        return output.Split("\n", StringSplitOptions.RemoveEmptyEntries)
                      .Choose<string, (CommitStatus Status, FileInfo File)>(line =>
                      {
                          var commitStatus = TryGetCommitStatusFromOutputLine(line);
