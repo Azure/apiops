@@ -1,0 +1,33 @@
+name: Auto Comment on New Issues
+
+on:
+  issues:
+    types:
+      - opened
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+
+    - name: Comment on New Issue
+      uses: actions/github-script@v4
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const { owner, repo } = context.repo;
+          const issueNumber = context.payload.issue.number;
+          const commentBody = `
+                Thank you for opening this issue! Please be patient while we will look into it and get back to you as this is an open source project. In the meantime make sure you take a look at the [closed issues](https://github.com/Azure/apiops/issues?q=is%3Aissue+is%3Aclosed) in case your question has already been answered. Don't forget to provide any additional information if needed (e.g. scrubbed logs, detailed feature requests,etc.).
+                Whenever it's feasible, please don't hesitate to send a Pull Request (PR) our way. We'd greatly appreciate it, and we'll gladly assess and incorporate your changes.
+          `;
+
+          github.issues.createComment({
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: commentBody,
+          });

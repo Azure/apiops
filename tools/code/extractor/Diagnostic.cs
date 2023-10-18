@@ -1,17 +1,21 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+
 
 namespace extractor;
 
 internal static class Diagnostic
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? diagnosticNamesToExport, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
+                // Filter out diagnostics that should not be exported
+                .Where(diagnosticName => ShouldExport(diagnosticName, diagnosticNamesToExport))
                 .ForEachParallel(async diagnosticName => await Export(serviceDirectory, serviceUri, diagnosticName, getRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
@@ -23,6 +27,12 @@ internal static class Diagnostic
 
         return diagnosticJsonObjects.Select(json => json.GetStringProperty("name"))
                                     .Select(name => new DiagnosticName(name));
+    }
+
+    private static bool ShouldExport(DiagnosticName diagnosticName, IEnumerable<string>? diagnosticNamesToExport)
+    {
+        return diagnosticNamesToExport is null
+               || diagnosticNamesToExport.Any(diagnosticNameToExport => diagnosticNameToExport.Equals(diagnosticName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, DiagnosticName diagnosticName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)

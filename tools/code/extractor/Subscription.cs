@@ -1,5 +1,6 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,9 +10,11 @@ namespace extractor
 {
     internal class Subscription
     {
-        public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+        public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? subscriptionNamesToExport, CancellationToken cancellationToken)
         {
             await List(serviceUri, listRestResources, cancellationToken)
+                    // Filter out diagnostics that should not be exported   
+                    .Where(subscriptionName => ShouldExport(subscriptionName, subscriptionNamesToExport))
                     .ForEachParallel(async subscriptionName => await Export(serviceDirectory, serviceUri, subscriptionName, getRestResource, logger, cancellationToken),
                                      cancellationToken);
         }
@@ -22,6 +25,12 @@ namespace extractor
             var subscriptionJsonObjects = listRestResources(subscriptionsUri.Uri, cancellationToken);
             return subscriptionJsonObjects.Select(json => json.GetStringProperty("name"))
                                         .Select(name => new SubscriptionName(name));
+        }
+
+        private static bool ShouldExport(SubscriptionName subscriptionName, IEnumerable<string>? subscriptionNamesToExport)
+        {
+            return subscriptionNamesToExport is null
+                   || subscriptionNamesToExport.Any(subscriptionNameToExport => subscriptionNameToExport.Equals(subscriptionName.ToString(), StringComparison.OrdinalIgnoreCase));
         }
 
         private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, SubscriptionName subscriptionName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)

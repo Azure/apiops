@@ -1,0 +1,34 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch Extractor",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/tools/code/extractor/bin/Debug/net7.0/extractor.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/tools/code/extractor",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "envFile": "${workspaceFolder}/tools/code/.env.extractor"
+        },
+        {
+            "name": "Launch Publisher",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/tools/code/publisher/bin/Debug/net7.0/publisher.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/tools/code/publisher",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "envFile": "${workspaceFolder}/tools/code/.env.publisher"
+        },
+        {
+            "name": ".NET Core Attach",
+            "type": "coreclr",
+            "request": "attach"
+        }
+    ]
+}

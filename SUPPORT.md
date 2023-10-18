@@ -1,25 +1,36 @@
-# TODO: The maintainer of this repo has not yet edited this file
+# Support Documentation
 
-**REPO OWNER**: Do you want Customer Service & Support (CSS) support for this product/project?
+## Filing Issues and Seeking Assistance  
 
-- **No CSS support:** Fill out this template with information about how to file issues and get help.
-- **Yes CSS support:** Fill out an intake form at [aka.ms/spot](https://aka.ms/spot). CSS will work with/help you to determine next steps. More details also available at [aka.ms/onboardsupport](https://aka.ms/onboardsupport).
-- **Not sure?** Fill out a SPOT intake as though the answer were "Yes". CSS will help you decide.
+We use GitHub Issues as our primary platform for tracking bugs and discussing new features. To avoid redundancy, please look through existing issues before submitting a new one. If you can't find what you're looking for, feel free to open a new issue.
 
-*Then remove this first heading from this SUPPORT.MD file before publishing your repo.*
+## Support Policy  
 
-# Support
+Though this project is an open-source initiative, it does not receive formal support from Microsoft's APIM product team. However, Microsoft Cloud Solution Architects are actively involved in maintaining and overseeing the project. They are in regular communication with the APIM product team, giving them early insights into the product's roadmap.
 
-## How to file issues and get help  
+---
 
-This project uses GitHub Issues to track bugs and feature requests. Please search the existing 
-issues before filing new issues to avoid duplicates.  For new issues, file your bug or 
-feature request as a new Issue.
+# Project Support Overview
 
-For help and questions about using this project, please **REPO MAINTAINER: INSERT INSTRUCTIONS HERE 
-FOR HOW TO ENGAGE REPO OWNERS OR COMMUNITY FOR HELP. COULD BE A STACK OVERFLOW TAG OR OTHER
-CHANNEL. WHERE WILL YOU HELP PEOPLE?**.
+Thank you for your interest in our open-source project! We're committed to assisting you with any questions, issues, or contributions you may have.
 
-## Microsoft Support Policy  
+## How to Get Help
 
-Support for this **PROJECT or PRODUCT** is limited to the resources listed above.
+For reporting bugs, suggesting features, or seeking assistance, the first place to go is the project's [issue tracker](https://github.com/Azure/apiops/issues) on GitHub. Before creating a new issue, please review existing ones to see if someone else has already raised your concern.
+
+## Making Contributions
+
+We highly value community contributions! If you're interested in contributing code, documentation, or other resources, please consult our [contributing guidelines](CONTRIBUTING.md) for directions on how to get started.
+
+## How to Contact the Maintainers
+
+While there is no formal support from Microsoft's APIM product team, the project maintainers are diligent about monitoring the GitHub [issue tracker](https://github.com/Azure/apiops/issues). This is the most effective way to communicate with them.
+
+## Advance Notice on Future Developments
+
+As Microsoft Cloud Solution Architects are closely aligned with the APIM product team, they have the advantage of early access to the product roadmap. This enables them to guide the project's development more effectively.
+
+Please be mindful that the project is run on a best-effort basis. Response times can vary depending on the maintainers' availability. We appreciate your understanding and are grateful for your contributions to the success of this open-source project!
+
+Sincerely,  
+The Project Team

@@ -1,4 +1,5 @@
 using common;
+using Flurl;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Extensions;
@@ -269,8 +270,16 @@ internal static class Api
         logger.LogInformation("Putting API {apiName}...", apiName);
 
         var apiUri = GetApiUri(apiName, serviceUri);
+        var putUri = apiUri.Uri;
+
+        // For WSDL files, we need to set the import query parameter to true.
+        if (specificationFile is ApiSpecificationFile.Wsdl)
+        {
+            putUri = putUri.SetQueryParam("import", "true").ToUri();
+        }
+
         var apiJson = await GetApiJson(apiName, apiInformationFile, specificationFile, configurationApiJson, cancellationToken);
-        await putRestResource(apiUri.Uri, apiJson, cancellationToken);
+        await putRestResource(putUri, apiJson, cancellationToken);
 
         // Handle GraphQL specification
         if (specificationFile is ApiSpecificationFile.GraphQl graphQlSpecificationFile)
@@ -310,7 +319,7 @@ internal static class Api
 
     private static async ValueTask<JsonObject> GetApiSpecificationJson(ApiSpecificationFile specificationFile, CancellationToken cancellationToken)
     {
-        return new JsonObject
+        var json = new JsonObject
         {
             ["properties"] = new JsonObject
             {
@@ -330,12 +339,23 @@ internal static class Api
                 }
             }
         };
+
+        if (specificationFile is ApiSpecificationFile.Wsdl)
+        {
+            json["properties"]!["apiType"] = "soap";
+        }
+
+        return json;
     }
 
     private static async ValueTask<string> GetOpenApiV3SpecificationText(ApiSpecificationFile.OpenApi openApiSpecificationFile)
     {
         using var fileStream = openApiSpecificationFile.ReadAsStream();
         var readResult = await new OpenApiStreamReader().ReadAsync(fileStream);
+        if (readResult.OpenApiDiagnostic.Errors.Any())
+        {
+            throw new IOException($"Could not read OpenAPI specification file {openApiSpecificationFile.Path}.");
+        }
         return readResult.OpenApiDocument.Serialize(openApiSpecificationFile.Version, openApiSpecificationFile.Format);
     }
 

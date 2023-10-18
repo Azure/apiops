@@ -184,10 +184,13 @@ public static class Program
         {
             ApiNamesToExport = GetApiNamesToExport(configuration),
             LoggerNamesToExport = GetLoggerNamesToExport(configuration),
+            DiagnosticNamesToExport = GetDiagnosticNamesToExport(configuration),
             NamedValueNamesToExport = GetNamedValueNamesToExport(configuration),
             ProductNamesToExport = GetProductNamesToExport(configuration),
             BackendNamesToExport = GetBackendNamesToExport(configuration),
             TagNamesToExport = GetTagNamesToExport(configuration),
+            SubscriptionNamesToExport = GetSubscriptionNamesToExport(configuration),
+            PolicyFragmentNamesToExport = GetPolicyFragmentNamesToExport(configuration),
             DefaultApiSpecification = GetApiSpecification(configuration),
             ApplicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>(),
             DownloadResource = provider.GetRequiredService<DownloadResource>(),
@@ -208,6 +211,12 @@ public static class Program
     private static IEnumerable<string>? GetLoggerNamesToExport(IConfiguration configuration)
     {
         return configuration.TryGetSection("loggerNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+
+    private static IEnumerable<string>? GetDiagnosticNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("diagnosticNames")
                            ?.Get<IEnumerable<string>>();
     }
 
@@ -232,6 +241,17 @@ public static class Program
     private static IEnumerable<string>? GetTagNamesToExport(IConfiguration configuration)
     {
         return configuration.TryGetSection("tagNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+
+    private static IEnumerable<string>? GetSubscriptionNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("subscriptionNames")
+                           ?.Get<IEnumerable<string>>();
+    }
+    private static IEnumerable<string>? GetPolicyFragmentNamesToExport(IConfiguration configuration)
+    {
+        return configuration.TryGetSection("policyFragmentNames")
                            ?.Get<IEnumerable<string>>();
     }
 

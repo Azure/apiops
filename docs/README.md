@@ -1,4 +1,3 @@
-
 <img src="assets/images/apim-logo-transparent.png">
 
 #  Code Of Conduct
@@ -11,7 +10,20 @@ Before we dive into learning about the APIOPs tool we would like to share some g
 - Please read this guide before opening any issues
 - This is an open source project and hence we are always accepting contributions from the community so make sure you fork and submit your PRs. We take them seriously and they help us make the tool better
 
+## Video Guide
+
+Please not that the videos below serve as a good starting point but it is recommended to spend some time reading the detailed documentation found [under the Github page](https://azure.github.io/apiops/) and [the wiki](https://github.com/Azure/apiops/wiki).
+
+Check this video for a 360 overview of the APIOPS tool. 
+
+[![IMAGE ALT TEXT](http://img.youtube.com/vi/ID2eGm48oWc/0.jpg)](http://www.youtube.com/watch?v=ID2eGm48oWc "Video Title")
+
+Check this video for a step by step guide that demonstrates setting up a Dev,QA, and Prod envirionments in Azure DevOps. Keep in mind that we also support Github even though its not demonstrated in this video.
+
+[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/8ZIt_DlNCoo/0.jpg)](https://www.youtube.com/watch?v=8ZIt_DlNCoo)
+
 #  Versions
+
 Please note that starting with release V.3.0.0 we changed the way the updates to the system get delivered. Thus when reading the docs you will notice that there are some sections that are designated with the <= V.3.0.0 and >= V.3.0.0 suffixes to distinguish between the old and the new update delivery methodology. We recommend switching to the new methodology whenever possible as it greatly simplifies fetching the latest version of the code. 
 
 ## Old method (version < 3.0.0)
@@ -34,6 +46,8 @@ Each time a new release was pushed you would have to:
 
 APIOps applies the concepts of DevOps to Azure API Management. This enables everyone involved in the lifecycle of API design, development, and deployment with self-service and automated tools to ensure the quality of the specifications and APIs that they're building. APIOps places the Azure API Management infrastructure under version control to achieve these goals. Rather than making changes directly in API Management portal, most operations happen through code changes that can be reviewed and audited. In this section, we include links to both a complementary Guide and Wiki to get you started with the tool.
 
+![](assets/gifs/ApiOps.gif)
+
 ## Complementary Guide
 
 This guide is designed to bring a 400-level understanding of automating API deployments in Azure Api Management. This is meant to be a hands-on lab experience, all instructions are provided, but a basic level of understanding of apis, devops and gitops is expected.
@@ -41,9 +55,11 @@ This guide will guide you through the concept of APIOps. It applies the concepts
 [This Guide is delivered using Github Pages and Just-The-Docs theme](https://azure.github.io/apiops/).
 
 ## Wiki
+
 The Wiki covers all of our supported resources. Think about it as being more resource-focused with deeper dives, as opposed to the aforementioned guide which is more scenario-based and holistic. So in essence you need to read both to have a successful adoption of the tool. [The wiki can be found on wiki tab within this repo or by following this link](https://github.com/Azure/apiops/wiki).
 
 # Roadmap
+
 To stay up-to-date with the APIOps roadmap, please follow it closely.
 To stay updated on the APIOps roadmap, please make sure to monitor it closely [here](https://github.com/Azure/apiops/projects?query=is%3Aopen).
 
@@ -60,6 +76,10 @@ provided by the bot. You will only need to do this once across all repos using o
 This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
 For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
 contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+# Supporting Tools
+
+While the APIOPs tool does not have built-in support for promoting the migration of the APIM Dev Portal, there is another tool available that offers such functionality. We suggest you explore that tool which can be found [here](https://github.com/seenu433/apim-dev-portal-migration).
 
 # Trademarks
 
