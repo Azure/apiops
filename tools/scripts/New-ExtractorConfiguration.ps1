@@ -107,7 +107,7 @@ if ($apis.Count -gt 0) {
 
 # Output the list of API tags
 if ($tags.Count -gt 0) {
-    [void]$StringBuilder.AppendLine("`napiTagNames:")
+    [void]$StringBuilder.AppendLine("`ntagNames:")
     foreach ($tag in $tags) {
         [void]$StringBuilder.AppendLine("  - $($tag)")
     }
