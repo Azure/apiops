@@ -292,7 +292,7 @@ public static class Program
                                          .AppendPathSegment(configuration.GetValue("AZURE_RESOURCE_GROUP_NAME"))
                                          .AppendPathSegment("providers/Microsoft.ApiManagement/service")
                                          .AppendPathSegment(serviceName)
-                                         .SetQueryParam("api-version", configuration.GetValue("ARM-API-VERSION", "2022-04-01-preview"))
+                                         .SetQueryParam("api-version", configuration.GetValue("ARM_API_VERSION", "2022-04-01-preview"))
                                          .ToUri();
 
         return new ServiceUri(uri);
