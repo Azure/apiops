@@ -4,27 +4,75 @@ has_children: false
 nav_order: 7
 ---
 # Supporting Independent API Teams
-So far all the guidance has made the assumption that all apis will be managed by a centralized team and thus all apis will be extracted into a single repository. In this section we will discuss the detailed involved in setting up a decentralized apim instance. Basically, the scenario involves having different teams managing different apis within an APIM instance.
-## Extracting Select APIs
-The extractor tool supports extracting select apis which enables the following scenarios:
-- Enabling different teams to work with different set of apis. For example team A can work on api1 and api2 while team B can work on api3 and api4
-- Enables developers to experiment with an api on the azure portal without extracting it the next time the extractor tool runs. This allows the development team to safely experiment with apis in the Azure portal before its ready to be promoted to higher environments
+So far all the guidance has made the assumption that all apis will be managed by a centralized team and thus all apis will be extracted into a single repository. In this section we will discuss the details involved in setting up a decentralized apim instance. Basically, the scenario involves having different teams managing different apis within an APIM instance. 
 
-In order to signal to the extractor tool to extract select apis you need to provide a configuration file (either yaml or json based) which includes the list of apis to extract. Following the example above you can instruct the extractor tool to extract api1 and api2 by providing the following configuration file:
+> **Note**
+> The guidance below could also be used for cases where you are trying to extract select artifacts.
+
+## Extracting Select Artifacts
+The extractor tool supports extracting select artifacts which enables the following scenarios:
+- Enabling different teams to work with different set of artifacts. For example team A can work on api1 and api2 while team B can work on api3 and api4
+- Enables developers to experiment with an artifact on the azure portal without extracting it the next time the extractor tool runs. This allows the development team to safely experiment with apis in the Azure portal before its ready to be promoted to higher environments
+
+In order to signal to the extractor tool to extract select artifacts you need to provide a configuration file (either yaml or json based) which includes the list of apis to extracted. Following the example above you can instruct the extractor tool to extract api1 and api2 by providing the following configuration file:
 
 ```yaml
 apiNames:
   - api1
   - api2
 ```
-Here is the Azure Devops extractor pipeline windows offering either full extraction or selective api extraction through the configuration file: <br />
-![extractor pipeline](../../assets/images/Extractor_Configuration.png)
 
+Here are some rules to keep in minding when constructing your configuration.extractor.yaml file:
 
+- An empty ``apiNames`` section in configuration (``apiNames:[]``) means no apis will be extracted.
+- A missing ``apiNames`` section in configuration means all apis will be extracted.
+- A ``apiNames`` section with values means only apis with those names will be extracted.
+
+Here is a complete list of all the supported artifacts that can be specified in the configuration.extractor.yaml file
+
+```yaml
+ apiNames:
+  - apiName1
+  - apiName2
+
+ backendNames:
+  - backendName1
+  - backendName2
+
+ diagnosticNames:
+ - diagnosticName1
+ - diagnosticName2
+
+ loggerNames:
+  - loggerName1
+  - loggerName2
+
+ namedValueNames:
+  - namedValueName1
+  - namedValueName2
+
+ productNames:
+  - productName1
+  - productName2
+
+ subscriptionNames:
+ - subscriptionName1
+ - subscriptionName2
+
+ tagNames:
+  - tagName1
+  - tagName2
+  
+ policyFragmentNames:
+  - policyFragment1
+  - policyFragment2
+```
 
 Here is a link to a sample  [**extractor configuration file**](https://github.com/Azure/apiops/blob/main/configuration.extractor.yaml).
 
 
+Here is the Azure Devops extractor pipeline windows offering either full extraction or selective api extraction through the configuration file: <br />
+![extractor pipeline](../../assets/images/Extractor_Configuration.png)
 
 If the extractor successfully picks up the configuration file then you will notice that apis folder will only include the apis specified in the configuration file.
 

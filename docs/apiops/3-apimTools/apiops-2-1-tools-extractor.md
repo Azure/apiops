@@ -94,3 +94,10 @@ The extractor will export the artifacts listed below.
 | Operation policy | ./apis/``api_name``/operations/``operation_name``/policy.xml |
 | tags | ./tags/``tag_name``
 | backends | ./backends/``backend_name``
+
+
+### Extracting Select Artifacts
+There are cases where you may want to extract select artifacts (e.g. specific apis, products, etc.) instead of extracting everything. This could be a result of having a requirement to promote specific artifacts across environments or as a result of supporting multiple teams where each team may be responsible for select artifacts. ApiOPS supports this feature and you can find the details in the "Supporting Independent API Teams" [section](../1-supportedScenarios/index.md). 
+
+> **Note**
+> We recommend looking into [workspaces](https://learn.microsoft.com/en-us/azure/api-management/workspaces-overview) in the future which allows decentralized API development teams to manage and productize their own APIs, while a central API platform team maintains the API Management infrastructure. Each workspace contains APIs, products, subscriptions, and related entities that are accessible only to the workspace collaborators. Access is controlled through Azure role-based access control (RBAC). `ApiOPS` will bring support for workspaces when it becomes generally available.
