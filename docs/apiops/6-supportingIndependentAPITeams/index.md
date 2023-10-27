@@ -4,10 +4,10 @@ has_children: false
 nav_order: 7
 ---
 # Supporting Independent API Teams
-So far all the guidance has made the assumption that all apis will be managed by a centralized team and thus all apis will be extracted into a single repository. In this section we will discuss the details involved in setting up a decentralized apim instance. Basically, the scenario involves having different teams managing different apis within an APIM instance. 
+So far all the guidance has made the assumption that all artifacts will be managed by a centralized team and thus all artifacts will be extracted into a single repository. In this section we will discuss the details involved in setting up a decentralized apim instance. Basically, the scenario involves having different teams managing different apis within an APIM instance. 
 
 > **Note**
-> The guidance below could also be used for cases where you are trying to extract select artifacts.
+> The guidance also applies to cases where you are trying to extract select artifacts from an instance managed by a single team.
 
 ## Extracting Select Artifacts
 The extractor tool supports extracting select artifacts which enables the following scenarios:
