@@ -74,7 +74,7 @@ Here is a link to a sample  [**extractor configuration file**](https://github.co
 Here is the Azure Devops extractor pipeline windows offering either full extraction or selective api extraction through the configuration file: <br />
 ![extractor pipeline](../../assets/images/Extractor_Configuration.png)
 
-If the extractor successfully picks up the configuration file then you will notice that apis folder will only include the apis specified in the configuration file.
+If the extractor successfully picks up the configuration file then you will notice that artifacts folder will only include the artifacts specified in the configuration file (e.g. specific apis and loggers).
 
 ## DevOps Process For Supporting Independent API Teams
 Although each APIM DevOps team will have their own internal process, we would like to recommend a baseline approach for supporting independent API teams. This is by no means the only viable approach and thus you are free to setup your own DevOps process that best suits your organizational needs.
