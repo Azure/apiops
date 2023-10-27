@@ -79,7 +79,7 @@ If the extractor successfully picks up the configuration file then you will noti
 ## DevOps Process For Supporting Independent API Teams
 Although each APIM DevOps team will have their own internal process, we would like to recommend a baseline approach for supporting independent API teams. This is by no means the only viable approach and thus you are free to setup your own DevOps process that best suits your organizational needs.
 
-We envision having an operators team who will be responsible for APIM instance configurations (name/values, diagnostics settings, global policies, etc.) as well as different teams who will be exclusively focused on developing a subset of apis. In the setup below we can see three different teams with each team extracting the artifacts to their own repo with the artifacts of interest in the red box. Now we recommend that you add a .gitignore file to each repo to ignore the files that are not of interest in the team to avoid accidental change of the files belonging to other teams.
+We envision having an operators team who will be responsible for APIM instance configurations (name/values, diagnostics settings, global policies, etc.) as well as different teams who will be exclusively focused on developing a subset of artifacts (e.g. separate apis or products). In the setup below we can see three different teams with each team extracting the artifacts to their own repo with the artifacts of interest in the red box. Now we recommend that you add a .gitignore file to each repo to ignore the files that are not of interest in the team to avoid accidental change of the files belonging to other teams.
 
 ![extractor pipeline](../../assets/images/Multi_API_Team_Devops.png)
 
