@@ -23,7 +23,6 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to override different configurations (e.g. policy backend value,  namevalue pairs, just to name a few) when promoting across APIM environments (e.g. dev -> qa -> prod). You will need a unique Yaml configuration file per environment  (e.g. configuration.prod.yaml for production) when overriding configurations across environments. The configuration file is not mandatory. If you don't provide it, the overrides will be picked from the environment variables as discussed in the wiki [here](https://github.com/Azure/apiops/wiki/Configuration#configuration-providers). Remember that you always need to provide the apimServiceName at a minimum which informs the publisher about the destination apim instance |
 | AZURE_CLOUD_ENVIRONMENT | Azure Authority Host Service url that will be used. This is a optional parameter and will default to **AzurePublicCloud** if not specified. 
 | COMMIT_ID | Git commit ID. If specified, the tool will only use files that were affected by that commit. New/modified files will be updated in Azure, and deleted artifacts will be removed from the Azure APIM instance. If unspecified, the tool will do a Put operation on the Azure APIM instance with all files in the artifacts folder |
-| PUBLISH_CONFIGURATION_ARTIFACTS | If set to true, publisher will publish artifacts that are defined in configuration and exist in the artifacts directory.  |
 | Logging__LogLevel__Default:  | The allowed values are either "Information", "Debug", or "Trace". Table below shows the description of each logging level.
 
 Here are the different logging levels available. By default the logging level is set to "Information". 
@@ -37,12 +36,10 @@ Here are the different logging levels available. By default the logging level is
 
 >There are some interesting interactions with cases where we pass a commit ID. Here's the current behavior:
 
-| COMMIT_ID specified | PUBLISH_CONFIGURATION_ARTIFACTS specified | Action |
-| - | - | - |
-| No | No | Put all files in the artifacts directory |
-| No | Yes | Only put files in the artifacts directory that are defined in configuration |
-| Yes | No | Put artifacts that have changed in commit. If configuration YAML was modified in commit, include all artifacts in the configuration YAML that exist in the artifacts directory |
-| Yes | Yes | Put artifacts that have changed in commit. Also include all artifacts defined in configuration (configuration YAML, environment variables, etc) that exist in the artifacts directory |
+| COMMIT_ID specified | Action |
+| - | - |
+| No | Put all files in the artifacts directory |
+| Yes | Put artifacts that have changed in commit. Also include all artifacts defined in configuration (configuration YAML, environment variables, etc) that exist in the artifacts directory |
 
 ### Configuration Override Across Environments
  In an enterprise setting you may want to override some configurations as you promote your APIM across environments. For example you may have a policy which points to a backend url which is different across environments. Or you may be using a completely different application insights instance across environments and you would like to point to the correct application insights instance. In order to override these configurations you will need to provide them inside a environment specific configuration file which the publisher tool can pick up and parse when pushing the changes across different APIM instances. For example if you have three different environments (Dev -> QA -> Prod) then you would have two separate configuration files (e.g. configuration.qa.yaml and configuration.prod.yaml). The lowest environment doesn't require a configuration file as its the source environment.
