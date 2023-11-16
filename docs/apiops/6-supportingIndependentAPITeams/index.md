@@ -24,7 +24,7 @@ apiNames:
 
 Here are some rules to keep in minding when constructing your configuration.extractor.yaml file:
 
-- An empty ``apiNames`` section in configuration (``apiNames:[]``) means no apis will be extracted.
+- A ``apiNames`` section which includes a bogus name (e.g. ignore) in configuration (``apiNames:[ignore]``) means no apis will be extracted. The reason we did not use an empty array instead to indicate ignoring an artifact has to do with the fact that an empty array doesn't work here is because of the way YAML configurations work with .NET configuration. Passing a field with an empty array is essentially the same not passing that field at all.
 - A missing ``apiNames`` section in configuration means all apis will be extracted.
 - A ``apiNames`` section with values means only apis with those names will be extracted.
 
