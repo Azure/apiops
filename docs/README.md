@@ -12,7 +12,7 @@ Before we dive into learning about the APIOPs tool we would like to share some g
 
 ## Video Guide
 
-Please not that the videos below serve as a good starting point but it is recommended to spend some time reading the detailed documentation found [under the Github page](https://azure.github.io/apiops/) and [the wiki](https://github.com/Azure/apiops/wiki).
+Please note that the videos below serve as a good starting point but it is recommended to spend some time reading the detailed documentation found [under the Github page](https://azure.github.io/apiops/) and [the wiki](https://github.com/Azure/apiops/wiki).
 
 Check this video for a 360 overview of the APIOPS tool. 
 
