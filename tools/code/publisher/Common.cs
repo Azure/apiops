@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 namespace publisher;
 
 internal delegate IAsyncEnumerable<JsonObject> ListRestResources(Uri uri, CancellationToken cancellationToken);
+internal delegate ValueTask<JsonObject> GetRestResource(Uri uri, CancellationToken cancellationToken);
 
 internal delegate ValueTask PutRestResource(Uri uri, JsonObject jsonObject, CancellationToken cancellationToken);
 

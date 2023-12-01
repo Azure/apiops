@@ -17,7 +17,7 @@ namespace publisher;
 
 internal static class Api
 {
-    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, GetRestResource getRestResource, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var configurationApis = GetConfigurationApis(configurationJson);
 
@@ -27,7 +27,7 @@ internal static class Api
                           secondKeySelector: configurationArtifact => configurationArtifact.ApiName,
                           firstSelector: api => (api.ApiName, api.InformationFile, api.SpecificationFile, ConfigurationApiJson: (JsonObject?)null),
                           bothSelector: (file, configurationArtifact) => (file.ApiName, file.InformationFile, file.SpecificationFile, ConfigurationApiJson: configurationArtifact.Json))
-                .ForEachParallel(async artifact => await ProcessDeletedApi(artifact.ApiName, artifact.InformationFile, artifact.SpecificationFile, artifact.ConfigurationApiJson, serviceDirectory, serviceUri, putRestResource, deleteRestResource, logger, cancellationToken),
+                .ForEachParallel(async artifact => await ProcessDeletedApi(artifact.ApiName, artifact.InformationFile, artifact.SpecificationFile, artifact.ConfigurationApiJson, serviceDirectory, serviceUri, getRestResource, putRestResource, deleteRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 
@@ -192,7 +192,7 @@ internal static class Api
         return new(specificationFile.ApiDirectory.GetName());
     }
 
-    private static async ValueTask ProcessDeletedApi(ApiName apiName, ApiInformationFile? deletedApiInformationFile, ApiSpecificationFile? deletedSpecificationFile, JsonObject? configurationApiJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask ProcessDeletedApi(ApiName apiName, ApiInformationFile? deletedApiInformationFile, ApiSpecificationFile? deletedSpecificationFile, JsonObject? configurationApiJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, GetRestResource getRestResource, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         switch (deletedApiInformationFile, deletedSpecificationFile)
         {
@@ -208,7 +208,7 @@ internal static class Api
                 }
                 else
                 {
-                    await PutApi(apiName, existingInformationFile, specificationFile: null, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken);
+                    await PutApi(apiName, existingInformationFile, specificationFile: null, configurationApiJson, serviceUri, getRestResource, putRestResource, logger, cancellationToken);
                 }
 
                 return;
@@ -221,7 +221,7 @@ internal static class Api
                 }
                 else
                 {
-                    await PutApi(apiName, apiInformationFile: null, existingSpecificationFile, configurationApiJson, serviceUri, putRestResource, logger, cancellationToken);
+                    await PutApi(apiName, apiInformationFile: null, existingSpecificationFile, configurationApiJson, serviceUri, getRestResource, putRestResource, logger, cancellationToken);
                 }
 
                 return;
@@ -260,7 +260,7 @@ internal static class Api
                            .FirstOrDefault() : null;
     }
 
-    private static async ValueTask PutApi(ApiName apiName, ApiInformationFile? apiInformationFile, ApiSpecificationFile? specificationFile, JsonObject? configurationApiJson, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask PutApi(ApiName apiName, ApiInformationFile? apiInformationFile, ApiSpecificationFile? specificationFile, JsonObject? configurationApiJson, ServiceUri serviceUri, GetRestResource getRestResource, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         if (apiInformationFile is null && specificationFile is null && configurationApiJson is null)
         {
@@ -278,7 +278,7 @@ internal static class Api
             putUri = putUri.SetQueryParam("import", "true").ToUri();
         }
 
-        var apiJson = await GetApiJson(apiName, apiInformationFile, specificationFile, configurationApiJson, cancellationToken);
+        var apiJson = await GetApiJson(apiName, apiInformationFile, specificationFile, configurationApiJson, serviceUri, getRestResource, cancellationToken);
         await putRestResource(putUri, apiJson, cancellationToken);
 
         // Handle GraphQL specification
@@ -288,7 +288,7 @@ internal static class Api
         }
     }
 
-    private static async ValueTask<JsonObject> GetApiJson(ApiName apiName, ApiInformationFile? apiInformationFile, ApiSpecificationFile? specificationFile, JsonObject? configurationApiJson, CancellationToken cancellationToken)
+    private static async ValueTask<JsonObject> GetApiJson(ApiName apiName, ApiInformationFile? apiInformationFile, ApiSpecificationFile? specificationFile, JsonObject? configurationApiJson, ServiceUri serviceUri, GetRestResource getRestResource, CancellationToken cancellationToken)
     {
         var apiJson = new JsonObject();
 
@@ -301,6 +301,13 @@ internal static class Api
         if (specificationFile is not null and (ApiSpecificationFile.Wadl or ApiSpecificationFile.Wsdl or ApiSpecificationFile.OpenApi))
         {
             var specificationJson = await GetApiSpecificationJson(specificationFile, cancellationToken);
+            //If there is not apiInformationFile, retrieve the serviceUrl from the API's service.
+            if (apiInformationFile is null)
+            {
+                // Temporary work around to address the fact the management API will update the serviceURL to the management API's URL.
+                var propertyName = "serviceUrl";
+                apiJson = await GetPropertiesPropertyFronJson(apiName, propertyName, serviceUri, getRestResource, cancellationToken);
+            }
             apiJson = apiJson.Merge(specificationJson);
         }
 
@@ -315,6 +322,52 @@ internal static class Api
         }
 
         return apiJson;
+    }
+
+    /// <summary>
+    /// This method will call the REST endpoint for the passed in API Name.  It then will take that response, parse the properties object  
+    /// and return the propertyName property.
+    /// </summary>
+    /// <param name="apiName">Name of the api</param>
+    /// <param name="propertyName">Name of the property you want to get the value of from the properties object</param>
+    /// <param name="serviceUri">URI of the endpoint you need to get the json from</param>
+    /// <param name="getRestResource">Delegate to call the REST endpoint based on the apiName</param>
+    /// <param name="cancellationToken">Cancellation Token</param>
+    /// <returns></returns>
+    static async Task<JsonObject> GetPropertiesPropertyFronJson(ApiName apiName, String propertyName, ServiceUri serviceUri, GetRestResource getRestResource, CancellationToken cancellationToken)
+    {
+        // If the API does not have an information file, retrieve the serviceUrl from the API's service.
+        var apiUri = GetApiUri(apiName, serviceUri);
+        var apiJsonObject = await getRestResource(apiUri.Uri, cancellationToken);
+        var propertiesNode = apiJsonObject.GetNullableProperty("properties");
+
+        if (propertiesNode != null && propertiesNode is JsonObject propertiesObject)
+        {
+            var apiServiceUrlNode = propertiesObject.GetNullableProperty(propertyName);
+
+            if (apiServiceUrlNode != null && apiServiceUrlNode is JsonValue apiServiceUrlValue)
+            {
+                var apiServiceUrl = apiServiceUrlValue.ToString();
+
+                JsonObject apiJson = new JsonObject
+                {
+                    ["properties"] = new JsonObject
+                    {
+                        ["serviceUrl"] = apiServiceUrl
+                    }
+                };
+
+                return apiJson;
+            }
+            else
+            {
+                throw new InvalidOperationException($"Could not find property '{propertyName}' in the properties object of the JSON object.");
+            }
+        }
+        else
+        {
+            throw new InvalidOperationException($"Could not find the properties object in JSON object.");
+        }
     }
 
     private static async ValueTask<JsonObject> GetApiSpecificationJson(ApiSpecificationFile specificationFile, CancellationToken cancellationToken)
@@ -378,7 +431,7 @@ internal static class Api
         await putRestResource(schemaUri.Uri, json, cancellationToken);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, GetRestResource getRestResource, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var configurationApis = GetConfigurationApis(configurationJson);
 
@@ -388,7 +441,7 @@ internal static class Api
                           secondKeySelector: configurationArtifact => configurationArtifact.ApiName,
                           firstSelector: api => (api.ApiName, api.InformationFile, api.SpecificationFile, ConfigurationApiJson: (JsonObject?)null),
                           bothSelector: (fileApi, configurationArtifact) => (fileApi.ApiName, fileApi.InformationFile, fileApi.SpecificationFile, ConfigurationApiJson: configurationArtifact.Json))
-                .ForEachParallel(async api => await PutApi(api.ApiName, api.InformationFile, api.SpecificationFile, api.ConfigurationApiJson, serviceUri, putRestResource, logger, cancellationToken),
+                .ForEachParallel(async api => await PutApi(api.ApiName, api.InformationFile, api.SpecificationFile, api.ConfigurationApiJson, serviceUri, getRestResource, putRestResource, logger, cancellationToken),
                                  cancellationToken);
     }
 }
