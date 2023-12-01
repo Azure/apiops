@@ -338,8 +338,8 @@ internal static class Api
     {
         // If the API does not have an information file, retrieve the serviceUrl from the API's service.
         var apiUri = GetApiUri(apiName, serviceUri);
-        var tagJsonObject = await getRestResource(apiUri.Uri, cancellationToken);
-        var propertiesNode = tagJsonObject.GetNullableProperty("properties");
+        var apiJsonObject = await getRestResource(apiUri.Uri, cancellationToken);
+        var propertiesNode = apiJsonObject.GetNullableProperty("properties");
 
         if (propertiesNode != null && propertiesNode is JsonObject propertiesObject)
         {
