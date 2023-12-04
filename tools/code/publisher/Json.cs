@@ -23,7 +23,7 @@ internal static class JsonExtensions
 
                 destinationJObject.Merge(sourceJObject, new JsonMergeSettings
                 {
-                    MergeArrayHandling = MergeArrayHandling.Union,
+                    MergeArrayHandling = MergeArrayHandling.Replace,
                     MergeNullValueHandling = MergeNullValueHandling.Merge,
                     PropertyNameComparison = StringComparison.OrdinalIgnoreCase
                 });
