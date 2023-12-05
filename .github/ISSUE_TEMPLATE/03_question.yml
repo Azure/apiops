@@ -1,6 +1,6 @@
-name: Bug report
+name: Question
 description: Make sure you take a look at the closed issues before opening a new one. Create a report to help us improve. Please make sure you read the docs before opening an issue. 
-title: "[BUG]"
+title: "[Question]"
 
 body:
   - type: input
@@ -13,9 +13,9 @@ body:
   - type: textarea
     id: background
     attributes:
-      label: Describe the bug
-      description: Please provide the description of issue you're seeing.
-      placeholder: Description
+      label: Question Details
+      description: Please provide the details of your question here.
+      placeholder: Question Details
     validations:
       required: true 
   - type: textarea
