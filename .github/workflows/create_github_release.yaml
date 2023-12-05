@@ -233,3 +233,18 @@ jobs:
           name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
           tag_name: ${{ github.event.inputs.Release_Version }}
           generate_release_notes: true
+      - name: Create latest release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{github.workspace}}/artifact/extractor.win-x64.exe
+            ${{github.workspace}}/artifact/extractor.linux-x64.exe
+            ${{github.workspace}}/artifact/extractor.linux-arm64.exe
+            ${{github.workspace}}/artifact/publisher.win-x64.exe
+            ${{github.workspace}}/artifact/publisher.linux-x64.exe
+            ${{github.workspace}}/artifact/publisher.linux-arm64.exe
+            ${{github.workspace}}/artifact/Github.zip
+            ${{github.workspace}}/artifact/Azure_DevOps.zip
+          name: APIOps Toolkit for Azure APIM latest
+          tag_name: latest
+          generate_release_notes: true    
