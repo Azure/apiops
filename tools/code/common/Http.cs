@@ -1,6 +1,7 @@
 ﻿using Azure;
 using Azure.Core;
 using Azure.Core.Pipeline;
+using Polly;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -64,14 +65,23 @@ public static class HttpPipelineExtensions
 
     public static async ValueTask PutResource(this HttpPipeline pipeline, Uri uri, JsonObject resource, CancellationToken cancellationToken)
     {
-        var request = pipeline.CreateRequest(uri, RequestMethod.Put);
-        var resourceBytes = JsonSerializer.SerializeToUtf8Bytes(resource);
-        request.Content = RequestContent.Create(resourceBytes);
-        request.Headers.Add("Content-type", "application/json");
+         var retryPolicy = Policy
+        .Handle<HttpRequestException>()
+        .OrResult<Response>(r => r.IsError)
+        .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
 
-        var response = await pipeline.SendRequestAsync(request, cancellationToken);
-        response.Validate(uri);
-        await pipeline.WaitForLongRunningOperation(response, cancellationToken);
+        await retryPolicy.ExecuteAsync(async () =>
+        {
+            var request = pipeline.CreateRequest(uri, RequestMethod.Put);
+            var resourceBytes = JsonSerializer.SerializeToUtf8Bytes(resource);
+            request.Content = RequestContent.Create(resourceBytes);
+            request.Headers.Add("Content-type", "application/json");
+        
+            var response = await pipeline.SendRequestAsync(request, cancellationToken);
+            response.Validate(uri);
+            await pipeline.WaitForLongRunningOperation(response, cancellationToken);
+            return response;
+        });
     }
 
     private static Request CreateRequest(this HttpPipeline pipeline, Uri uri, RequestMethod requestMethod)
