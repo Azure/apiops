@@ -1,6 +1,7 @@
-﻿using common;
+using common;
 using Microsoft.Extensions.Logging;
 using MoreLinq;
+using MoreLinq.Extensions;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
@@ -8,6 +9,8 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using System;
+using System.Net.Http;
 
 namespace publisher;
 
@@ -109,7 +112,7 @@ internal static class ProductApi
     {
         var productUri = GetProductUri(productName, serviceUri);
         var productApisUri = new ProductApisUri(productUri);
-
+        
         var existingApiNames = await listRestResources(productApisUri.Uri, cancellationToken)
                                         .Select(apiJsonObject => apiJsonObject.GetStringProperty("name"))
                                         .Select(name => new ApiName(name))
@@ -117,6 +120,7 @@ internal static class ProductApi
 
         var apiNamesToPut = apiNames.Except(existingApiNames);
         var apiNamesToRemove = existingApiNames.Except(apiNames);
+
 
         await apiNamesToRemove.ForEachParallel(async apiName =>
         {
@@ -127,7 +131,7 @@ internal static class ProductApi
         await apiNamesToPut.ForEachParallel(async apiName =>
         {
             logger.LogInformation("Putting API {apiName} in product {productName}...", apiName, productName);
-            await Put(apiName, productUri, putRestResource, cancellationToken);
+            await Put(apiName, productUri, putRestResource,logger, cancellationToken);
         }, cancellationToken);
     }
 
@@ -145,12 +149,40 @@ internal static class ProductApi
         await deleteRestResource(productApiUri.Uri, cancellationToken);
     }
 
-    private static async ValueTask Put(ApiName apiName, ProductUri productUri, PutRestResource putRestResource, CancellationToken cancellationToken)
+    private static async ValueTask Put(ApiName apiName, ProductUri productUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
         var productApisUri = new ProductApisUri(productUri);
         var productApiUri = new ProductApiUri(apiName, productApisUri);
 
-        await putRestResource(productApiUri.Uri, new JsonObject(), cancellationToken);
+        int retryCount = 0;
+        bool retry = true;
+        while (retry)
+        {
+            try
+            {
+                await putRestResource(productApiUri.Uri, new JsonObject(), cancellationToken);
+                retry = false; // No exception occurred, so no need to retry
+            }
+            catch (HttpRequestException httpRequestException)
+            {
+                if (httpRequestException.Message.Contains("API cannot be added to more than one open products"))
+                {
+                    retryCount++;
+                    if (retryCount <= 3)
+                    {
+                        // Log the retry attempt
+                        logger.LogWarning("Retrying API put operation for {apiName}. Retry attempt: {retryCount}", apiName, retryCount);
+                        // Wait for a certain duration before retrying
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)), cancellationToken);
+                    }
+                    else
+                    {
+                        // Retry limit reached, throw the exception
+                        throw;
+                    }
+                }
+            }
+        }
     }
 
     public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
