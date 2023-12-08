@@ -75,7 +75,7 @@ public class Fixture
         };
     }
 
-    private static TokenCredential GetDefaultAzureCredential(Uri azureAuthorityHost)
+    private static DefaultAzureCredential GetDefaultAzureCredential(Uri azureAuthorityHost)
     {
         return new DefaultAzureCredential(new DefaultAzureCredentialOptions
         {
