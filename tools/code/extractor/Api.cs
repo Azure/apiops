@@ -2,14 +2,10 @@
 using Flurl;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi;
-using Microsoft.OpenApi.Extensions;
-using Microsoft.OpenApi.Readers;
-using SharpYaml.Model;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using YamlDotNet.Serialization;
@@ -24,8 +20,17 @@ internal static class Api
         await List(serviceUri, listRestResources, cancellationToken)
                 // Filter out apis that should not be exported
                 .Where(apiName => ShouldExport(apiName, apiNamesToExport))
-                // Export APIs in parallel
-                .ForEachParallel(async apiName => await Export(serviceDirectory, serviceUri, apiName, defaultSpecification, listRestResources, getRestResource, downloadResource, logger, cancellationToken),
+                // Group APIs by version set (https://github.com/Azure/apiops/issues/316).
+                // We'll process each group in parallel, but each API within a group sequentially.
+                .SelectAwait(async apiName =>
+                {
+                    var model = await GetModel(serviceUri, apiName, getRestResource, cancellationToken);
+                    return (Name: apiName, Model: model);
+                })
+                .GroupBy(api => api.Model.Properties.ApiVersionSetId)
+                // Export each group in parallel
+                .ForEachParallel(async group => await group.ForEachAwaitAsync(async api => await Export(serviceDirectory, serviceUri, api.Name, api.Model, defaultSpecification, listRestResources, getRestResource, downloadResource, logger, cancellationToken),
+                                                                              cancellationToken),
                                  cancellationToken);
     }
 
@@ -48,16 +53,23 @@ internal static class Api
                                                                                     StringComparison.OrdinalIgnoreCase));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiName apiName, DefaultApiSpecification defaultSpecification, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask<ApiModel> GetModel(ServiceUri serviceUri, ApiName apiName, GetRestResource getRestResource, CancellationToken cancellationToken)
+    {
+        var apisUri = new ApisUri(serviceUri);
+        var apiUri = new ApiUri(apiName, apisUri);
+
+        var apiResponseJson = await getRestResource(apiUri.Uri, cancellationToken);
+
+        return ApiModel.Deserialize(apiName, apiResponseJson);
+    }
+
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiName apiName, ApiModel apiModel, DefaultApiSpecification defaultSpecification, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
     {
         var apisDirectory = new ApisDirectory(serviceDirectory);
         var apiDirectory = new ApiDirectory(apiName, apisDirectory);
 
         var apisUri = new ApisUri(serviceUri);
         var apiUri = new ApiUri(apiName, apisUri);
-
-        var apiResponseJson = await getRestResource(apiUri.Uri, cancellationToken);
-        var apiModel = ApiModel.Deserialize(apiName, apiResponseJson);
 
         await ExportInformationFile(apiModel, apiDirectory, logger, cancellationToken);
         await ExportSpecification(apiModel, apiDirectory, apiUri, defaultSpecification, getRestResource, downloadResource, logger, cancellationToken);
