@@ -32,7 +32,7 @@ Create all the different artifacts from an IDE (e.g. VS Code) -> commit the chan
 In this scenario you don't need to utilize the extractor tool to generate the artifacts as the artifacts will be created in the IDE. Having said that, nothing prevents you from utilizing the extractor tool to generate the initial artifacts if you are introducing the tool to an existing APIM instance.
 
 # Supported  2022-09-01
-Below there is a table with all [artifacts extracted and published by APIOps](https://docs.microsoft.com/en-us/rest/api/apimanagement/). 
+Below there is a table with all [artifacts extracted and published by APIOps](https://learn.microsoft.com/rest/api/apimanagement/). 
 
 |Operation Group|Description|Implemented in APIOps?|
 |:----|:----|:----|

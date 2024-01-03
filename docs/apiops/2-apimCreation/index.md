@@ -13,7 +13,7 @@ An instance can take some time to provision. Expect ~45-75 minutes. Therefore, p
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.ApiManagement)
 
-Using either your own or [Azure's common naming convention](https://docs.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/resource-naming), fill in each required field and press *Review + Create*, followed by *Create* to provision the service. Once started, it is not necessary to remain on this page or in the Azure Portal. If you entered a valid email address, you will receive a provisioning completion email.
+Using either your own or [Azure's common naming convention](https://learn.microsoft.com/azure/cloud-adoption-framework/ready/azure-best-practices/resource-naming), fill in each required field and press *Review + Create*, followed by *Create* to provision the service. Once started, it is not necessary to remain on this page or in the Azure Portal. If you entered a valid email address, you will receive a provisioning completion email.
 
 Please note that the **service name must be unique**. We recommend to include your initials and numeric date. Also we recommend that you add -prod in the name of the production instance to easily identify it in your DevOps scripts and configuration files. For example in the image below the prod instance would be called apim-apiops-prod.
 
