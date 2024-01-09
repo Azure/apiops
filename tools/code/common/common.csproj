@@ -17,7 +17,7 @@
     <PackageReference Include="Microsoft.OpenApi.Readers" Version="1.4.1" />
     <PackageReference Include="morelinq" Version="3.3.2" />
     <PackageReference Include="Polly.Contrib.WaitAndRetry" Version="1.1.1" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="6.25.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="6.34.0" />
     <PackageReference Include="System.Linq.Async" Version="6.0.1" />
   </ItemGroup>
 
