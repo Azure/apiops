@@ -53,7 +53,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/{1}}', runner.temp, env.EXTRACTOR_FILENAME) }}
+          path: ${{ format('{0}/{1}', runner.temp, env.EXTRACTOR_FILENAME) }}
 
   generate_publisher_artifacts:
     name: Generate publisher artifacts
@@ -99,7 +99,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/{1}}', runner.temp, env.PUBLISHER_FILENAME) }}
+          path: ${{ format('{0}/{1}', runner.temp, env.PUBLISHER_FILENAME) }}
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
