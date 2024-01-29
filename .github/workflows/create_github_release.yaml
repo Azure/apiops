@@ -41,9 +41,7 @@ jobs:
 
           $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
           $exeFolderPath = Join-Path "$outputFolderPath" "extractor$exeFileExt"
-          Write-Information "Current exe location: $exeFolderPath"
           $exeFileNameFinal = "${{ format('extractor.{0}', matrix.dotnet-runtime) }}$exeFileExt"
-          Write-Information "Final file name: $exeFileNameFinal"
           Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
           echo "EXTRACTOR_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
 
@@ -89,9 +87,7 @@ jobs:
 
           $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
           $exeFolderPath = Join-Path "$outputFolderPath" "publisher$exeFileExt"
-          Write-Information "Current exe location: $exeFolderPath"
           $exeFileNameFinal = "${{ format('publisher.{0}', matrix.dotnet-runtime) }}$exeFileExt"
-          Write-Information "Final file name: $exeFileNameFinal"
           Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
           echo "PUBLISHER_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
 
