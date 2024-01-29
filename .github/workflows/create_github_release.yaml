@@ -13,9 +13,9 @@ jobs:
     name: Generate extractor artifacts
     strategy:
       matrix:
-        dotnet-runtime: [linux-x64, linux-arm64, win-x64]
+        dotnet-runtime: [linux-x64, linux-arm64, win-x64, osx-arm64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -39,9 +39,9 @@ jobs:
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
-          $exeFileName = "${{ matrix.dotnet-runtime }}".Contains("win") ? "extractor.exe" : "extractor"
-          $exeFolderPath = Join-Path "$outputFolderPath" "$exeFileName"
-          Rename-Item -Path "$exeFolderPath" -NewName "${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}"
+          $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
+          $exeFolderPath = Join-Path "$outputFolderPath"  "extractor" "$exeFileExt"
+          Rename-Item -Path "$exeFolderPath" -NewName "${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}$exeFileExt"
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -55,9 +55,9 @@ jobs:
     name: Generate publisher artifacts
     strategy:
       matrix:
-        dotnet-runtime: [linux-x64, linux-arm64, win-x64]
+        dotnet-runtime: [linux-x64, linux-arm64, win-x64, osx-arm64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest"}')[matrix.dotnet-runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -81,9 +81,9 @@ jobs:
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-          $exeFileName = "${{ matrix.dotnet-runtime }}".Contains("win") ? "publisher.exe" : "publisher"
-          $exeFolderPath = Join-Path "$outputFolderPath" "$exeFileName"
-          Rename-Item -Path "$exeFolderPath" -NewName "${{ format('publisher.{0}.exe', matrix.dotnet-runtime) }}"
+          $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
+          $exeFolderPath = Join-Path "$outputFolderPath" "publisher" "$exeFileExt"
+          Rename-Item -Path "$exeFolderPath" -NewName "${{ format('publisher.{0}', matrix.dotnet-runtime) }}$exeFileExt"
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -223,11 +223,13 @@ jobs:
         with:
           files: |
             ${{github.workspace}}/artifact/extractor.win-x64.exe
-            ${{github.workspace}}/artifact/extractor.linux-x64.exe
-            ${{github.workspace}}/artifact/extractor.linux-arm64.exe
+            ${{github.workspace}}/artifact/extractor.linux-x64
+            ${{github.workspace}}/artifact/extractor.linux-arm64
+            ${{github.workspace}}/artifact/extractor.osx-arm64
             ${{github.workspace}}/artifact/publisher.win-x64.exe
-            ${{github.workspace}}/artifact/publisher.linux-x64.exe
-            ${{github.workspace}}/artifact/publisher.linux-arm64.exe
+            ${{github.workspace}}/artifact/publisher.linux-x64
+            ${{github.workspace}}/artifact/publisher.linux-arm64
+            ${{github.workspace}}/artifact/publisher.osx-arm64
             ${{github.workspace}}/artifact/Github.zip
             ${{github.workspace}}/artifact/Azure_DevOps.zip
           name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
