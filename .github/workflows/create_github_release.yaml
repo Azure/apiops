@@ -41,15 +41,19 @@ jobs:
 
           $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
           $exeFolderPath = Join-Path "$outputFolderPath"  "extractor" "$exeFileExt"
-          Rename-Item -Path "$exeFolderPath" -NewName "${{ format('extractor.{0}.exe', matrix.dotnet-runtime) }}$exeFileExt"
+          $exeFileNameFinal = "${{ format('extractor.{0}', matrix.dotnet-runtime) }}$exeFileExt"
+          Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
+          echo "EXTRACTOR_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
 
           Write-Information "Execution complete."
         shell: pwsh
+        env:
+          EXTRACTOR_FILENAME: 
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/extractor.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/{1}}', runner.temp, $env:EXTRACTOR_FILENAME) }}
 
   generate_publisher_artifacts:
     name: Generate publisher artifacts
@@ -82,16 +86,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
           $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
-          $exeFolderPath = Join-Path "$outputFolderPath" "publisher" "$exeFileExt"
-          Rename-Item -Path "$exeFolderPath" -NewName "${{ format('publisher.{0}', matrix.dotnet-runtime) }}$exeFileExt"
+          $exeFolderPath = Join-Path "$outputFolderPath"  "publisher" "$exeFileExt"
+          $exeFileNameFinal = "${{ format('publisher.{0}', matrix.dotnet-runtime) }}$exeFileExt"
+          Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
+          echo "PUBLISHER_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
 
           Write-Information "Execution complete."
         shell: pwsh
-
+        env:
+          PUBLISHER_FILENAME: 
+          
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ format('{0}/publisher.{1}.exe', runner.temp, matrix.dotnet-runtime) }}
+          path: ${{ format('{0}/{1}}', runner.temp, $env:PUBLISHER_FILENAME) }}
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
