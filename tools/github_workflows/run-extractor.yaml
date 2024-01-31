@@ -48,9 +48,18 @@ jobs:
           $InformationPreference = "Continue"
 
           Write-Information "Downloading extractor..."
-          $extractorFileName = "${{ runner.os }}" -like "*win*" ? "extractor.win-x64.exe" : "extractor.linux-x64.exe"
+          $extractorFileName = "extractor.linux-x64"
+          $extractorFinalFileName = "extractor"
+          if("${{ runner.os }}" -like "*win*"){
+            $extractorFileName = "extractor.win-x64.exe"
+            $extractorFinalFileName = "extractor.exe"
+          }
+          else if("${{ runner.os }}" -like "*mac*" && "${{ runner.arch }}" -like "*arm*"){
+            $extractorFileName = "extractor.osx-arm64"
+          }
+          
           $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$extractorFileName"
-          $destinationFilePath = Join-Path "${{ runner.temp }}" "extractor.exe"
+          $destinationFilePath = Join-Path "${{ runner.temp }}" $extractorFinalFileName
           Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
 
           if ("${{ runner.os }}" -like "*linux*")
