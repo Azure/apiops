@@ -224,8 +224,7 @@ jobs:
       ]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      releases: write
+      contents: write
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v3
