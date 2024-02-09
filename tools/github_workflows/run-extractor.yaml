@@ -50,11 +50,11 @@ jobs:
           Write-Information "Downloading extractor..."
           $extractorFileName = "extractor.linux-x64"
           $extractorFinalFileName = "extractor"
-          if("${{ runner.os }}" -like "*win*"){
+          if ("${{ runner.os }}" -like "*win*") {
             $extractorFileName = "extractor.win-x64.exe"
             $extractorFinalFileName = "extractor.exe"
           }
-          else if("${{ runner.os }}" -like "*mac*" && "${{ runner.arch }}" -like "*arm*"){
+          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*arm*") {
             $extractorFileName = "extractor.osx-arm64"
           }
           

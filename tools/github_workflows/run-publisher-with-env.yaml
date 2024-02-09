@@ -71,11 +71,11 @@ jobs:
           Write-Information "Downloading publisher..."
           $publisherFileName = "publisher.linux-x64"
           $publisherFinalFileName = "publisher"
-          if("${{ runner.os }}" -like "*win*"){
+          if ("${{ runner.os }}" -like "*win*") {
             $publisherFileName = "publisher.win-x64.exe"
             $publisherFinalFileName = "publisher.exe"
           }
-          else if("${{ runner.os }}" -like "*mac*" && "${{ runner.arch }}" -like "*arm*"){
+          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*arm*") {
             $publisherFileName = "publisher.osx-arm64"
           }
           
