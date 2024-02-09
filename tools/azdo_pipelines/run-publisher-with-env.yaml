@@ -90,11 +90,11 @@ steps:
         Write-Information "Downloading publisher..."
         $publisherFileName = "publisher.linux-x64"
         $publisherFinalFileName = "publisher"
-        if("$(Agent.OS)" -like "*win*"){
+        if ("$(Agent.OS)" -like "*win*") {
           $publisherFileName = "publisher.win-x64.exe"
           $publisherFinalFileName = "publisher.exe"
         }
-        else if("$(Agent.OS)" -like "*mac*" && "$(Agent.OSArchitecture)" -like "*arm*"){
+        elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*arm*") {
           $publisherFileName = "publisher.osx-arm64"
         }
         

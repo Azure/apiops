@@ -94,13 +94,15 @@ stages:
                 Write-Information "Downloading extractor..."
                 $extractorFileName = "extractor.linux-x64"
                 $extractorFinalFileName = "extractor"
-                if("$(Agent.OS)" -like "*win*"){
+               
+                if ("$(Agent.OS)" -like "*win*") {
                   $extractorFileName = "extractor.win-x64.exe"
                   $extractorFinalFileName = "extractor.exe"
                 }
-                else if("$(Agent.OS)" -like "*mac*" && "$(Agent.OSArchitecture)" -like "*arm*"){
+                elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*arm*") {
                   $extractorFileName = "extractor.osx-arm64"
                 }
+                
                 $uri = "https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/$extractorFileName"
                 $destinationFilePath = Join-Path "$(Agent.TempDirectory)" $extractorFinalFileName
                 Invoke-WebRequest -Uri "$uri" -OutFile "$destinationFilePath"
