@@ -63,14 +63,14 @@ internal static class ApiOperationPolicy
     {
         logger.LogInformation("Deleting policy {policyName} for operation {operationName} in api {apiName}...", policyName, operationName, apiName);
 
-        var policyUri = GetApiOperationPolicyUri(policyName, operationName, apiName, serviceUri);
+        var policyUri = GetApiOperationPolicyUri(policyName, operationName, apiName, serviceUri, new DefaultPolicyXmlSpecification.RawXmlFormat());
         await deleteRestResource(policyUri.Uri, cancellationToken);
     }
 
-    private static ApiOperationPolicyUri GetApiOperationPolicyUri(ApiOperationPolicyName policyName, ApiOperationName operationName, ApiName apiName, ServiceUri serviceUri)
+    private static ApiOperationPolicyUri GetApiOperationPolicyUri(ApiOperationPolicyName policyName, ApiOperationName operationName, ApiName apiName, ServiceUri serviceUri, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification)
     {
         var policiesUri = GetApiOperationPoliciesUri(operationName, apiName, serviceUri);
-        return new ApiOperationPolicyUri(policyName, policiesUri);
+        return new ApiOperationPolicyUri(policyName, policiesUri, defaultPolicyXmlSpecification);
     }
 
     private static ApiOperationPoliciesUri GetApiOperationPoliciesUri(ApiOperationName operationName, ApiName apiName, ServiceUri serviceUri)
@@ -79,16 +79,16 @@ internal static class ApiOperationPolicy
         return new ApiOperationPoliciesUri(operationUri);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, configurationJson, serviceDirectory, cancellationToken)
-                .ForEachParallel(async artifact => await PutPolicy(artifact.PolicyName, artifact.OperationName, artifact.ApiName, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
+        await GetArtifactsToPut(files, configurationJson, serviceDirectory, defaultPolicyXmlSpecification, cancellationToken)
+                .ForEachParallel(async artifact => await PutPolicy(artifact.PolicyName, artifact.OperationName, artifact.ApiName, artifact.Json, serviceUri, putRestResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                  cancellationToken);
     }
 
-    private static async IAsyncEnumerable<(ApiOperationPolicyName PolicyName, ApiOperationName OperationName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private static async IAsyncEnumerable<(ApiOperationPolicyName PolicyName, ApiOperationName OperationName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var fileArtifacts = await GetFilePolicies(files, serviceDirectory, cancellationToken).ToListAsync(cancellationToken);
+        var fileArtifacts = await GetFilePolicies(files, serviceDirectory, defaultPolicyXmlSpecification, cancellationToken).ToListAsync(cancellationToken);
         var configurationArtifacts = GetConfigurationPolicies(configurationJson);
         var artifacts = fileArtifacts.LeftJoin(configurationArtifacts,
                                                keySelector: artifact => (artifact.PolicyName, artifact.OperationName, artifact.ApiName),
@@ -100,8 +100,9 @@ internal static class ApiOperationPolicy
         }
     }
 
-    private static IAsyncEnumerable<(ApiOperationPolicyName PolicyName, ApiOperationName OperationName, ApiName ApiName, JsonObject Json)> GetFilePolicies(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    private static IAsyncEnumerable<(ApiOperationPolicyName PolicyName, ApiOperationName OperationName, ApiName ApiName, JsonObject Json)> GetFilePolicies(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
+        
         return GetPolicyFiles(files, serviceDirectory)
                 .ToAsyncEnumerable()
                 .SelectAwaitWithCancellation(async (file, token) =>
@@ -111,7 +112,7 @@ internal static class ApiOperationPolicy
                     {
                         ["properties"] = new JsonObject
                         {
-                            ["format"] = "rawxml",
+                            ["format"] = defaultPolicyXmlSpecification.Format,
                             ["value"] = policyText
                         }
                     };
@@ -168,11 +169,11 @@ internal static class ApiOperationPolicy
                                          });
     }
 
-    private static async ValueTask PutPolicy(ApiOperationPolicyName policyName, ApiOperationName operationName, ApiName apiName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask PutPolicy(ApiOperationPolicyName policyName, ApiOperationName operationName, ApiName apiName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         logger.LogInformation("Putting policy {policyName} for operation {operationName} in api {apiName}...", policyName, operationName, apiName);
 
-        var policyUri = GetApiOperationPolicyUri(policyName, operationName, apiName, serviceUri);
+        var policyUri = GetApiOperationPolicyUri(policyName, operationName, apiName, serviceUri, defaultPolicyXmlSpecification);
         await putRestResource(policyUri.Uri, json, cancellationToken);
     }
 }

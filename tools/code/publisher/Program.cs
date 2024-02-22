@@ -207,6 +207,7 @@ public static class Program
             CommitId = TryGetCommitId(configuration),
             ConfigurationFile = TryGetConfigurationFile(configuration),
             ConfigurationJson = GetConfigurationJson(configuration),
+            DefaultPolicyXmlSpecification = GetDefaultXmlPolicySpecification(configuration),
             DeleteRestResource = provider.GetRequiredService<DeleteRestResource>(),
             ListRestResources = provider.GetRequiredService<ListRestResources>(),
             GetRestResource = provider.GetRequiredService<GetRestResource>(),
@@ -215,6 +216,21 @@ public static class Program
             ServiceDirectory = GetServiceDirectory(configuration),
             ServiceUri = GetServiceUri(configuration, armEnvironment)
         };
+    }
+
+    private static DefaultPolicyXmlSpecification GetDefaultXmlPolicySpecification(IConfiguration configuration)
+    {
+        var configurationFormat = configuration.TryGetValue("POLICY_SPECIFICATION_FORMAT")
+                                  ?? configuration.TryGetValue("policySpecificationFormat");
+
+        return configurationFormat is null
+            ? new DefaultPolicyXmlSpecification.RawXmlFormat() as DefaultPolicyXmlSpecification
+            : configurationFormat switch
+            {
+                _ when configurationFormat.Equals("RawXML", StringComparison.OrdinalIgnoreCase) => new DefaultPolicyXmlSpecification.RawXmlFormat(),
+                _ when configurationFormat.Equals("XML", StringComparison.OrdinalIgnoreCase) => new DefaultPolicyXmlSpecification.XmlFormat(),
+                _ => throw new InvalidOperationException($"Policy specification format '{configurationFormat}' defined in configuration is not supported.")
+            };
     }
 
     private static CommitId? TryGetCommitId(IConfiguration configuration)

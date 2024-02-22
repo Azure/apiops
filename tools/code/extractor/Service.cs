@@ -12,6 +12,7 @@ internal static class Service
         ServiceDirectory serviceDirectory,
         ServiceUri serviceUri,
         DefaultApiSpecification defaultSpecification,
+        DefaultPolicyXmlSpecification defaultPolicyXmlSpecification,
         IEnumerable<string>? apiNamesToExport,
         IEnumerable<string>? loggerNamesToExport,
         IEnumerable<string>? diagnosticNamesToExport,
@@ -46,19 +47,19 @@ internal static class Service
         await Backend.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, backendNamesToExport, cancellationToken);
 
         logger.LogInformation("Exporting products...");
-        await Product.ExportAll(serviceDirectory, serviceUri, apiNamesToExport, listRestResources, getRestResource, logger, productNamesToExport, cancellationToken);
+        await Product.ExportAll(serviceDirectory, serviceUri, apiNamesToExport, listRestResources, getRestResource, logger, productNamesToExport, defaultPolicyXmlSpecification, cancellationToken);
 
         logger.LogInformation("Exporting gateways...");
         await Gateway.ExportAll(serviceDirectory, serviceUri, apiNamesToExport, listRestResources, getRestResource, logger, cancellationToken);
 
         logger.LogInformation("Exporting policy fragments...");
-        await PolicyFragment.ExportAll(serviceDirectory, serviceUri, policyFragmentNamesToExport, listRestResources, getRestResource, logger, cancellationToken);
+        await PolicyFragment.ExportAll(serviceDirectory, serviceUri, policyFragmentNamesToExport, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
 
         logger.LogInformation("Exporting service policies...");
-        await ServicePolicy.ExportAll(serviceUri, serviceDirectory, listRestResources, getRestResource, logger, cancellationToken);
+        await ServicePolicy.ExportAll(serviceUri, serviceDirectory, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
 
         logger.LogInformation("Exporting apis...");
-        await Api.ExportAll(serviceDirectory, serviceUri, defaultSpecification, apiNamesToExport, listRestResources, getRestResource, downloadResource, logger, cancellationToken);
+        await Api.ExportAll(serviceDirectory, serviceUri, defaultSpecification, apiNamesToExport, listRestResources, getRestResource, downloadResource, logger, defaultPolicyXmlSpecification, cancellationToken);
 
         logger.LogInformation("Exporting subscriptions...");
         await Subscription.ExportAll(serviceDirectory, serviceUri, listRestResources, getRestResource, logger, subscriptionNamesToExport, cancellationToken);

@@ -9,10 +9,10 @@ namespace extractor;
 
 internal static class ApiOperation
 {
-    public static async ValueTask ExportAll(ApiUri apiUri, ApiDirectory apiDirectory, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ApiUri apiUri, ApiDirectory apiDirectory, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         await List(apiUri, listRestResources, cancellationToken)
-                .ForEachParallel(async operationName => await Export(apiDirectory, apiUri, operationName, listRestResources, getRestResource, logger, cancellationToken),
+                .ForEachParallel(async operationName => await Export(apiDirectory, apiUri, operationName, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                  cancellationToken);
     }
 
@@ -24,7 +24,7 @@ internal static class ApiOperation
                                    .Select(name => new ApiOperationName(name));
     }
 
-    private static async ValueTask Export(ApiDirectory apiDirectory, ApiUri apiUri, ApiOperationName apiOperationName, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask Export(ApiDirectory apiDirectory, ApiUri apiUri, ApiOperationName apiOperationName, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         var apiOperationsDirectory = new ApiOperationsDirectory(apiDirectory);
         var apiOperationDirectory = new ApiOperationDirectory(apiOperationName, apiOperationsDirectory);
@@ -32,11 +32,11 @@ internal static class ApiOperation
         var apiOperationsUri = new ApiOperationsUri(apiUri);
         var apiOperationUri = new ApiOperationUri(apiOperationName, apiOperationsUri);
 
-        await ExportPolicies(apiOperationDirectory, apiOperationUri, listRestResources, getRestResource, logger, cancellationToken);
+        await ExportPolicies(apiOperationDirectory, apiOperationUri, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
     }
 
-    private static async ValueTask ExportPolicies(ApiOperationDirectory apiOperationDirectory, ApiOperationUri apiOperationUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask ExportPolicies(ApiOperationDirectory apiOperationDirectory, ApiOperationUri apiOperationUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
-        await ApiOperationPolicy.ExportAll(apiOperationDirectory, apiOperationUri, listRestResources, getRestResource, logger, cancellationToken);
+        await ApiOperationPolicy.ExportAll(apiOperationDirectory, apiOperationUri, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
     }
 }

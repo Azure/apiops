@@ -10,11 +10,11 @@ namespace extractor;
 
 internal static class Product
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? productNamesToExport, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? productNamesToExport, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
                 .Where(productName => ShouldExport(productName, productNamesToExport))
-                .ForEachParallel(async productName => await Export(serviceDirectory, serviceUri, productName, apiNamesToExport, listRestResources, getRestResource, logger, cancellationToken),
+                .ForEachParallel(async productName => await Export(serviceDirectory, serviceUri, productName, apiNamesToExport, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                  cancellationToken);
     }
 
@@ -32,7 +32,7 @@ internal static class Product
                || productNamesToExport.Any(productNameToExport => productNameToExport.Equals(productName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ProductName productName, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ProductName productName, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         var productsDirectory = new ProductsDirectory(serviceDirectory);
         var productDirectory = new ProductDirectory(productName, productsDirectory);
@@ -41,7 +41,7 @@ internal static class Product
         var productUri = new ProductUri(productName, productsUri);
 
         await ExportInformationFile(productDirectory, productUri, productName, getRestResource, logger, cancellationToken);
-        await ExportPolicies(productDirectory, productUri, listRestResources, getRestResource, logger, cancellationToken);
+        await ExportPolicies(productDirectory, productUri, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
         await ExportApis(productDirectory, productUri, apiNamesToExport, listRestResources, logger, cancellationToken);
         await ExportGroups(productDirectory, productUri, listRestResources, logger, cancellationToken);
         await ExportTags(productDirectory, productUri, listRestResources, logger, cancellationToken);
@@ -59,9 +59,9 @@ internal static class Product
         await productInformationFile.OverwriteWithJson(contentJson, cancellationToken);
     }
 
-    private static async ValueTask ExportPolicies(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask ExportPolicies(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
-        await ProductPolicy.ExportAll(productDirectory, productUri, listRestResources, getRestResource, logger, cancellationToken);
+        await ProductPolicy.ExportAll(productDirectory, productUri, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
     }
 
     private static async ValueTask ExportApis(ProductDirectory productDirectory, ProductUri productUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)

@@ -9,10 +9,10 @@ namespace extractor;
 
 internal static class ProductPolicy
 {
-    public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         await List(productUri, listRestResources, cancellationToken)
-                .ForEachParallel(async policyName => await Export(productDirectory, productUri, policyName, getRestResource, logger, cancellationToken),
+                .ForEachParallel(async policyName => await Export(productDirectory, productUri, policyName, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                  cancellationToken);
     }
 
@@ -24,12 +24,12 @@ internal static class ProductPolicy
                                 .Select(name => new ProductPolicyName(name));
     }
 
-    private static async ValueTask Export(ProductDirectory productDirectory, ProductUri productUri, ProductPolicyName policyName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask Export(ProductDirectory productDirectory, ProductUri productUri, ProductPolicyName policyName, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         var policyFile = new ProductPolicyFile(policyName, productDirectory);
 
         var policiesUri = new ProductPoliciesUri(productUri);
-        var policyUri = new ProductPolicyUri(policyName, policiesUri);
+        var policyUri = new ProductPolicyUri(policyName, policiesUri, defaultPolicyXmlSpecification);
         var responseJson = await getRestResource(policyUri.Uri, cancellationToken);
         var policyContent = responseJson.GetJsonObjectProperty("properties")
                                         .GetStringProperty("value");

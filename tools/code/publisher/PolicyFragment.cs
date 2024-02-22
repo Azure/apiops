@@ -13,7 +13,7 @@ namespace publisher;
 
 internal static class PolicyFragment
 {
-    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         var configurationPolicyFragments = GetConfigurationPolicyFragments(configurationJson);
 
@@ -23,7 +23,7 @@ internal static class PolicyFragment
                           secondKeySelector: configurationArtifact => configurationArtifact.Name,
                           firstSelector: policyFragment => (policyFragment.Name, policyFragment.InformationFile, policyFragment.PolicyFile, ConfigurationJson: (JsonObject?)null),
                           bothSelector: (file, configurationArtifact) => (file.Name, file.InformationFile, file.PolicyFile, ConfigurationJson: configurationArtifact.Json))
-                .ForEachParallel(async artifact => await ProcessDeletedPolicyFragment(artifact.Name, artifact.InformationFile, artifact.PolicyFile, artifact.ConfigurationJson, serviceUri, putRestResource, deleteRestResource, logger, cancellationToken),
+                .ForEachParallel(async artifact => await ProcessDeletedPolicyFragment(artifact.Name, artifact.InformationFile, artifact.PolicyFile, artifact.ConfigurationJson, serviceUri, putRestResource, deleteRestResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                  cancellationToken);
     }
 
@@ -121,7 +121,7 @@ internal static class PolicyFragment
         return new(file.PolicyFragmentDirectory.GetName());
     }
 
-    private static async ValueTask ProcessDeletedPolicyFragment(PolicyFragmentName policyFragmentName, PolicyFragmentInformationFile? deletedInformationFile, PolicyFragmentPolicyFile? deletedPolicyFile, JsonObject? configurationJson, ServiceUri serviceUri, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask ProcessDeletedPolicyFragment(PolicyFragmentName policyFragmentName, PolicyFragmentInformationFile? deletedInformationFile, PolicyFragmentPolicyFile? deletedPolicyFile, JsonObject? configurationJson, ServiceUri serviceUri, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         switch (deletedInformationFile, deletedPolicyFile)
         {
@@ -137,7 +137,7 @@ internal static class PolicyFragment
                 }
                 else
                 {
-                    await PutPolicyFragment(policyFragmentName, existingInformationFile, policyFile: null, configurationJson, serviceUri, putRestResource, logger, cancellationToken);
+                    await PutPolicyFragment(policyFragmentName, existingInformationFile, policyFile: null, configurationJson, serviceUri, putRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
                 }
 
                 return;
@@ -150,7 +150,7 @@ internal static class PolicyFragment
                 }
                 else
                 {
-                    await PutPolicyFragment(policyFragmentName, informationFile: null, existingPolicyFile, configurationJson, serviceUri, putRestResource, logger, cancellationToken);
+                    await PutPolicyFragment(policyFragmentName, informationFile: null, existingPolicyFile, configurationJson, serviceUri, putRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
                 }
 
                 return;
@@ -169,19 +169,19 @@ internal static class PolicyFragment
 
     private static async ValueTask Delete(PolicyFragmentName policyFragmentName, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        var uri = GetPolicyFragmentUri(policyFragmentName, serviceUri);
+        var uri = GetPolicyFragmentUri(policyFragmentName, serviceUri, new DefaultPolicyXmlSpecification.RawXmlFormat());
 
         logger.LogInformation("Deleting policyFragment {policyFragmentName}...", policyFragmentName);
         await deleteRestResource(uri.Uri, cancellationToken);
     }
 
-    public static PolicyFragmentUri GetPolicyFragmentUri(PolicyFragmentName policyFragmentName, ServiceUri serviceUri)
+    public static PolicyFragmentUri GetPolicyFragmentUri(PolicyFragmentName policyFragmentName, ServiceUri serviceUri, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification)
     {
         var policyFragmentsUri = new PolicyFragmentsUri(serviceUri);
-        return new PolicyFragmentUri(policyFragmentName, policyFragmentsUri);
+        return new PolicyFragmentUri(policyFragmentName, policyFragmentsUri, defaultPolicyXmlSpecification);
     }
 
-    private static async ValueTask PutPolicyFragment(PolicyFragmentName policyFragmentName, PolicyFragmentInformationFile? informationFile, PolicyFragmentPolicyFile? policyFile, JsonObject? configurationJson, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask PutPolicyFragment(PolicyFragmentName policyFragmentName, PolicyFragmentInformationFile? informationFile, PolicyFragmentPolicyFile? policyFile, JsonObject? configurationJson, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         if (informationFile is null && policyFile is null && configurationJson is null)
         {
@@ -190,12 +190,12 @@ internal static class PolicyFragment
 
         logger.LogInformation("Putting policyFragment {policyFragmentName}...", policyFragmentName);
 
-        var uri = GetPolicyFragmentUri(policyFragmentName, serviceUri);
-        var json = await GetPolicyFragmentJson(policyFragmentName, informationFile, policyFile, configurationJson, cancellationToken);
+        var uri = GetPolicyFragmentUri(policyFragmentName, serviceUri, defaultPolicyXmlSpecification);
+        var json = await GetPolicyFragmentJson(policyFragmentName, informationFile, policyFile, configurationJson, defaultPolicyXmlSpecification, cancellationToken);
         await putRestResource(uri.Uri, json, cancellationToken);
     }
 
-    private static async ValueTask<JsonObject> GetPolicyFragmentJson(PolicyFragmentName policyFragmentName, PolicyFragmentInformationFile? informationFile, PolicyFragmentPolicyFile? policyFile, JsonObject? configurationJson, CancellationToken cancellationToken)
+    private static async ValueTask<JsonObject> GetPolicyFragmentJson(PolicyFragmentName policyFragmentName, PolicyFragmentInformationFile? informationFile, PolicyFragmentPolicyFile? policyFile, JsonObject? configurationJson, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         var policyFragmentJson = new JsonObject();
 
@@ -211,7 +211,7 @@ internal static class PolicyFragment
             {
                 ["properties"] = new JsonObject
                 {
-                    ["format"] = "rawxml",
+                    ["format"] = defaultPolicyXmlSpecification.Format,
                     ["value"] = await policyFile.ReadAsString(cancellationToken)
                 }
             };
@@ -237,7 +237,7 @@ internal static class PolicyFragment
         return file.Exists() ? file : null;
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         var configurationPolicyFragments = GetConfigurationPolicyFragments(configurationJson);
 
@@ -247,7 +247,7 @@ internal static class PolicyFragment
                           secondKeySelector: configurationArtifact => configurationArtifact.Name,
                           firstSelector: policyFragment => (policyFragment.Name, policyFragment.InformationFile, policyFragment.PolicyFile, ConfigurationJson: (JsonObject?)null),
                           bothSelector: (file, configurationArtifact) => (file.Name, file.InformationFile, file.PolicyFile, ConfigurationJson: configurationArtifact.Json))
-                .ForEachParallel(async artifact => await PutPolicyFragment(artifact.Name, artifact.InformationFile, artifact.PolicyFile, artifact.ConfigurationJson, serviceUri, putRestResource, logger, cancellationToken),
+                .ForEachParallel(async artifact => await PutPolicyFragment(artifact.Name, artifact.InformationFile, artifact.PolicyFile, artifact.ConfigurationJson, serviceUri, putRestResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                  cancellationToken);
     }
 }

@@ -11,11 +11,11 @@ namespace extractor;
 
 internal static class PolicyFragment
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? policyFragmentNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? policyFragmentNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
                 .Where(policyFragmentName => ShouldExport(policyFragmentName, policyFragmentNamesToExport))
-                .ForEachParallel(async policyFragmentName => await Export(serviceDirectory, serviceUri, policyFragmentName, getRestResource, logger, cancellationToken),
+                .ForEachParallel(async policyFragmentName => await Export(serviceDirectory, serviceUri, policyFragmentName, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                  cancellationToken);
     }
 
@@ -32,13 +32,13 @@ internal static class PolicyFragment
                || policyFragmentNamesToExport.Any(policyFragmentNameToExport => policyFragmentNameToExport.Equals(policyFragmentName.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, PolicyFragmentName policyFragmentName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, PolicyFragmentName policyFragmentName, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         var policyFragmentsDirectory = new PolicyFragmentsDirectory(serviceDirectory);
         var policyFragmentDirectory = new PolicyFragmentDirectory(policyFragmentName, policyFragmentsDirectory);
 
         var policyFragmentsUri = new PolicyFragmentsUri(serviceUri);
-        var policyFragmentUri = new PolicyFragmentUri(policyFragmentName, policyFragmentsUri);
+        var policyFragmentUri = new PolicyFragmentUri(policyFragmentName, policyFragmentsUri, defaultPolicyXmlSpecification);
         var policyFragmentJson = await getRestResource(policyFragmentUri.Uri, cancellationToken);
 
         await ExportInformationFile(policyFragmentDirectory, policyFragmentName, policyFragmentJson, logger, cancellationToken);

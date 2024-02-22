@@ -28,6 +28,7 @@ internal class Publisher : BackgroundService
         public required PutRestResource PutRestResource { get; init; }
         public required ServiceDirectory ServiceDirectory { get; init; }
         public required ServiceUri ServiceUri { get; init; }
+        public required DefaultPolicyXmlSpecification DefaultPolicyXmlSpecification { get; init; }
     }
 
     private readonly Parameters publisherParameters;
@@ -90,6 +91,7 @@ internal class Publisher : BackgroundService
                                             publisherParameters.GetRestResource,
                                             publisherParameters.PutRestResource,
                                             publisherParameters.DeleteRestResource,
+                                            publisherParameters.DefaultPolicyXmlSpecification,
                                             logger,
                                             cancellationToken);
     }
@@ -146,6 +148,7 @@ internal class Publisher : BackgroundService
                                               publisherParameters.GetRestResource,
                                               publisherParameters.PutRestResource,
                                               publisherParameters.DeleteRestResource,
+                                              publisherParameters.DefaultPolicyXmlSpecification,
                                               publisherParameters.Logger,
                                               cancellationToken);
     }
@@ -160,6 +163,7 @@ internal class Publisher : BackgroundService
                                             publisherParameters.GetRestResource,
                                             publisherParameters.PutRestResource,
                                             publisherParameters.DeleteRestResource,
+                                            publisherParameters.DefaultPolicyXmlSpecification,
                                             publisherParameters.Logger,
                                             cancellationToken);
     }

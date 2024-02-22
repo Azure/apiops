@@ -15,7 +15,7 @@ namespace extractor;
 
 internal static class Api
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, DefaultApiSpecification defaultSpecification, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, DefaultApiSpecification defaultSpecification, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         await List(serviceUri, listRestResources, cancellationToken)
                 // Filter out apis that should not be exported
@@ -29,7 +29,7 @@ internal static class Api
                 })
                 .GroupBy(api => api.Model.Properties.ApiVersionSetId)
                 // Export each group in parallel
-                .ForEachParallel(async group => await group.ForEachAwaitAsync(async api => await Export(serviceDirectory, serviceUri, api.Name, api.Model, defaultSpecification, listRestResources, getRestResource, downloadResource, logger, cancellationToken),
+                .ForEachParallel(async group => await group.ForEachAwaitAsync(async api => await Export(serviceDirectory, serviceUri, api.Name, api.Model, defaultSpecification, listRestResources, getRestResource, downloadResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                                                               cancellationToken),
                                  cancellationToken);
     }
@@ -63,7 +63,7 @@ internal static class Api
         return ApiModel.Deserialize(apiName, apiResponseJson);
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiName apiName, ApiModel apiModel, DefaultApiSpecification defaultSpecification, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiName apiName, ApiModel apiModel, DefaultApiSpecification defaultSpecification, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         var apisDirectory = new ApisDirectory(serviceDirectory);
         var apiDirectory = new ApiDirectory(apiName, apisDirectory);
@@ -74,9 +74,9 @@ internal static class Api
         await ExportInformationFile(apiModel, apiDirectory, logger, cancellationToken);
         await ExportSpecification(apiModel, apiDirectory, apiUri, defaultSpecification, getRestResource, downloadResource, logger, cancellationToken);
         await ExportTags(apiDirectory, apiUri, listRestResources, logger, cancellationToken);
-        await ExportPolicies(apiDirectory, apiUri, listRestResources, getRestResource, logger, cancellationToken);
+        await ExportPolicies(apiDirectory, apiUri, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
         await ExportDiagnostics(apiDirectory, apiUri, listRestResources, getRestResource, logger, cancellationToken);
-        await ExportOperations(apiDirectory, apiUri, listRestResources, getRestResource, logger, cancellationToken);
+        await ExportOperations(apiDirectory, apiUri, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
     }
 
     private static async ValueTask ExportInformationFile(ApiModel apiModel, ApiDirectory apiDirectory, ILogger logger, CancellationToken cancellationToken)
@@ -208,13 +208,13 @@ internal static class Api
         await ApiDiagnostic.ExportAll(apiUri, apiDirectory, listRestResources, getRestResource, logger, cancellationToken);
     }
 
-    private static async ValueTask ExportPolicies(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask ExportPolicies(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
-        await ApiPolicy.ExportAll(apiDirectory, apiUri, listRestResources, getRestResource, logger, cancellationToken);
+        await ApiPolicy.ExportAll(apiDirectory, apiUri, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
     }
 
-    private static async ValueTask ExportOperations(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask ExportOperations(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
-        await ApiOperation.ExportAll(apiUri, apiDirectory, listRestResources, getRestResource, logger, cancellationToken);
+        await ApiOperation.ExportAll(apiUri, apiDirectory, listRestResources, getRestResource, logger, defaultPolicyXmlSpecification, cancellationToken);
     }
 }

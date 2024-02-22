@@ -34,10 +34,10 @@ public sealed record ProductPolicyUri : IArtifactUri
 {
     public Uri Uri { get; }
 
-    public ProductPolicyUri(ProductPolicyName policyName, ProductPoliciesUri productPoliciesUri)
+    public ProductPolicyUri(ProductPolicyName policyName, ProductPoliciesUri productPoliciesUri, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification)
     {
         Uri = productPoliciesUri.AppendPath(policyName.ToString())
-                                .SetQueryParam("format", "rawxml")
+                                .SetQueryParam("format", defaultPolicyXmlSpecification.Format)
                                 .ToUri();
     }
 }

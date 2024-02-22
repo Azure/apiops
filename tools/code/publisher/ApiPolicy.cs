@@ -57,27 +57,27 @@ internal static class ApiPolicy
     {
         logger.LogInformation("Deleting policy {policyName} in API {apiName}...", policyName, apiName);
 
-        var uri = GetApiPolicyUri(policyName, apiName, serviceUri);
+        var uri = GetApiPolicyUri(policyName, apiName, serviceUri, new DefaultPolicyXmlSpecification.RawXmlFormat());
         await deleteRestResource(uri.Uri, cancellationToken);
     }
 
-    private static ApiPolicyUri GetApiPolicyUri(ApiPolicyName policyName, ApiName apiName, ServiceUri serviceUri)
+    private static ApiPolicyUri GetApiPolicyUri(ApiPolicyName policyName, ApiName apiName, ServiceUri serviceUri, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification)
     {
         var apiUri = Api.GetApiUri(apiName, serviceUri);
         var policiesUri = new ApiPoliciesUri(apiUri);
-        return new ApiPolicyUri(policyName, policiesUri);
+        return new ApiPolicyUri(policyName, policiesUri, defaultPolicyXmlSpecification);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, configurationJson, serviceDirectory, cancellationToken)
-                .ForEachParallel(async artifact => await PutPolicy(artifact.PolicyName, artifact.ApiName, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
+        await GetArtifactsToPut(files, configurationJson, serviceDirectory, defaultPolicyXmlSpecification, cancellationToken)
+                .ForEachParallel(async artifact => await PutPolicy(artifact.PolicyName, artifact.ApiName, artifact.Json, serviceUri, putRestResource, logger, defaultPolicyXmlSpecification, cancellationToken),
                                  cancellationToken);
     }
 
-    private static async IAsyncEnumerable<(ApiPolicyName PolicyName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private static async IAsyncEnumerable<(ApiPolicyName PolicyName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var fileArtifacts = await GetFilePolicies(files, serviceDirectory, cancellationToken).ToListAsync(cancellationToken);
+        var fileArtifacts = await GetFilePolicies(files, serviceDirectory, defaultPolicyXmlSpecification, cancellationToken).ToListAsync(cancellationToken);
         var configurationArtifacts = GetConfigurationPolicies(configurationJson);
         var artifacts = fileArtifacts.LeftJoin(configurationArtifacts,
                                                keySelector: artifact => (artifact.PolicyName, artifact.ApiName),
@@ -89,7 +89,7 @@ internal static class ApiPolicy
         }
     }
 
-    private static IAsyncEnumerable<(ApiPolicyName PolicyName, ApiName ApiName, JsonObject Json)> GetFilePolicies(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    private static IAsyncEnumerable<(ApiPolicyName PolicyName, ApiName ApiName, JsonObject Json)> GetFilePolicies(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         return GetPolicyFiles(files, serviceDirectory)
                 .ToAsyncEnumerable()
@@ -100,7 +100,7 @@ internal static class ApiPolicy
                     {
                         ["properties"] = new JsonObject
                         {
-                            ["format"] = "rawxml",
+                            ["format"] = defaultPolicyXmlSpecification.Format,
                             ["value"] = policyText
                         }
                     };
@@ -142,11 +142,11 @@ internal static class ApiPolicy
                                          });
     }
 
-    private static async ValueTask PutPolicy(ApiPolicyName policyName, ApiName apiName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static async ValueTask PutPolicy(ApiPolicyName policyName, ApiName apiName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification, CancellationToken cancellationToken)
     {
         logger.LogInformation("Putting policy {policyName} in api {apiName}...", policyName, apiName);
 
-        var policyUri = GetApiPolicyUri(policyName, apiName, serviceUri);
+        var policyUri = GetApiPolicyUri(policyName, apiName, serviceUri, defaultPolicyXmlSpecification);
         await putRestResource(policyUri.Uri, json, cancellationToken);
     }
 }

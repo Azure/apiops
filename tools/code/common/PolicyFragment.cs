@@ -50,10 +50,10 @@ public sealed record PolicyFragmentUri : IArtifactUri
 {
     public Uri Uri { get; }
 
-    public PolicyFragmentUri(PolicyFragmentName policyFragmentName, PolicyFragmentsUri policyFragmentsUri)
+    public PolicyFragmentUri(PolicyFragmentName policyFragmentName, PolicyFragmentsUri policyFragmentsUri, DefaultPolicyXmlSpecification defaultPolicyXmlSpecification)
     {
         Uri = policyFragmentsUri.AppendPath(policyFragmentName.ToString())
-                                .SetQueryParam("format", "rawxml")
+                                .SetQueryParam("format", defaultPolicyXmlSpecification.Format)
                                 .ToUri();
     }
 }
