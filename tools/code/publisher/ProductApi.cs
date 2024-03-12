@@ -163,23 +163,20 @@ internal static class ProductApi
                 await putRestResource(productApiUri.Uri, new JsonObject(), cancellationToken);
                 retry = false; // No exception occurred, so no need to retry
             }
-            catch (HttpRequestException httpRequestException)
+            catch (HttpRequestException httpRequestException) when (httpRequestException.Message.Contains("API cannot be added to more than one open products"))
             {
-                if (httpRequestException.Message.Contains("API cannot be added to more than one open products"))
+                retryCount++;
+                if (retryCount <= 3)
                 {
-                    retryCount++;
-                    if (retryCount <= 3)
-                    {
-                        // Log the retry attempt
-                        logger.LogWarning("Retrying API put operation for {apiName}. Retry attempt: {retryCount}", apiName, retryCount);
-                        // Wait for a certain duration before retrying
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)), cancellationToken);
-                    }
-                    else
-                    {
-                        // Retry limit reached, throw the exception
-                        throw;
-                    }
+                    // Log the retry attempt
+                    logger.LogWarning("Retrying API put operation for {apiName}. Retry attempt: {retryCount}", apiName, retryCount);
+                    // Wait for a certain duration before retrying
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)), cancellationToken);
+                }
+                else
+                {
+                    // Retry limit reached, throw the exception
+                    throw;
                 }
             }
         }
