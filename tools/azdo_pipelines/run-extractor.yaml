@@ -102,6 +102,9 @@ stages:
                 elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*arm*") {
                   $extractorFileName = "extractor.osx-arm64"
                 }
+                elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*x86_64*") {
+                  $extractorFileName = "extractor.osx-x64"
+                }
                 
                 $uri = "https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/$extractorFileName"
                 $destinationFilePath = Join-Path "$(Agent.TempDirectory)" $extractorFinalFileName

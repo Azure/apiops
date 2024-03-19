@@ -13,9 +13,9 @@ jobs:
     name: Generate extractor artifacts
     strategy:
       matrix:
-        dotnet-runtime: [linux-x64, linux-arm64, win-x64, osx-arm64]
+        dotnet-runtime: [linux-x64, linux-arm64, win-x64, osx-arm64, osx-x64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest"}')[matrix.dotnet-runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -59,9 +59,9 @@ jobs:
     name: Generate publisher artifacts
     strategy:
       matrix:
-        dotnet-runtime: [linux-x64, linux-arm64, win-x64, osx-arm64]
+        dotnet-runtime: [linux-x64, linux-arm64, win-x64, osx-arm64, osx-x64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest"}')[matrix.dotnet-runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -236,10 +236,12 @@ jobs:
             ${{github.workspace}}/artifact/extractor.linux-x64
             ${{github.workspace}}/artifact/extractor.linux-arm64
             ${{github.workspace}}/artifact/extractor.osx-arm64
+            ${{github.workspace}}/artifact/extractor.osx-x64
             ${{github.workspace}}/artifact/publisher.win-x64.exe
             ${{github.workspace}}/artifact/publisher.linux-x64
             ${{github.workspace}}/artifact/publisher.linux-arm64
             ${{github.workspace}}/artifact/publisher.osx-arm64
+            ${{github.workspace}}/artifact/publisher.osx-x64
             ${{github.workspace}}/artifact/Github.zip
             ${{github.workspace}}/artifact/Azure_DevOps.zip
           name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}

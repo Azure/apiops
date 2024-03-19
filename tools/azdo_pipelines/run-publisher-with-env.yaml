@@ -97,6 +97,9 @@ steps:
         elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*arm*") {
           $publisherFileName = "publisher.osx-arm64"
         }
+        elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*x86_64*") {
+          $publisherFileName = "publisher.osx-x64"
+        }
         
         $uri = "https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/$publisherFileName"
         $destinationFilePath = Join-Path "$(Agent.TempDirectory)" $publisherFinalFileName

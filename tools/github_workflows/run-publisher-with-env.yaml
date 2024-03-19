@@ -78,6 +78,9 @@ jobs:
           elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*arm*") {
             $publisherFileName = "publisher.osx-arm64"
           }
+          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*x86_64*") {
+            $publisherFileName = "publisher.osx-x64"
+          }
           
           $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
           $destinationFilePath = Join-Path "${{ runner.temp }}" $publisherFinalFileName
@@ -121,6 +124,9 @@ jobs:
           }
           elseif("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*arm*"){
             $publisherFileName = "publisher.osx-arm64"
+          }
+          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*x86_64*") {
+            $publisherFileName = "publisher.osx-x64"
           }
           
           $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
@@ -168,6 +174,9 @@ jobs:
           elseif("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*arm*"){
             $publisherFileName = "publisher.osx-arm64"
           }
+          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*x86_64*") {
+            $publisherFileName = "publisher.osx-x64"
+          }
           
           $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
           $destinationFilePath = Join-Path "${{ runner.temp }}" $publisherFinalFileName
@@ -212,6 +221,9 @@ jobs:
           }
           elseif("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*arm*"){
             $publisherFileName = "publisher.osx-arm64"
+          }
+          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*x86_64*") {
+            $publisherFileName = "publisher.osx-x64"
           }
           
           $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$publisherFileName"
