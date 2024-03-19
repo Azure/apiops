@@ -97,7 +97,7 @@ steps:
         elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*arm*") {
           $publisherFileName = "publisher.osx-arm64"
         }
-        elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*x64*") {
+        elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*x86_64*") {
           $publisherFileName = "publisher.osx-x64"
         }
         

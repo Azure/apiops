@@ -102,7 +102,7 @@ stages:
                 elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*arm*") {
                   $extractorFileName = "extractor.osx-arm64"
                 }
-                elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*x64*") {
+                elseif ("$(Agent.OS)" -like "*mac*" -and "$(Agent.OSArchitecture)" -like "*x86_64*") {
                   $extractorFileName = "extractor.osx-x64"
                 }
                 

@@ -57,7 +57,7 @@ jobs:
           elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*arm*") {
             $extractorFileName = "extractor.osx-arm64"
           }
-          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*x64*") {
+          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*x86_64*") {
             $extractorFileName = "extractor.osx-x64"
           }
           
