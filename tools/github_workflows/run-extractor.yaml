@@ -57,6 +57,9 @@ jobs:
           elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*arm*") {
             $extractorFileName = "extractor.osx-arm64"
           }
+          elseif ("${{ runner.os }}" -like "*mac*" -and "${{ runner.arch }}" -like "*x64*") {
+            $extractorFileName = "extractor.osx-x64"
+          }
           
           $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$extractorFileName"
           $destinationFilePath = Join-Path "${{ runner.temp }}" $extractorFinalFileName
