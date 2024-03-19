@@ -179,6 +179,28 @@ stages:
               targetPath: "$(Build.ArtifactStagingDirectory)"
               artifactType: pipeline
               artifactName: artifacts-from-portal
+
+          - task: Bash@3
+            displayName: 'Pipeline Summary Tab Upload'
+            inputs:
+              targetType: 'inline'
+              script: |
+                outputFilePath="$(Build.ArtifactStagingDirectory)/run-extractor.md"
+                apiDirectoryPath="$(Build.ArtifactStagingDirectory)/artifacts"
+                cd "$apiDirectoryPath" # exclude top directory
+                
+                echo "# Azure APIM Modifications Summary" > "$outputFilePath"
+                echo "" >> "outputFilePath" #newline                
+                echo '```' >> "$outputFilePath"
+                tree -d --noreport -I "outputFilePath" | sed 's/^/    /' >> "$outputFilePath"
+                echo '```' >> "$outputFilePath"
+
+                # Display the path to the generated Markdown file
+                echo "Generated Markdown summary at $outputFilePath"
+
+                # Display the Markdown file in the pipeline summary
+                echo "##vso[task.uploadsummary]$outputFilePath"
+          
   - stage: create_template_branch
     displayName: Create template branch
     jobs:
