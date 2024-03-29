@@ -32,6 +32,7 @@ internal static class Gateway
         var gatewayJsonObjects = listRestResources(gatewaysUri.Uri, cancellationToken);
 
         return gatewayJsonObjects.Select(json => json.GetStringProperty("name"))
+                                 .Append(GatewayDirectory.Managed)
                                  .Select(name => new GatewayName(name));
     }
 
@@ -43,7 +44,9 @@ internal static class Gateway
         var gatewaysUri = new GatewaysUri(serviceUri);
         var gatewayUri = new GatewayUri(gatewayName, gatewaysUri);
 
-        await ExportInformationFile(gatewayDirectory, gatewayUri, gatewayName, getRestResource, logger, cancellationToken);
+        if (gatewayName.ToString().Equals(GatewayDirectory.Managed) is false) {
+            await ExportInformationFile(gatewayDirectory, gatewayUri, gatewayName, getRestResource, logger, cancellationToken);
+        }
         await ExportApis(gatewayDirectory, gatewayUri, apiNamesToExport, listRestResources, logger, cancellationToken);
     }
 

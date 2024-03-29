@@ -21,7 +21,7 @@ internal static class GatewayApi
                                     .Select(SerializeGatewayApi)
                                     .ToJsonArray(cancellationToken);
 
-        if (gatewayApis.Any())
+        if (gatewayApis.Any() || gatewayDirectory.GetName().Equals(GatewayDirectory.Managed))
         {
             logger.LogInformation("Writing gateway APIs file {filePath}...", gatewayApisFile.Path);
             await gatewayApisFile.OverwriteWithJson(gatewayApis, cancellationToken);

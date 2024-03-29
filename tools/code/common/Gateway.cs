@@ -57,6 +57,8 @@ public sealed record GatewayUri : IArtifactUri
 
 public sealed record GatewayDirectory : IArtifactDirectory
 {
+    public static string Managed { get; } = "managed";
+
     public ArtifactPath Path { get; }
 
     public GatewaysDirectory GatewaysDirectory { get; }

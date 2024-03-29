@@ -1,6 +1,5 @@
 ﻿using common;
 using Microsoft.Extensions.Logging;
-using MoreLinq;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
@@ -47,7 +46,12 @@ internal static class GatewayApi
 
     private static IEnumerable<GatewayApisFile> GetGatewayApisFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
     {
-        return files.Choose(file => TryGetApisFile(file, serviceDirectory));
+        var managedGatewayPath = serviceDirectory.Path.Append(GatewayDirectory.Managed)
+                                                      .Append(GatewayApisFile.Name);
+        var managedGatewayFile = new FileInfo(managedGatewayPath.ToString());
+
+        return files.Append(managedGatewayFile)
+                    .Choose(file => TryGetApisFile(file, serviceDirectory));
     }
 
     private static GatewayApisFile? TryGetApisFile(FileInfo? file, ServiceDirectory serviceDirectory)
