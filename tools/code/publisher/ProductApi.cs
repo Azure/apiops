@@ -179,6 +179,12 @@ internal static class ProductApi
                     throw;
                 }
             }
+            catch (HttpRequestException httpRequestException) when (httpRequestException.Message.Contains("API not found"))
+            {
+                logger.LogWarning("API not found, the API will not be added to the Product.");
+
+                return;
+            }
         }
     }
 
