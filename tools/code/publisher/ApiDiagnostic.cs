@@ -147,7 +147,14 @@ internal static class ApiDiagnostic
 
     private static async ValueTask Put(ApiDiagnosticName diagnosticName, ApiName apiName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
     {
-        logger.LogInformation("PUtting diagnostic {diagnosticName} in API {apiName}...", diagnosticName, apiName);
+        logger.LogInformation("Putting diagnostic {diagnosticName} in API {apiName}...", diagnosticName, apiName);
+
+        if (string.IsNullOrEmpty(json.TryGetProperty("properties")?.AsObject().TryGetStringProperty("loggerId")))
+        {
+            logger.LogWarning("Empty 'loggerId' found. ApiDiagnostics will be ignored.");
+
+            return;
+        }
 
         var uri = GetDiagnosticUri(diagnosticName, apiName, serviceUri);
         await putRestResource(uri.Uri, json, cancellationToken);
