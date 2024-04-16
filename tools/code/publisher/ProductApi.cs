@@ -179,6 +179,25 @@ internal static class ProductApi
                     throw;
                 }
             }
+            catch (HttpRequestException httpRequestException) when (httpRequestException.Message.Contains("API not found"))
+            {
+                retryCount++;
+                if (retryCount <= 3)
+                {
+                    // Log the retry attempt
+                    logger.LogWarning("Retrying API put operation for {apiName}. Retry attempt: {retryCount}", apiName, retryCount);
+                    // Wait for a certain duration before retrying
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)), cancellationToken);
+                }
+                else
+                {
+                    // Retry limit reached, log as warning
+                    logger.LogWarning("API {apiName} not found, the API is NOT added to product in the target environment.", apiName);
+
+                    // End retry without exception
+                    return;
+                }
+            }
         }
     }
 
