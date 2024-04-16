@@ -192,7 +192,7 @@ internal static class ProductApi
                 else
                 {
                     // Retry limit reached, log as warning
-                    logger.LogWarning("API {apiName} not found, the API will not be added to product in the target environment.", apiName);
+                    logger.LogWarning("API {apiName} not found, the API is NOT added to product in the target environment.", apiName);
 
                     // End retry without exception
                     return;
