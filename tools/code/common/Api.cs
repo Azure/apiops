@@ -1,504 +1,736 @@
-﻿using System;
+﻿using Azure;
+using Azure.Core;
+using Azure.Core.Pipeline;
+using Flurl;
+using LanguageExt;
+using Polly;
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
+using YamlDotNet.System.Text.Json;
 
 namespace common;
 
-public sealed record ApisUri : IArtifactUri
+public sealed record ApiRevisionNumber
 {
-    public Uri Uri { get; }
+    private uint Value { get; }
 
-    public ApisUri(ServiceUri serviceUri)
+    private ApiRevisionNumber(uint value)
     {
-        Uri = serviceUri.AppendPath("apis");
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value, nameof(value));
+        Value = value;
+    }
+
+    public int ToInt() => (int)Value;
+
+    public override string ToString() => string.Create(CultureInfo.InvariantCulture, $"{Value}");
+
+    public static ApiRevisionNumber From(int value) => new((uint)value);
+
+    public static Option<ApiRevisionNumber> TryFrom(string? value) =>
+        uint.TryParse(value, out var revisionNumber) && revisionNumber > 0
+        ? new ApiRevisionNumber(revisionNumber)
+        : Option<ApiRevisionNumber>.None;
+}
+
+public sealed record ApiName : ResourceName
+{
+    private const string RevisionSeparator = ";rev=";
+
+    private ApiName(string value) : base(value) { }
+
+    public static ApiName From(string value) => new(value);
+
+    private static Either<string, (ApiName RootName, ApiRevisionNumber RevisionNumber)> TryParseRevisionedName(string name) =>
+        name.Split(RevisionSeparator) switch
+        {
+        [var rootName, var revisionNumberString] =>
+            ApiRevisionNumber.TryFrom(revisionNumberString)
+                             .Map(revisionNumber => (ApiName.From(rootName), revisionNumber))
+                             .ToEither($"'{revisionNumberString}' is not a valid revision number."),
+            _ => $"Cannot parse name '{name}' as a revisioned API name."
+        };
+
+    public static Either<string, (ApiName RootName, ApiRevisionNumber RevisionNumber)> TryParseRevisionedName(ApiName name) =>
+        TryParseRevisionedName(name.Value);
+
+    public static bool IsNotRevisioned(ApiName name) => TryParseRevisionedName(name).IsLeft;
+
+    public static bool IsRevisioned(ApiName name) => TryParseRevisionedName(name).IsRight;
+
+    public static ApiName GetRootName(ApiName name) =>
+        TryParseRevisionedName(name).Map(revisionedName => revisionedName.RootName).IfLeft(name);
+
+    public static ApiName GetRevisionedName(ApiName name, ApiRevisionNumber revisionNumber)
+    {
+        var rootName = GetRootName(name);
+        return ApiName.From($"{rootName.Value}{RevisionSeparator}{revisionNumber.ToInt()}");
     }
 }
 
-public sealed record ApisDirectory : IArtifactDirectory
+public sealed record ApisUri : ResourceUri
 {
-    public static string Name { get; } = "apis";
+    public required ManagementServiceUri ServiceUri { get; init; }
 
-    public ArtifactPath Path { get; }
+    private static string PathSegment { get; } = "apis";
 
-    public ServiceDirectory ServiceDirectory { get; }
+    protected override Uri Value => ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public ApisDirectory(ServiceDirectory serviceDirectory)
-    {
-        Path = serviceDirectory.Path.Append(Name);
-        ServiceDirectory = serviceDirectory;
-    }
+    public static ApisUri From(ManagementServiceUri serviceUri) =>
+        new() { ServiceUri = serviceUri };
 }
 
-public sealed record ApiName
+public sealed record ApiUri : ResourceUri
 {
-    private readonly string value;
+    public required ApisUri Parent { get; init; }
+    public required ApiName Name { get; init; }
 
-    public ApiName(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new ArgumentException($"API name cannot be null or whitespace.", nameof(value));
-        }
+    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
 
-        this.value = value;
-    }
-
-    public override string ToString() => value;
-}
-
-public sealed record ApiUri : IArtifactUri
-{
-    public Uri Uri { get; }
-
-    public ApiUri(ApiName apiName, ApisUri apisUri)
-    {
-        Uri = apisUri.AppendPath(apiName.ToString());
-    }
-}
-
-public sealed record ApiDirectory : IArtifactDirectory
-{
-    public ArtifactPath Path { get; }
-
-    public ApisDirectory ApisDirectory { get; }
-
-    public ApiDirectory(ApiName apiName, ApisDirectory apisDirectory)
-    {
-        Path = apisDirectory.Path.Append(apiName.ToString());
-        ApisDirectory = apisDirectory;
-    }
-}
-
-public sealed record ApiInformationFile : IArtifactFile
-{
-    public static string Name { get; } = "apiInformation.json";
-
-    public ArtifactPath Path { get; }
-
-    public ApiDirectory ApiDirectory { get; }
-
-    public string ApiName => ApiDirectory.GetName();
-
-    public ApiInformationFile(ApiDirectory apiDirectory)
-    {
-        Path = apiDirectory.Path.Append(Name);
-        ApiDirectory = apiDirectory;
-    }
-}
-
-public sealed record ApiModel
-{
-    public required string Name { get; init; }
-
-    public required ApiCreateOrUpdateProperties Properties { get; init; }
-
-    public sealed record ApiCreateOrUpdateProperties
-    {
-        public string? ApiRevision { get; init; }
-        public string? ApiRevisionDescription { get; init; }
-        public ApiTypeOption? ApiType { get; init; }
-        public string? ApiVersion { get; init; }
-        public string? ApiVersionDescription { get; init; }
-        public ApiVersionSetContractDetails? ApiVersionSet { get; init; }
-        public string? ApiVersionSetId { get; init; }
-        public AuthenticationSettingsContract? AuthenticationSettings { get; init; }
-        public ApiContactInformation? Contact { get; init; }
-        public string? Description { get; init; }
-        public string? DisplayName { get; init; }
-        public ApiFormatOption? Format { get; init; }
-        public bool? IsCurrent { get; init; }
-        public bool? IsOnline { get; init; }
-        public ApiLicenseInformation? License { get; init; }
-        public string? Path { get; init; }
-        public ProtocolOption[]? Protocols { get; init; }
-        public string? ServiceUrl { get; init; }
-        public string? SourceApiId { get; init; }
-        public SubscriptionKeyParameterNamesContract? SubscriptionKeyParameterNames { get; init; }
-        public bool? SubscriptionRequired { get; init; }
-        public string? TermsOfServiceUrl { get; init; }
-        public ApiTypeOption? Type { get; init; }
-        public string? Value { get; init; }
-        public ApiCreateOrUpdatePropertiesWsdlSelector? WsdlSelector { get; init; }
-
-        public JsonObject Serialize() =>
-            new JsonObject()
-                .AddPropertyIfNotNull("apiRevision", ApiRevision)
-                .AddPropertyIfNotNull("apiRevisionDescription", ApiRevisionDescription)
-                .AddPropertyIfNotNull("apiType", ApiType?.Serialize())
-                .AddPropertyIfNotNull("apiVersion", ApiVersion)
-                .AddPropertyIfNotNull("apiVersionDescription", ApiVersionDescription)
-                .AddPropertyIfNotNull("apiVersionSet", ApiVersionSet?.Serialize())
-                .AddPropertyIfNotNull("apiVersionSetId", ApiVersionSetId)
-                .AddPropertyIfNotNull("authenticationSettings", AuthenticationSettings?.Serialize())
-                .AddPropertyIfNotNull("contact", Contact?.Serialize())
-                .AddPropertyIfNotNull("description", Description)
-                .AddPropertyIfNotNull("displayName", DisplayName)
-                .AddPropertyIfNotNull("format", Format?.Serialize())
-                .AddPropertyIfNotNull("isCurrent", IsCurrent)
-                .AddPropertyIfNotNull("isOnline", IsOnline)
-                .AddPropertyIfNotNull("license", License?.Serialize())
-                .AddPropertyIfNotNull("path", Path)
-                .AddPropertyIfNotNull("protocols", Protocols?.Select(protocol => protocol.Serialize())
-                                                            ?.ToJsonArray())
-                .AddPropertyIfNotNull("serviceUrl", ServiceUrl)
-                .AddPropertyIfNotNull("sourceApiId", SourceApiId)
-                .AddPropertyIfNotNull("subscriptionKeyParameterNames", SubscriptionKeyParameterNames?.Serialize())
-                .AddPropertyIfNotNull("subscriptionRequired", SubscriptionRequired)
-                .AddPropertyIfNotNull("termsOfServiceUrl", TermsOfServiceUrl)
-                .AddPropertyIfNotNull("type", Type?.Serialize())
-                .AddPropertyIfNotNull("value", Value)
-                .AddPropertyIfNotNull("wsdlSelector", WsdlSelector?.Serialize());
-
-        public static ApiCreateOrUpdateProperties Deserialize(JsonObject jsonObject) =>
-            new()
-            {
-                ApiRevision = jsonObject.TryGetStringProperty("apiRevision"),
-                ApiRevisionDescription = jsonObject.TryGetStringProperty("apiRevisionDescription"),
-                ApiType = jsonObject.TryGetProperty("apiType")
-                                    .Map(ApiTypeOption.Deserialize),
-                ApiVersion = jsonObject.TryGetStringProperty("apiVersion"),
-                ApiVersionDescription = jsonObject.TryGetStringProperty("apiVersionDescription"),
-                ApiVersionSet = jsonObject.TryGetJsonObjectProperty("apiVersionSet")
-                                          .Map(ApiVersionSetContractDetails.Deserialize),
-                ApiVersionSetId = jsonObject.TryGetStringProperty("apiVersionSetId"),
-                AuthenticationSettings = jsonObject.TryGetJsonObjectProperty("authenticationSettings")
-                                                   .Map(AuthenticationSettingsContract.Deserialize),
-                Contact = jsonObject.TryGetJsonObjectProperty("contact")
-                                    .Map(ApiContactInformation.Deserialize),
-                Description = jsonObject.TryGetStringProperty("description"),
-                DisplayName = jsonObject.TryGetStringProperty("displayName"),
-                Format = jsonObject.TryGetProperty("format")
-                                   .Map(ApiFormatOption.Deserialize),
-                IsCurrent = jsonObject.TryGetBoolProperty("isCurrent"),
-                IsOnline  = jsonObject.TryGetBoolProperty("isOnline"),
-                License = jsonObject.TryGetJsonObjectProperty("license")
-                                    .Map(ApiLicenseInformation.Deserialize),
-                Path = jsonObject.TryGetStringProperty("path"),
-                Protocols = jsonObject.TryGetJsonArrayProperty("protocols")
-                                      .Map(jsonArray => jsonArray.Choose(node => node is null ? null : ProtocolOption.Deserialize(node))
-                                                                 .ToArray()),
-                ServiceUrl = jsonObject.TryGetStringProperty("serviceUrl"),
-                SourceApiId = jsonObject.TryGetStringProperty("sourceApiId"),
-                SubscriptionKeyParameterNames = jsonObject.TryGetJsonObjectProperty("subscriptionKeyParameterNames")
-                                                          .Map(SubscriptionKeyParameterNamesContract.Deserialize),
-                SubscriptionRequired = jsonObject.TryGetBoolProperty("subscriptionRequired"),
-                TermsOfServiceUrl = jsonObject.TryGetStringProperty("termsOfServiceUrl"),
-                Type = jsonObject.TryGetProperty("type")
-                                 .Map(ApiTypeOption.Deserialize),
-                Value = jsonObject.TryGetStringProperty("value"),
-                WsdlSelector = jsonObject.TryGetJsonObjectProperty("wsdlSelector")
-                                         .Map(ApiCreateOrUpdatePropertiesWsdlSelector.Deserialize)
-            };
-
-        public sealed record ApiTypeOption
-        {
-            private readonly string value;
-
-            private ApiTypeOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static ApiTypeOption GraphQl => new("graphql");
-            public static ApiTypeOption Http => new("http");
-            public static ApiTypeOption Soap => new("soap");
-            public static ApiTypeOption WebSocket => new("websocket");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static ApiTypeOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(GraphQl).Equals(value, StringComparison.OrdinalIgnoreCase) => GraphQl,
-                        _ when nameof(Http).Equals(value, StringComparison.OrdinalIgnoreCase) => Http,
-                        _ when nameof(Soap).Equals(value, StringComparison.OrdinalIgnoreCase) => Soap,
-                        _ when nameof(WebSocket).Equals(value, StringComparison.OrdinalIgnoreCase) => WebSocket,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(ApiTypeOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-
-        public sealed record ApiVersionSetContractDetails
-        {
-            public string? Description { get; init; }
-            public string? Id { get; init; }
-            public string? Name { get; init; }
-            public string? VersionHeaderName { get; init; }
-            public VersioningSchemeOption? VersioningScheme { get; init; }
-            public string? VersionQueryName { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("description", Description)
-                    .AddPropertyIfNotNull("id", Id)
-                    .AddPropertyIfNotNull("name", Name)
-                    .AddPropertyIfNotNull("versionHeaderName", VersionHeaderName)
-                    .AddPropertyIfNotNull("apiType", VersioningScheme?.Serialize())
-                    .AddPropertyIfNotNull("versionQueryName", VersionQueryName);
-
-            public static ApiVersionSetContractDetails Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Description = jsonObject.TryGetStringProperty("description"),
-                    Id = jsonObject.TryGetStringProperty("id"),
-                    Name = jsonObject.TryGetStringProperty("name"),
-                    VersionHeaderName = jsonObject.TryGetStringProperty("versionHeaderName"),
-                    VersioningScheme = jsonObject.TryGetProperty("apiType").Map(VersioningSchemeOption.Deserialize),
-                    VersionQueryName = jsonObject.TryGetStringProperty("versionQueryName"),
-                };
-
-            public sealed record VersioningSchemeOption
-            {
-                private readonly string value;
-
-                private VersioningSchemeOption(string value)
-                {
-                    this.value = value;
-                }
-
-                public static VersioningSchemeOption Header => new("Header");
-                public static VersioningSchemeOption Query => new("Query");
-                public static VersioningSchemeOption Segment => new("Segment");
-
-                public override string ToString() => value;
-
-                public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-                public static VersioningSchemeOption Deserialize(JsonNode node) =>
-                    node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                        ? value switch
-                        {
-                            _ when nameof(Header).Equals(value, StringComparison.OrdinalIgnoreCase) => Header,
-                            _ when nameof(Query).Equals(value, StringComparison.OrdinalIgnoreCase) => Query,
-                            _ when nameof(Segment).Equals(value, StringComparison.OrdinalIgnoreCase) => Segment,
-                            _ => throw new JsonException($"'{value}' is not a valid {nameof(VersioningSchemeOption)}.")
-                        }
-                        : throw new JsonException("Node must be a string JSON value.");
-            }
-        }
-
-        public sealed record AuthenticationSettingsContract
-        {
-            public OAuth2AuthenticationSettingsContract? OAuth2 { get; init; }
-            public OpenIdAuthenticationSettingsContract? OpenId { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("oAuth2", OAuth2?.Serialize())
-                    .AddPropertyIfNotNull("openid", OpenId?.Serialize());
-
-            public static AuthenticationSettingsContract Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    OAuth2 = jsonObject.TryGetJsonObjectProperty("oAuth2").Map(OAuth2AuthenticationSettingsContract.Deserialize),
-                    OpenId = jsonObject.TryGetJsonObjectProperty("openid").Map(OpenIdAuthenticationSettingsContract.Deserialize),
-                };
-
-            public sealed record OAuth2AuthenticationSettingsContract
-            {
-                public string? AuthorizationServerId { get; init; }
-                public string? Scope { get; init; }
-
-                public JsonObject Serialize() =>
-                    new JsonObject()
-                        .AddPropertyIfNotNull("authorizationServerId", AuthorizationServerId)
-                        .AddPropertyIfNotNull("scope", Scope);
-
-                public static OAuth2AuthenticationSettingsContract Deserialize(JsonObject jsonObject) =>
-                    new()
-                    {
-                        AuthorizationServerId = jsonObject.TryGetStringProperty("authorizationServerId"),
-                        Scope = jsonObject.TryGetStringProperty("scope")
-                    };
-            }
-
-            public sealed record OpenIdAuthenticationSettingsContract
-            {
-                public string[]? BearerTokenSendingMethods { get; init; }
-                public string? OpenIdProviderId { get; init; }
-
-                public JsonObject Serialize() =>
-                    new JsonObject()
-                        .AddPropertyIfNotNull("bearerTokenSendingMethods", BearerTokenSendingMethods?.Choose(method => (JsonNode?)method)
-                                                                                                    ?.ToJsonArray())
-                        .AddPropertyIfNotNull("openidProviderId", OpenIdProviderId);
-
-                public static OpenIdAuthenticationSettingsContract Deserialize(JsonObject jsonObject) =>
-                    new()
-                    {
-                        BearerTokenSendingMethods = jsonObject.TryGetJsonArrayProperty("bearerTokenSendingMethods")
-                                                              .Map(jsonArray => jsonArray.Choose(node => node?.GetValue<string>())
-                                                                                         .ToArray()),
-                        OpenIdProviderId = jsonObject.TryGetStringProperty("openidProviderId")
-                    };
-            }
-        }
-
-        public sealed record ApiContactInformation
-        {
-            public string? Email { get; init; }
-            public string? Name { get; init; }
-            public string? Url { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("email", Email)
-                    .AddPropertyIfNotNull("name", Name)
-                    .AddPropertyIfNotNull("url", Url);
-
-            public static ApiContactInformation Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Email = jsonObject.TryGetStringProperty("email"),
-                    Name = jsonObject.TryGetStringProperty("name"),
-                    Url = jsonObject.TryGetStringProperty("url")
-                };
-        }
-
-        public sealed record ApiFormatOption
-        {
-            private readonly string value;
-
-            private ApiFormatOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static ApiFormatOption GraphQl => new("graphql-link");
-            public static ApiFormatOption OpenApi => new("openapi");
-            public static ApiFormatOption OpenApiJson => new("openapi+json");
-            public static ApiFormatOption OpenApiJsonLink => new("openapi+json-link");
-            public static ApiFormatOption OpenApiLink => new("openapi-link");
-            public static ApiFormatOption SwaggerJson => new("swagger-json");
-            public static ApiFormatOption SwaggerLinkJson => new("swagger-link-json");
-            public static ApiFormatOption WadlLinkJson => new("wadl-link-json");
-            public static ApiFormatOption WadlXml => new("wadl-xml");
-            public static ApiFormatOption Wsdl => new("wsdl");
-            public static ApiFormatOption WsdlLink => new("wsdl-link");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static ApiFormatOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(GraphQl).Equals(value, StringComparison.OrdinalIgnoreCase) => GraphQl,
-                        _ when nameof(OpenApi).Equals(value, StringComparison.OrdinalIgnoreCase) => OpenApi,
-                        _ when nameof(OpenApiJson).Equals(value, StringComparison.OrdinalIgnoreCase) => OpenApiJson,
-                        _ when nameof(OpenApiJsonLink).Equals(value, StringComparison.OrdinalIgnoreCase) => OpenApiJsonLink,
-                        _ when nameof(OpenApiLink).Equals(value, StringComparison.OrdinalIgnoreCase) => OpenApiLink,
-                        _ when nameof(SwaggerJson).Equals(value, StringComparison.OrdinalIgnoreCase) => SwaggerJson,
-                        _ when nameof(SwaggerLinkJson).Equals(value, StringComparison.OrdinalIgnoreCase) => SwaggerLinkJson,
-                        _ when nameof(WadlLinkJson).Equals(value, StringComparison.OrdinalIgnoreCase) => WadlLinkJson,
-                        _ when nameof(WadlXml).Equals(value, StringComparison.OrdinalIgnoreCase) => WadlXml,
-                        _ when nameof(Wsdl).Equals(value, StringComparison.OrdinalIgnoreCase) => Wsdl,
-                        _ when nameof(WsdlLink).Equals(value, StringComparison.OrdinalIgnoreCase) => WsdlLink,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(ApiFormatOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-
-        public sealed record ApiLicenseInformation
-        {
-            public string? Name { get; init; }
-            public string? Url { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("name", Name)
-                    .AddPropertyIfNotNull("url", Url);
-
-            public static ApiLicenseInformation Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Name = jsonObject.TryGetStringProperty("name"),
-                    Url = jsonObject.TryGetStringProperty("url")
-                };
-        }
-
-        public sealed record ProtocolOption
-        {
-            private readonly string value;
-
-            private ProtocolOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static ProtocolOption Http => new("http");
-            public static ProtocolOption Https => new("https");
-            public static ProtocolOption Ws => new("ws");
-            public static ProtocolOption Wss => new("wss");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static ProtocolOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(Http).Equals(value, StringComparison.OrdinalIgnoreCase) => Http,
-                        _ when nameof(Https).Equals(value, StringComparison.OrdinalIgnoreCase) => Https,
-                        _ when nameof(Ws).Equals(value, StringComparison.OrdinalIgnoreCase) => Ws,
-                        _ when nameof(Wss).Equals(value, StringComparison.OrdinalIgnoreCase) => Wss,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(ProtocolOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-
-        public sealed record SubscriptionKeyParameterNamesContract
-        {
-            public string? Header { get; init; }
-            public string? Query { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("header", Header)
-                    .AddPropertyIfNotNull("query", Query);
-
-            public static SubscriptionKeyParameterNamesContract Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Header = jsonObject.TryGetStringProperty("header"),
-                    Query = jsonObject.TryGetStringProperty("query")
-                };
-        }
-
-        public sealed record ApiCreateOrUpdatePropertiesWsdlSelector
-        {
-            public string? WsdlEndpointName { get; init; }
-            public string? WsdlServiceName { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("wsdlEndpointName", WsdlEndpointName)
-                    .AddPropertyIfNotNull("wsdlServiceName", WsdlServiceName);
-
-            public static ApiCreateOrUpdatePropertiesWsdlSelector Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    WsdlEndpointName = jsonObject.TryGetStringProperty("wsdlEndpointName"),
-                    WsdlServiceName = jsonObject.TryGetStringProperty("wsdlServiceName")
-                };
-        }
-    }
-
-    public JsonObject Serialize() =>
-        new JsonObject()
-            .AddProperty("properties", Properties.Serialize());
-
-    public static ApiModel Deserialize(ApiName name, JsonObject jsonObject) =>
+    public static ApiUri From(ApiName name, ManagementServiceUri serviceUri) =>
         new()
         {
-            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
-            Properties = jsonObject.GetJsonObjectProperty("properties")
-                                   .Map(ApiCreateOrUpdateProperties.Deserialize)!
+            Parent = ApisUri.From(serviceUri),
+            Name = name
         };
+}
+
+public sealed record ApisDirectory : ResourceDirectory
+{
+    public required ManagementServiceDirectory ServiceDirectory { get; init; }
+
+    private static string Name { get; } = "apis";
+
+    protected override DirectoryInfo Value =>
+        ServiceDirectory.ToDirectoryInfo().GetChildDirectory(Name);
+
+    public static ApisDirectory From(ManagementServiceDirectory serviceDirectory) =>
+        new() { ServiceDirectory = serviceDirectory };
+
+    public static Option<ApisDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        directory is not null &&
+        directory.Name == Name &&
+        directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
+            ? new ApisDirectory { ServiceDirectory = serviceDirectory }
+            : Option<ApisDirectory>.None;
+}
+
+public sealed record ApiDirectory : ResourceDirectory
+{
+    public required ApisDirectory Parent { get; init; }
+
+    public required ApiName Name { get; init; }
+
+    protected override DirectoryInfo Value =>
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+
+    public static ApiDirectory From(ApiName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = ApisDirectory.From(serviceDirectory),
+            Name = name
+        };
+
+    public static Option<ApiDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        from parent in ApisDirectory.TryParse(directory?.Parent, serviceDirectory)
+        select new ApiDirectory
+        {
+            Parent = parent,
+            Name = ApiName.From(directory!.Name)
+        };
+}
+
+public sealed record ApiInformationFile : ResourceFile
+{
+    public required ApiDirectory Parent { get; init; }
+    private static string Name { get; } = "apiInformation.json";
+
+    protected override FileInfo Value =>
+        Parent.ToDirectoryInfo().GetChildFile(Name);
+
+    public static ApiInformationFile From(ApiName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = new ApiDirectory
+            {
+                Parent = ApisDirectory.From(serviceDirectory),
+                Name = name
+            }
+        };
+
+    public static Option<ApiInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
+        file is not null && file.Name == Name
+            ? from parent in ApiDirectory.TryParse(file.Directory, serviceDirectory)
+              select new ApiInformationFile { Parent = parent }
+            : Option<ApiInformationFile>.None;
+}
+
+public sealed record ApiDto
+{
+    [JsonPropertyName("properties")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public required ApiCreateOrUpdateProperties Properties { get; init; }
+
+    public record ApiCreateOrUpdateProperties
+    {
+        [JsonPropertyName("path")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Path { get; init; }
+
+        [JsonPropertyName("apiRevision")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ApiRevision { get; init; }
+
+        [JsonPropertyName("apiRevisionDescription")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ApiRevisionDescription { get; init; }
+
+        [JsonPropertyName("apiVersion")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ApiVersion { get; init; }
+
+        [JsonPropertyName("apiVersionDescription")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ApiVersionDescription { get; init; }
+
+        [JsonPropertyName("apiVersionSetId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ApiVersionSetId { get; init; }
+
+        [JsonPropertyName("authenticationSettings")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public AuthenticationSettingsContract? AuthenticationSettings { get; init; }
+
+        [JsonPropertyName("contact")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ApiContactInformation? Contact { get; init; }
+
+        [JsonPropertyName("description")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Description { get; init; }
+
+        [JsonPropertyName("isCurrent")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? IsCurrent { get; init; }
+
+        [JsonPropertyName("license")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ApiLicenseInformation? License { get; init; }
+
+        [JsonPropertyName("apiType")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ApiType { get; init; }
+
+        [JsonPropertyName("apiVersionSet")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ApiVersionSetContractDetails? ApiVersionSet { get; init; }
+
+        [JsonPropertyName("displayName")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? DisplayName { get; init; }
+
+        [JsonPropertyName("format")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Format { get; init; }
+
+        [JsonPropertyName("protocols")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<string>? Protocols { get; init; }
+
+        [JsonPropertyName("serviceUrl")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+#pragma warning disable CA1056 // URI-like properties should not be strings
+        public string? ServiceUrl { get; init; }
+#pragma warning restore CA1056 // URI-like properties should not be strings
+
+        [JsonPropertyName("sourceApiId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? SourceApiId { get; init; }
+
+        [JsonPropertyName("translateRequiredQueryParameters")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? TranslateRequiredQueryParameters { get; init; }
+
+        [JsonPropertyName("value")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Value { get; init; }
+
+        [JsonPropertyName("wsdlSelector")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public WsdlSelectorContract? WsdlSelector { get; init; }
+
+        [JsonPropertyName("subscriptionKeyParameterNames")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public SubscriptionKeyParameterNamesContract? SubscriptionKeyParameterNames { get; init; }
+
+        [JsonPropertyName("subscriptionRequired")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? SubscriptionRequired { get; init; }
+
+        [JsonPropertyName("termsOfServiceUrl")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+#pragma warning disable CA1056 // URI-like properties should not be strings
+        public string? TermsOfServiceUrl { get; init; }
+#pragma warning restore CA1056 // URI-like properties should not be strings
+
+        [JsonPropertyName("type")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Type { get; init; }
+
+        public record AuthenticationSettingsContract
+        {
+            [JsonPropertyName("oAuth2")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public OAuth2AuthenticationSettingsContract? OAuth2 { get; init; }
+
+            [JsonPropertyName("oAuth2AuthenticationSettings")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public ImmutableArray<OAuth2AuthenticationSettingsContract>? OAuth2AuthenticationSettings { get; init; }
+
+            [JsonPropertyName("openid")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public OpenIdAuthenticationSettingsContract? OpenId { get; init; }
+
+            [JsonPropertyName("openidAuthenticationSettings")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public ImmutableArray<OpenIdAuthenticationSettingsContract>? OpenIdAuthenticationSettings { get; init; }
+        }
+
+        public record OAuth2AuthenticationSettingsContract
+        {
+            [JsonPropertyName("authorizationServerId")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? AuthorizationServerId { get; init; }
+
+            [JsonPropertyName("scope")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Scope { get; init; }
+        }
+
+        public record OpenIdAuthenticationSettingsContract
+        {
+            [JsonPropertyName("bearerTokenSendingMethods")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public ImmutableArray<string>? BearerTokenSendingMethods { get; init; }
+
+            [JsonPropertyName("openidProviderId")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? OpenIdProviderId { get; init; }
+        }
+
+        public record ApiContactInformation
+        {
+            [JsonPropertyName("email")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Email { get; init; }
+
+            [JsonPropertyName("name")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Name { get; init; }
+
+            [JsonPropertyName("url")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+#pragma warning disable CA1056 // URI-like properties should not be strings
+            public string? Url { get; init; }
+#pragma warning restore CA1056 // URI-like properties should not be strings
+        }
+
+        public record ApiLicenseInformation
+        {
+            [JsonPropertyName("name")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Name { get; init; }
+
+            [JsonPropertyName("url")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+#pragma warning disable CA1056 // URI-like properties should not be strings
+            public string? Url { get; init; }
+#pragma warning restore CA1056 // URI-like properties should not be strings
+        }
+
+        public record ApiVersionSetContractDetails
+        {
+            [JsonPropertyName("description")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Description { get; init; }
+
+            [JsonPropertyName("id")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Id { get; init; }
+
+            [JsonPropertyName("name")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Name { get; init; }
+
+            [JsonPropertyName("versionHeaderName")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? VersionHeaderName { get; init; }
+
+            [JsonPropertyName("versionQueryName")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? VersionQueryName { get; init; }
+
+            [JsonPropertyName("versioningScheme")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? VersioningScheme { get; init; }
+        }
+
+        public record SubscriptionKeyParameterNamesContract
+        {
+            [JsonPropertyName("header")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Header { get; init; }
+
+            [JsonPropertyName("query")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? Query { get; init; }
+        }
+
+        public record WsdlSelectorContract
+        {
+            [JsonPropertyName("wsdlEndpointName")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? WsdlEndpointName { get; init; }
+
+            [JsonPropertyName("wsdlServiceName")]
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public string? WsdlServiceName { get; init; }
+        }
+    }
+}
+
+public static class ApiModule
+{
+    public static async ValueTask DeleteAll(this ApisUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await uri.ListNames(pipeline, cancellationToken)
+                 .GroupBy(ApiName.GetRootName)
+                 .IterParallel(async group => await ApiUri.From(group.Key, uri.ServiceUri)
+                                                          .DeleteAllRevisions(pipeline, cancellationToken),
+                               cancellationToken);
+
+    public static IAsyncEnumerable<ApiName> ListNames(this ApisUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+                .Select(jsonObject => jsonObject.GetStringProperty("name"))
+                .Select(ApiName.From);
+
+    public static IAsyncEnumerable<(ApiName Name, ApiDto Dto)> List(this ApisUri apisUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        apisUri.ListNames(pipeline, cancellationToken)
+               .SelectAwait(async name =>
+               {
+                   var uri = new ApiUri { Parent = apisUri, Name = name };
+                   var dto = await uri.GetDto(pipeline, cancellationToken);
+                   return (name, dto);
+               });
+
+    public static async ValueTask<ApiDto> GetDto(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
+        return content.ToObjectFromJson<ApiDto>();
+    }
+
+    public static async ValueTask<Option<ApiDto>> TryGetDto(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
+
+        return either.Map(content => content.ToObjectFromJson<ApiDto>())
+                     .Match(Option<ApiDto>.Some,
+                            response => response.Status == (int)HttpStatusCode.NotFound
+                                          ? Option<ApiDto>.None
+                                          : throw response.ToHttpRequestException(uri.ToUri()));
+    }
+
+    public static async ValueTask<Option<BinaryData>> TryGetSpecificationContents(this ApiUri apiUri, ApiSpecification specification, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        if (specification is ApiSpecification.GraphQl)
+        {
+            return await apiUri.TryGetGraphQlSchema(pipeline, cancellationToken);
+        }
+
+        var exportUri = GetExportUri(apiUri, specification);
+        var downloadUri = await GetSpecificationDownloadUri(exportUri, pipeline, cancellationToken);
+
+        var nonAuthenticatedHttpPipeline = HttpPipelineBuilder.Build(ClientOptions.Default);
+        var content = await nonAuthenticatedHttpPipeline.GetContent(downloadUri, cancellationToken);
+
+        // APIM exports OpenApiV2 to JSON. Convert to YAML if needed.
+        if (specification is ApiSpecification.OpenApi openApi && openApi.Format is OpenApiFormat.Yaml && openApi.Version is OpenApiVersion.V2)
+        {
+            var yaml = YamlConverter.SerializeJson(content.ToString());
+            content = BinaryData.FromString(yaml);
+        }
+
+        return content;
+    }
+
+    private static Uri GetExportUri(ApiUri apiUri, ApiSpecification specification)
+    {
+        var format = specification switch
+        {
+            ApiSpecification.Wadl => "wadl-link",
+            ApiSpecification.Wsdl => "wsdl-link",
+            ApiSpecification.OpenApi openApiSpecification =>
+                (openApiSpecification.Version, openApiSpecification.Format) switch
+                {
+                    (OpenApiVersion.V2, _) => "swagger-link",
+                    (OpenApiVersion.V3, OpenApiFormat.Yaml) => "openapi-link",
+                    (OpenApiVersion.V3, OpenApiFormat.Json) => "openapi+json-link",
+                    _ => throw new NotSupportedException()
+                },
+            _ => throw new NotSupportedException()
+        };
+
+        return apiUri.ToUri()
+                     .SetQueryParam("format", format)
+                     .SetQueryParam("export", "true")
+                     .SetQueryParam("api-version", "2022-09-01-preview")
+                     .ToUri();
+    }
+
+    private static async ValueTask<Uri> GetSpecificationDownloadUri(Uri exportUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var json = await pipeline.GetJsonObject(exportUri, cancellationToken);
+
+        return json.GetJsonObjectProperty("value")
+                   .GetAbsoluteUriProperty("link");
+    }
+
+    public static async ValueTask Delete(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
+
+    public static async ValueTask DeleteAllRevisions(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await pipeline.DeleteResource(uri.ToUri()
+                                         .SetQueryParam("deleteRevisions", "true")
+                                         .ToUri(), waitForCompletion: true, cancellationToken);
+
+    public static async ValueTask PutDto(this ApiUri uri, ApiDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        if (dto.Properties.Format is null && dto.Properties.Value is null)
+        {
+            var content = BinaryData.FromObjectAsJson(dto);
+            await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+        }
+        else
+        {
+            if (dto.Properties.Type is "soap")
+            {
+                await PutSoapApi(uri, dto, pipeline, cancellationToken);
+            }
+            else
+            {
+                await PutNonSoapApi(uri, dto, pipeline, cancellationToken);
+            }
+        }
+
+        using var _ =
+            await new ResiliencePipelineBuilder<Response>()
+                .AddRetry(new()
+                {
+                    BackoffType = DelayBackoffType.Exponential,
+                    UseJitter = true,
+                    MaxRetryAttempts = 5,
+                    ShouldHandle = new PredicateBuilder<Response>().HandleResult(CreationInProgress)
+                })
+                .Build()
+                .ExecuteAsync(async cancellationToken =>
+                {
+                    using var request = pipeline.CreateRequest(uri.ToUri(), RequestMethod.Get);
+                    return await pipeline.SendRequestAsync(request, cancellationToken);
+                }, cancellationToken);
+    }
+
+    private static async ValueTask PutSoapApi(ApiUri uri, ApiDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        // Import API with specification
+        var soapUri = uri.ToUri().SetQueryParam("import", "true").ToUri();
+        var soapDto = new ApiDto
+        {
+            Properties = new ApiDto.ApiCreateOrUpdateProperties
+            {
+                Format = "wsdl",
+                Value = dto.Properties.Value,
+                ApiType = "soap",
+                DisplayName = dto.Properties.DisplayName,
+                Path = dto.Properties.Path,
+                Protocols = dto.Properties.Protocols,
+                ApiVersion = dto.Properties.ApiVersion,
+                ApiVersionDescription = dto.Properties.ApiVersionDescription,
+                ApiVersionSetId = dto.Properties.ApiVersionSetId
+            }
+        };
+        await pipeline.PutContent(soapUri, BinaryData.FromObjectAsJson(soapDto), cancellationToken);
+
+        // Put API again without specification
+        var updatedDto = dto with { Properties = dto.Properties with { Format = null, Value = null } };
+        // SOAP apis sometimes fail on put; retry if needed
+        await soapApiResiliencePipeline.Value
+                .ExecuteAsync(async cancellationToken => await pipeline.PutContent(uri.ToUri(), BinaryData.FromObjectAsJson(updatedDto), cancellationToken), cancellationToken);
+    }
+
+    private static readonly Lazy<ResiliencePipeline> soapApiResiliencePipeline = new(() =>
+        new ResiliencePipelineBuilder()
+                    .AddRetry(new()
+                    {
+                        BackoffType = DelayBackoffType.Exponential,
+                        UseJitter = true,
+                        MaxRetryAttempts = 3,
+                        ShouldHandle = new PredicateBuilder().Handle<HttpRequestException>(exception => exception.StatusCode == HttpStatusCode.Conflict && exception.Message.Contains("IdentifierAlreadyInUse", StringComparison.OrdinalIgnoreCase))
+                    })
+                    .Build());
+
+    private static async ValueTask PutNonSoapApi(ApiUri uri, ApiDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        // Put API without the specification.
+        var modelWithoutSpecification = dto with
+        {
+            Properties = dto.Properties with
+            {
+                Format = null,
+                Value = null,
+                ServiceUrl = null,
+                Type = dto.Properties.Type,
+                ApiType = dto.Properties.ApiType
+            }
+        };
+        await pipeline.PutContent(uri.ToUri(), BinaryData.FromObjectAsJson(modelWithoutSpecification), cancellationToken);
+
+        // Put API again with specification
+        await pipeline.PutContent(uri.ToUri(), BinaryData.FromObjectAsJson(dto), cancellationToken);
+    }
+
+    private static bool CreationInProgress(Response response)
+    {
+        if (response.Status != (int)HttpStatusCode.Created)
+        {
+            return false;
+        }
+
+        if (response.Headers.Any(header => header.Name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)
+                                            && header.Value.Contains("application/json", StringComparison.OrdinalIgnoreCase)) is false)
+        {
+            return false;
+        }
+
+        try
+        {
+            return response.Content.ToObjectFromJson<JsonObject>()
+                                   .TryGetJsonObjectProperty("properties")
+                                   .Bind(json => json.TryGetStringProperty("ProvisioningState"))
+                                   .ToOption()
+                                   .Where(state => state.Equals("InProgress", StringComparison.OrdinalIgnoreCase))
+                                   .IsSome;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    public static async ValueTask PutGraphQlSchema(this ApiUri uri, string schema, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contents = BinaryData.FromObjectAsJson(new JsonObject()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["contentType"] = "application/vnd.ms-azure-apim.graphql.schema",
+                ["document"] = new JsonObject()
+                {
+                    ["value"] = schema
+                }
+            }
+        });
+
+        await pipeline.PutContent(uri.ToUri()
+                                     .AppendPathSegment("schemas")
+                                     .AppendPathSegment("graphql")
+                                     .ToUri(), contents, cancellationToken);
+    }
+
+    public static async ValueTask<Option<BinaryData>> TryGetGraphQlSchema(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var schemaUri = uri.ToUri()
+                           .AppendPathSegment("schemas")
+                           .AppendPathSegment("graphql")
+                           .ToUri();
+
+        var schemaJsonEither = await pipeline.TryGetJsonObject(schemaUri, cancellationToken);
+
+        return schemaJsonEither.Map(GetGraphQlSpecificationFromSchemaResponse)
+                               .Match(Option<BinaryData>.Some,
+                                      response => response.Status == (int)HttpStatusCode.NotFound
+                                                    ? Option<BinaryData>.None
+                                                    : throw response.ToHttpRequestException(schemaUri));
+    }
+
+    private static BinaryData GetGraphQlSpecificationFromSchemaResponse(JsonObject responseJson)
+    {
+        var schema = responseJson.GetJsonObjectProperty("properties")
+                                 .GetJsonObjectProperty("document")
+                                 .GetNonEmptyOrWhiteSpaceStringProperty("value");
+
+        return BinaryData.FromString(schema);
+    }
+
+    public static IEnumerable<ApiDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory)
+    {
+        var apisDirectory = ApisDirectory.From(serviceDirectory);
+
+        return apisDirectory.ToDirectoryInfo()
+                            .ListDirectories("*")
+                            .Select(directoryInfo => ApiName.From(directoryInfo.Name))
+                            .Select(name => new ApiDirectory { Parent = apisDirectory, Name = name });
+    }
+
+    public static IEnumerable<ApiInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
+        ListDirectories(serviceDirectory)
+            .Select(directory => new ApiInformationFile { Parent = directory })
+            .Where(informationFile => informationFile.ToFileInfo().Exists());
+
+    public static IAsyncEnumerable<ApiSpecificationFile> ListSpecificationFiles(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+        ListDirectories(serviceDirectory)
+            .SelectMany(directory => directory.ToDirectoryInfo().ListFiles("*"))
+            .ToAsyncEnumerable()
+            .Choose(async file => await ApiSpecificationFile.TryParse(file, serviceDirectory, cancellationToken));
+
+    public static async ValueTask WriteDto(this ApiInformationFile file, ApiDto dto, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
+        await file.ToFileInfo().OverwriteWithBinaryData(content, cancellationToken);
+    }
+
+    public static async ValueTask<ApiDto> ReadDto(this ApiInformationFile file, CancellationToken cancellationToken)
+    {
+        var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
+        return content.ToObjectFromJson<ApiDto>();
+    }
+
+    public static async ValueTask WriteSpecification(this ApiSpecificationFile file, BinaryData contents, CancellationToken cancellationToken) =>
+        await file.ToFileInfo().OverwriteWithBinaryData(contents, cancellationToken);
+
+    public static FileInfo ToFileInfo(this ApiSpecificationFile file) =>
+        file switch
+        {
+            GraphQlSpecificationFile graphQl => graphQl.ToFileInfo(),
+            WadlSpecificationFile wadl => wadl.ToFileInfo(),
+            WsdlSpecificationFile wsdl => wsdl.ToFileInfo(),
+            OpenApiSpecificationFile openApi => openApi switch
+            {
+                YamlOpenApiSpecificationFile yaml => yaml.ToFileInfo(),
+                JsonOpenApiSpecificationFile json => json.ToFileInfo(),
+                _ => throw new NotSupportedException()
+            },
+            _ => throw new NotSupportedException()
+        };
+
+    public static async ValueTask<BinaryData> ReadContents(this ApiSpecificationFile file, CancellationToken cancellationToken) =>
+        await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
 }

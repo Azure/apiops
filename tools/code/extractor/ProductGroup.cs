@@ -1,53 +1,91 @@
-﻿using common;
+﻿using Azure.Core.Pipeline;
+using common;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Net;
-using System.Net.Http;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal static class ProductGroup
+internal delegate ValueTask ExtractProductGroups(ProductName productName, CancellationToken cancellationToken);
+
+file delegate IAsyncEnumerable<(GroupName Name, ProductGroupDto Dto)> ListProductGroups(ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteProductGroupArtifacts(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteProductGroupInformationFile(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
+
+file sealed class ExtractProductGroupsHandler(ListProductGroups list, WriteProductGroupArtifacts writeArtifacts)
 {
-    public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
+    public async ValueTask Handle(ProductName productName, CancellationToken cancellationToken) =>
+        await list(productName, cancellationToken)
+                .IterParallel(async productgroup => await writeArtifacts(productgroup.Name, productgroup.Dto, productName, cancellationToken),
+                              cancellationToken);
+}
+
+file sealed class ListProductGroupsHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    public IAsyncEnumerable<(GroupName, ProductGroupDto)> Handle(ProductName productName, CancellationToken cancellationToken) =>
+        ProductGroupsUri.From(productName, serviceUri).List(pipeline, cancellationToken);
+}
+
+file sealed class WriteProductGroupArtifactsHandler(WriteProductGroupInformationFile writeGroupFile)
+{
+    public async ValueTask Handle(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken)
     {
-        try
-        {
-            var productGroupsFile = new ProductGroupsFile(productDirectory);
+        await writeGroupFile(name, dto, productName, cancellationToken);
+    }
+}
 
-            var productGroups = await List(productUri, listRestResources, cancellationToken)
-                                        .Select(SerializeProductGroup)
-                                        .ToJsonArray(cancellationToken);
+file sealed class WriteProductGroupInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
 
-            if (productGroups.Any())
-            {
-                logger.LogInformation("Writing product groups file {filePath}...", productGroupsFile.Path);
-                await productGroupsFile.OverwriteWithJson(productGroups, cancellationToken);
-            }
-        }
-        catch (HttpRequestException exception) when (exception.StatusCode is HttpStatusCode.BadRequest && exception.Message.Contains("MethodNotAllowedInPricingTier", StringComparison.OrdinalIgnoreCase))
-        {
-            await ValueTask.CompletedTask;
-        }
+    public async ValueTask Handle(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken)
+    {
+        var informationFile = ProductGroupInformationFile.From(name, productName, serviceDirectory);
+
+        logger.LogInformation("Writing product group information file {ProductGroupInformationFile}...", informationFile);
+        await informationFile.WriteDto(dto, cancellationToken);
+    }
+}
+
+internal static class ProductGroupServices
+{
+    public static void ConfigureExtractProductGroups(IServiceCollection services)
+    {
+        ConfigureListProductGroups(services);
+        ConfigureWriteProductGroupArtifacts(services);
+
+        services.TryAddSingleton<ExtractProductGroupsHandler>();
+        services.TryAddSingleton<ExtractProductGroups>(provider => provider.GetRequiredService<ExtractProductGroupsHandler>().Handle);
     }
 
-    private static IAsyncEnumerable<GroupName> List(ProductUri productUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    private static void ConfigureListProductGroups(IServiceCollection services)
     {
-        var groupsUri = new ProductGroupsUri(productUri);
-        var groupJsonObjects = listRestResources(groupsUri.Uri, cancellationToken);
-        return groupJsonObjects.Select(json => json.GetStringProperty("name"))
-                               .Select(name => new GroupName(name));
+        services.TryAddSingleton<ListProductGroupsHandler>();
+        services.TryAddSingleton<ListProductGroups>(provider => provider.GetRequiredService<ListProductGroupsHandler>().Handle);
     }
 
-    private static JsonObject SerializeProductGroup(GroupName groupName)
+    private static void ConfigureWriteProductGroupArtifacts(IServiceCollection services)
     {
-        return new JsonObject
-        {
-            ["name"] = groupName.ToString()
-        };
+        ConfigureWriteProductGroupInformationFile(services);
+
+        services.TryAddSingleton<WriteProductGroupArtifactsHandler>();
+        services.TryAddSingleton<WriteProductGroupArtifacts>(provider => provider.GetRequiredService<WriteProductGroupArtifactsHandler>().Handle);
     }
+
+    private static void ConfigureWriteProductGroupInformationFile(IServiceCollection services)
+    {
+        services.TryAddSingleton<WriteProductGroupInformationFileHandler>();
+        services.TryAddSingleton<WriteProductGroupInformationFile>(provider => provider.GetRequiredService<WriteProductGroupInformationFileHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
+        loggerFactory.CreateLogger("ProductGroupExtractor");
 }

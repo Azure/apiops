@@ -1,352 +1,350 @@
-﻿using System;
+﻿using Azure.Core.Pipeline;
+using Flurl;
+using LanguageExt;
+using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.IO;
 using System.Linq;
-using System.Text.Json;
+using System.Net;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record BackendsUri : IArtifactUri
+public sealed record BackendName : ResourceName
 {
-    public Uri Uri { get; }
+    private BackendName(string value) : base(value) { }
 
-    public BackendsUri(ServiceUri serviceUri)
-    {
-        Uri = serviceUri.AppendPath("backends");
-    }
+    public static BackendName From(string value) => new(value);
 }
 
-public sealed record BackendsDirectory : IArtifactDirectory
+public sealed record BackendsUri : ResourceUri
 {
-    public static string Name { get; } = "backends";
+    public required ManagementServiceUri ServiceUri { get; init; }
 
-    public ArtifactPath Path { get; }
+    private static string PathSegment { get; } = "backends";
 
-    public ServiceDirectory ServiceDirectory { get; }
+    protected override Uri Value => ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public BackendsDirectory(ServiceDirectory serviceDirectory)
-    {
-        Path = serviceDirectory.Path.Append(Name);
-        ServiceDirectory = serviceDirectory;
-    }
+    public static BackendsUri From(ManagementServiceUri serviceUri) =>
+        new() { ServiceUri = serviceUri };
 }
 
-public sealed record BackendName
+public sealed record BackendUri : ResourceUri
 {
-    private readonly string value;
+    public required BackendsUri Parent { get; init; }
+    public required BackendName Name { get; init; }
 
-    public BackendName(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new ArgumentException($"Backend name cannot be null or whitespace.", nameof(value));
-        }
+    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
 
-        this.value = value;
-    }
-
-    public override string ToString() => value;
-}
-
-public sealed record BackendUri : IArtifactUri
-{
-    public Uri Uri { get; }
-
-    public BackendUri(BackendName backendName, BackendsUri backendsUri)
-    {
-        Uri = backendsUri.AppendPath(backendName.ToString());
-    }
-}
-
-public sealed record BackendDirectory : IArtifactDirectory
-{
-    public ArtifactPath Path { get; }
-
-    public BackendsDirectory BackendsDirectory { get; }
-
-    public BackendDirectory(BackendName backendName, BackendsDirectory backendsDirectory)
-    {
-        Path = backendsDirectory.Path.Append(backendName.ToString());
-        BackendsDirectory = backendsDirectory;
-    }
-}
-
-public sealed record BackendInformationFile : IArtifactFile
-{
-    public static string Name { get; } = "backendInformation.json";
-
-    public ArtifactPath Path { get; }
-
-    public BackendDirectory BackendDirectory { get; }
-
-    public BackendInformationFile(BackendDirectory backendDirectory)
-    {
-        Path = backendDirectory.Path.Append(Name);
-        BackendDirectory = backendDirectory;
-    }
-}
-
-public sealed record BackendModel
-{
-    public required string Name { get; init; }
-
-    public required BackendContractProperties Properties { get; init; }
-
-    public sealed record BackendContractProperties
-    {
-        public BackendCredentialsContract? Credentials { get; init; }
-        public string? Description { get; init; }
-        public BackendProperties? Properties { get; init; }
-        public BackendProtocolOption? Protocol { get; init; }
-        public BackendProxyContract? Proxy { get; init; }
-        public string? ResourceId { get; init; }
-        public string? Title { get; init; }
-        public BackendTlsProperties? Tls { get; init; }
-        public string? Url { get; init; }
-
-        public JsonObject Serialize() =>
-            new JsonObject()
-                .AddPropertyIfNotNull("credentials", Credentials?.Serialize())
-                .AddPropertyIfNotNull("description", Description)
-                .AddPropertyIfNotNull("properties", Properties?.Serialize())
-                .AddPropertyIfNotNull("protocol", Protocol?.Serialize())
-                .AddPropertyIfNotNull("proxy", Proxy?.Serialize())
-                .AddPropertyIfNotNull("resourceId", ResourceId)
-                .AddPropertyIfNotNull("title", Title)
-                .AddPropertyIfNotNull("tls", Tls?.Serialize())
-                .AddPropertyIfNotNull("url", Url);
-
-        public static BackendContractProperties Deserialize(JsonObject jsonObject) =>
-            new()
-            {
-                Credentials = jsonObject.TryGetJsonObjectProperty("credentials")
-                                          .Map(BackendCredentialsContract.Deserialize),
-                Description = jsonObject.TryGetStringProperty("description"),
-                Properties = jsonObject.TryGetJsonObjectProperty("properties")
-                                    .Map(BackendProperties.Deserialize),
-                Protocol = jsonObject.TryGetProperty("protocol")
-                                     .Map(BackendProtocolOption.Deserialize),
-                Proxy = jsonObject.TryGetJsonObjectProperty("proxy")
-                                  .Map(BackendProxyContract.Deserialize),
-                ResourceId = jsonObject.TryGetStringProperty("resourceId"),
-                Title = jsonObject.TryGetStringProperty("title"),
-                Tls = jsonObject.TryGetJsonObjectProperty("tls")
-                                .Map(BackendTlsProperties.Deserialize),
-                Url = jsonObject.TryGetStringProperty("url")
-            };
-
-        public sealed record BackendCredentialsContract
-        {
-            public BackendAuthorizationHeaderCredentials? Authorization { get; init; }
-            public string[]? Certificate { get; init; }
-            public string[]? CertificateIds { get; init; }
-            public Dictionary<string, string[]>? Header { get; init; }
-            public Dictionary<string, string[]>? Query { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("authorization", Authorization?.Serialize())
-                    .AddPropertyIfNotNull("certificate", Certificate?.Choose(x => (JsonNode?)x)
-                                                                    ?.ToJsonArray())
-                    .AddPropertyIfNotNull("certificateIds", CertificateIds?.Choose(x => (JsonNode?)x)
-                                                                       ?.ToJsonArray())
-                    .AddPropertyIfNotNull("header", Header?.ToJsonObject())
-                    .AddPropertyIfNotNull("query", Query?.ToJsonObject());
-
-            public static BackendCredentialsContract Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Authorization = jsonObject.TryGetJsonObjectProperty("authorization")
-                                              .Map(BackendAuthorizationHeaderCredentials.Deserialize),
-                    Certificate = jsonObject.TryGetJsonArrayProperty("certificate")
-                                           ?.Choose(node => node?.GetValue<string>())
-                                           ?.ToArray(),
-                    CertificateIds = jsonObject.TryGetJsonArrayProperty("certificateIds")
-                                              ?.Choose(node => node?.GetValue<string>())
-                                              ?.ToArray(),
-                    Header = jsonObject.TryGetJsonObjectProperty("header")
-                                      ?.Where(kvp => kvp.Value is not null)
-                                      ?.ToDictionary(kvp => kvp.Key,
-                                                     kvp => kvp.Value!.AsArray()
-                                                                      .Choose(node => node?.GetValue<string>())
-                                                                      .ToArray()),
-                    Query = jsonObject.TryGetJsonObjectProperty("query")
-                                     ?.Where(kvp => kvp.Value is not null)
-                                     ?.ToDictionary(kvp => kvp.Key,
-                                                    kvp => kvp.Value!.AsArray()
-                                                                     .Choose(node => node?.GetValue<string>())
-                                                                     .ToArray())
-                };
-
-            public sealed record BackendAuthorizationHeaderCredentials
-            {
-                public string? Parameter { get; init; }
-                public string? Scheme { get; init; }
-
-                public JsonObject Serialize() =>
-                    new JsonObject()
-                        .AddPropertyIfNotNull("parameter", Parameter)
-                        .AddPropertyIfNotNull("scheme", Scheme);
-
-                public static BackendAuthorizationHeaderCredentials Deserialize(JsonObject jsonObject) =>
-                    new()
-                    {
-                        Parameter = jsonObject.TryGetStringProperty("parameter"),
-                        Scheme = jsonObject.TryGetStringProperty("scheme")
-                    };
-            }
-        }
-
-        public sealed record BackendProperties
-        {
-            public BackendServiceFabricClusterProperties? ServiceFabricCluster { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("serviceFabricCluster", ServiceFabricCluster?.Serialize());
-
-            public static BackendProperties Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    ServiceFabricCluster = jsonObject.TryGetJsonObjectProperty("serviceFabricCluster")
-                                                     .Map(BackendServiceFabricClusterProperties.Deserialize)
-                };
-
-            public sealed record BackendServiceFabricClusterProperties
-            {
-                public string? ClientCertificateId { get; init; }
-                public string? ClientCertificateThumbprint { get; init; }
-                public string[]? ManagementEndpoints { get; init; }
-                public int? MaxPartitionResolutionRetries { get; init; }
-                public string[]? ServerCertificateThumbprints { get; init; }
-                public X509CertificateName[]? ServerX509Names { get; init; }
-
-                public JsonObject Serialize() =>
-                    new JsonObject()
-                        .AddPropertyIfNotNull("clientCertificateId", ClientCertificateId)
-                        .AddPropertyIfNotNull("clientCertificatethumbprint", ClientCertificateThumbprint)
-                        .AddPropertyIfNotNull("managementEndpoints", ManagementEndpoints?.Select(JsonNodeExtensions.FromString)
-                                                                                        ?.ToJsonArray())
-                        .AddPropertyIfNotNull("maxPartitionResolutionRetries", MaxPartitionResolutionRetries)
-                        .AddPropertyIfNotNull("serverCertificateThumbprints", ServerCertificateThumbprints?.Select(JsonNodeExtensions.FromString)
-                                                                                                          ?.ToJsonArray())
-                        .AddPropertyIfNotNull("serverX509Names", ServerX509Names?.Select(x => x.Serialize())
-                                                                                ?.ToJsonArray());
-
-                public static BackendServiceFabricClusterProperties Deserialize(JsonObject jsonObject) =>
-                    new()
-                    {
-                        ClientCertificateId = jsonObject.TryGetStringProperty("clientCertificateId"),
-                        ClientCertificateThumbprint = jsonObject.TryGetStringProperty("clientCertificatethumbprint"),
-                        ManagementEndpoints = jsonObject.TryGetJsonArrayProperty("managementEndpoints")
-                                                       ?.Choose(node => node?.GetValue<string>())
-                                                       ?.ToArray(),
-                        MaxPartitionResolutionRetries = jsonObject.TryGetIntProperty("maxPartitionResolutionRetries"),
-                        ServerCertificateThumbprints = jsonObject.TryGetJsonArrayProperty("serverCertificateThumbprints")
-                                                       ?.Choose(node => node?.GetValue<string>())
-                                                       ?.ToArray(),
-                        ServerX509Names = jsonObject.TryGetJsonArrayProperty("serverX509Names")
-                                                   ?.Choose(node => node?.AsObject())
-                                                   ?.Select(X509CertificateName.Deserialize)
-                                                   ?.ToArray()
-                    };
-
-                public sealed record X509CertificateName
-                {
-                    public string? IssuerCertificateThumbprint { get; init; }
-                    public string? Name { get; init; }
-
-                    public JsonObject Serialize() =>
-                        new JsonObject()
-                            .AddPropertyIfNotNull("issuerCertificateThumbprint", IssuerCertificateThumbprint)
-                            .AddPropertyIfNotNull("name", Name);
-
-                    public static X509CertificateName Deserialize(JsonObject jsonObject) =>
-                        new()
-                        {
-                            IssuerCertificateThumbprint = jsonObject.TryGetStringProperty("issuerCertificateThumbprint"),
-                            Name = jsonObject.TryGetStringProperty("name")
-                        };
-                }
-            }
-        }
-
-        public sealed record BackendProtocolOption
-        {
-            private readonly string value;
-
-            private BackendProtocolOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static BackendProtocolOption Http => new("http");
-            public static BackendProtocolOption Soap => new("soap");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static BackendProtocolOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(Http).Equals(value, StringComparison.OrdinalIgnoreCase) => Http,
-                        _ when nameof(Soap).Equals(value, StringComparison.OrdinalIgnoreCase) => Soap,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(BackendProtocolOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-
-        public sealed record BackendProxyContract
-        {
-            public string? Password { get; init; }
-            public string? Url { get; init; }
-            public string? Username { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("password", Password)
-                    .AddPropertyIfNotNull("url", Url)
-                    .AddPropertyIfNotNull("username", Username);
-
-            public static BackendProxyContract Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Password = jsonObject.TryGetStringProperty("password"),
-                    Url = jsonObject.TryGetStringProperty("url"),
-                    Username = jsonObject.TryGetStringProperty("username")
-                };
-        }
-
-        public sealed record BackendTlsProperties
-        {
-            public bool? ValidateCertificateChain { get; init; }
-            public bool? ValidateCertificateName { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("validateCertificateChain", ValidateCertificateChain)
-                    .AddPropertyIfNotNull("validateCertificateName", ValidateCertificateName);
-
-            public static BackendTlsProperties Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    ValidateCertificateChain = jsonObject.TryGetBoolProperty("validateCertificateChain"),
-                    ValidateCertificateName = jsonObject.TryGetBoolProperty("validateCertificateName")
-                };
-        }
-    }
-
-    public JsonObject Serialize() =>
-        new JsonObject()
-            .AddProperty("properties", Properties.Serialize());
-
-    public static BackendModel Deserialize(BackendName name, JsonObject jsonObject) =>
+    public static BackendUri From(BackendName name, ManagementServiceUri serviceUri) =>
         new()
         {
-            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
-            Properties = jsonObject.GetJsonObjectProperty("properties")
-                                   .Map(BackendContractProperties.Deserialize)!
+            Parent = BackendsUri.From(serviceUri),
+            Name = name
         };
+}
+
+public sealed record BackendsDirectory : ResourceDirectory
+{
+    public required ManagementServiceDirectory ServiceDirectory { get; init; }
+
+    private static string Name { get; } = "backends";
+
+    protected override DirectoryInfo Value =>
+        ServiceDirectory.ToDirectoryInfo().GetChildDirectory(Name);
+
+    public static BackendsDirectory From(ManagementServiceDirectory serviceDirectory) =>
+        new() { ServiceDirectory = serviceDirectory };
+
+    public static Option<BackendsDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        directory is not null &&
+        directory.Name == Name &&
+        directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
+            ? new BackendsDirectory { ServiceDirectory = serviceDirectory }
+            : Option<BackendsDirectory>.None;
+}
+
+public sealed record BackendDirectory : ResourceDirectory
+{
+    public required BackendsDirectory Parent { get; init; }
+
+    public required BackendName Name { get; init; }
+
+    protected override DirectoryInfo Value =>
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+
+    public static BackendDirectory From(BackendName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = BackendsDirectory.From(serviceDirectory),
+            Name = name
+        };
+
+    public static Option<BackendDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        from parent in BackendsDirectory.TryParse(directory?.Parent, serviceDirectory)
+        select new BackendDirectory
+        {
+            Parent = parent,
+            Name = BackendName.From(directory!.Name)
+        };
+}
+
+public sealed record BackendInformationFile : ResourceFile
+{
+    public required BackendDirectory Parent { get; init; }
+    private static string Name { get; } = "backendInformation.json";
+
+    protected override FileInfo Value =>
+        Parent.ToDirectoryInfo().GetChildFile(Name);
+
+    public static BackendInformationFile From(BackendName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = new BackendDirectory
+            {
+                Parent = BackendsDirectory.From(serviceDirectory),
+                Name = name
+            }
+        };
+
+    public static Option<BackendInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
+        file is not null && file.Name == Name
+            ? from parent in BackendDirectory.TryParse(file.Directory, serviceDirectory)
+              select new BackendInformationFile { Parent = parent }
+            : Option<BackendInformationFile>.None;
+}
+
+public sealed record BackendDto
+{
+    [JsonPropertyName("properties")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public required BackendContract Properties { get; init; }
+
+    public record BackendContract
+    {
+        [JsonPropertyName("credentials")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendCredentialsContract? Credentials { get; init; }
+
+        [JsonPropertyName("description")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Description { get; init; }
+
+        [JsonPropertyName("properties")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendProperties? Properties { get; init; }
+
+        [JsonPropertyName("protocol")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Protocol { get; init; }
+
+        [JsonPropertyName("proxy")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendProxyContract? Proxy { get; init; }
+
+        [JsonPropertyName("resourceId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ResourceId { get; init; }
+
+        [JsonPropertyName("title")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Title { get; init; }
+
+        [JsonPropertyName("tls")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendTlsProperties? Tls { get; init; }
+
+        [JsonPropertyName("url")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+#pragma warning disable CA1056 // URI-like properties should not be strings
+        public string? Url { get; init; }
+#pragma warning restore CA1056 // URI-like properties should not be strings
+    }
+
+    public record BackendCredentialsContract
+    {
+        [JsonPropertyName("authorization")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendAuthorizationHeaderCredentials? Authorization { get; init; }
+
+        [JsonPropertyName("certificate")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableList<string>? Certificate { get; init; }
+
+        [JsonPropertyName("certificateIds")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableList<string>? CertificateIds { get; init; }
+
+        [JsonPropertyName("header")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public JsonObject? Header { get; init; }
+
+        [JsonPropertyName("query")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public JsonObject? Query { get; init; }
+    }
+
+    public record BackendAuthorizationHeaderCredentials
+    {
+        [JsonPropertyName("parameter")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Parameter { get; init; }
+
+        [JsonPropertyName("scheme")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Scheme { get; init; }
+    }
+
+    public record BackendProperties
+    {
+        [JsonPropertyName("serviceFabricCluster")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendServiceFabricClusterProperties? ServiceFabricCluster { get; init; }
+    }
+
+    public record BackendProxyContract
+    {
+        [JsonPropertyName("password")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Password { get; init; }
+
+        [JsonPropertyName("url")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+#pragma warning disable CA1056 // URI-like properties should not be strings
+        public string? Url { get; init; }
+
+#pragma warning restore CA1056 // URI-like properties should not be strings
+        [JsonPropertyName("username")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Username { get; init; }
+    }
+
+    public record BackendServiceFabricClusterProperties
+    {
+        [JsonPropertyName("clientCertificateId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ClientCertificateId { get; init; }
+
+        [JsonPropertyName("clientCertificatethumbprint")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ClientCertificateThumbprint { get; init; }
+
+        [JsonPropertyName("managementEndpoints")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableList<string>? ManagementEndpoints { get; init; }
+
+        [JsonPropertyName("maxPartitionResolutionRetries")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? MaxPartitionResolutionRetries { get; init; }
+
+        [JsonPropertyName("serverCertificateThumbprints")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableList<string>? ServerCertificateThumbprints { get; init; }
+
+        [JsonPropertyName("serverX509Names")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableList<X509CertificateName>? ServerX509Names { get; init; }
+    }
+
+    public record BackendTlsProperties
+    {
+        [JsonPropertyName("validateCertificateChain")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? ValidateCertificateChain { get; init; }
+
+        [JsonPropertyName("validateCertificateName")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? ValidateCertificateName { get; init; }
+    }
+
+    public record X509CertificateName
+    {
+        [JsonPropertyName("issuerCertificateThumbprint")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? IssuerCertificateThumbprint { get; init; }
+
+        [JsonPropertyName("name")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Name { get; init; }
+    }
+}
+
+public static class BackendModule
+{
+    public static async ValueTask DeleteAll(this BackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await uri.ListNames(pipeline, cancellationToken)
+                 .IterParallel(async name => await BackendUri.From(name, uri.ServiceUri)
+                                                                .Delete(pipeline, cancellationToken),
+                               cancellationToken);
+
+    public static IAsyncEnumerable<BackendName> ListNames(this BackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+                .Select(jsonObject => jsonObject.GetStringProperty("name"))
+                .Select(BackendName.From);
+
+    public static IAsyncEnumerable<(BackendName Name, BackendDto Dto)> List(this BackendsUri backendsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        backendsUri.ListNames(pipeline, cancellationToken)
+                      .SelectAwait(async name =>
+                      {
+                          var uri = new BackendUri { Parent = backendsUri, Name = name };
+                          var dto = await uri.GetDto(pipeline, cancellationToken);
+                          return (name, dto);
+                      });
+
+    public static async ValueTask<BackendDto> GetDto(this BackendUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
+        return content.ToObjectFromJson<BackendDto>();
+    }
+
+    public static async ValueTask<Option<BackendDto>> TryGetDto(this BackendUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
+
+        return either.Map(content => content.ToObjectFromJson<BackendDto>())
+                     .Match(Option<BackendDto>.Some,
+                            response => response.Status == (int)HttpStatusCode.NotFound
+                                          ? Option<BackendDto>.None
+                                          : throw response.ToHttpRequestException(uri.ToUri()));
+    }
+
+    public static async ValueTask Delete(this BackendUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
+
+    public static async ValueTask PutDto(this BackendUri uri, BackendDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto);
+        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+    }
+
+    public static IEnumerable<BackendDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory)
+    {
+        var backendsDirectory = BackendsDirectory.From(serviceDirectory);
+
+        return backendsDirectory.ToDirectoryInfo()
+                                .ListDirectories("*")
+                                .Select(directoryInfo => BackendName.From(directoryInfo.Name))
+                                .Select(name => new BackendDirectory { Parent = backendsDirectory, Name = name });
+    }
+
+    public static IEnumerable<BackendInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
+        ListDirectories(serviceDirectory)
+            .Select(directory => new BackendInformationFile { Parent = directory })
+            .Where(informationFile => informationFile.ToFileInfo().Exists());
+
+    public static async ValueTask WriteDto(this BackendInformationFile file, BackendDto dto, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
+        await file.ToFileInfo().OverwriteWithBinaryData(content, cancellationToken);
+    }
+
+    public static async ValueTask<BackendDto> ReadDto(this BackendInformationFile file, CancellationToken cancellationToken)
+    {
+        var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
+        return content.ToObjectFromJson<BackendDto>();
+    }
 }

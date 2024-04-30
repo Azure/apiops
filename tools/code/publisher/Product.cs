@@ -1,132 +1,313 @@
-﻿using common;
+﻿using AsyncKeyedLock;
+using Azure.Core.Pipeline;
+using common;
+using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using MoreLinq;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Web;
 
 namespace publisher;
 
-internal static class Product
+internal delegate Option<PublisherAction> FindProductAction(FileInfo file);
+
+file delegate Option<ProductName> TryParseProductName(FileInfo file);
+
+file delegate ValueTask ProcessProduct(ProductName name, CancellationToken cancellationToken);
+
+file delegate bool IsProductNameInSourceControl(ProductName name);
+
+file delegate ValueTask<Option<ProductDto>> FindProductDto(ProductName name, CancellationToken cancellationToken);
+
+internal delegate ValueTask PutProduct(ProductName name, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteProduct(ProductName name, CancellationToken cancellationToken);
+
+file delegate ValueTask PutProductInApim(ProductName name, ProductDto dto, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteProductFromApim(ProductName name, CancellationToken cancellationToken);
+
+internal delegate ValueTask OnDeletingProduct(ProductName name, CancellationToken cancellationToken);
+
+file sealed class FindProductActionHandler(TryParseProductName tryParseName, ProcessProduct processProduct)
 {
-    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await GetProductInformationFiles(files, serviceDirectory)
-                .Select(GetProductName)
-                .ForEachParallel(async productName => await Delete(productName, serviceUri, deleteRestResource, logger, cancellationToken),
-                                 cancellationToken);
-    }
+    public Option<PublisherAction> Handle(FileInfo file) =>
+        from name in tryParseName(file)
+        select GetAction(name);
 
-    private static IEnumerable<ProductInformationFile> GetProductInformationFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
-    {
-        return files.Choose(file => TryGetProductInformationFile(file, serviceDirectory));
-    }
+    private PublisherAction GetAction(ProductName name) =>
+        async cancellationToken => await processProduct(name, cancellationToken);
+}
 
-    private static ProductInformationFile? TryGetProductInformationFile(FileInfo? file, ServiceDirectory serviceDirectory)
+file sealed class TryParseProductNameHandler(ManagementServiceDirectory serviceDirectory)
+{
+    public Option<ProductName> Handle(FileInfo file) =>
+        TryParseNameFromInformationFile(file);
+
+    private Option<ProductName> TryParseNameFromInformationFile(FileInfo file) =>
+        from informationFile in ProductInformationFile.TryParse(file, serviceDirectory)
+        select informationFile.Parent.Name;
+}
+
+/// <summary>
+/// Limits the number of simultaneous operations.
+/// </summary>
+file sealed class ProductSemaphore : IDisposable
+{
+    private readonly AsyncKeyedLocker<ProductName> locker = new();
+    private ImmutableHashSet<ProductName> processedNames = [];
+
+    /// <summary>
+    /// Runs the provided action, ensuring that each name is processed only once.
+    /// </summary>
+    public async ValueTask Run(ProductName name, Func<ProductName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
-        if (file is null || file.Name.Equals(ProductInformationFile.Name) is false)
+        // Do not process the same name simultaneously
+        using var _ = await locker.LockAsync(name, cancellationToken);
+
+        // Only process each name once
+        if (processedNames.Contains(name))
         {
-            return null;
+            return;
         }
 
-        var productDirectory = TryGetProductDirectory(file.Directory, serviceDirectory);
+        await action(name, cancellationToken);
 
-        return productDirectory is null
-                ? null
-                : new ProductInformationFile(productDirectory);
+        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
     }
 
-    public static ProductDirectory? TryGetProductDirectory(DirectoryInfo? directory, ServiceDirectory serviceDirectory)
+    public void Dispose() => locker.Dispose();
+}
+
+file sealed class ProcessProductHandler(IsProductNameInSourceControl isNameInSourceControl, PutProduct put, DeleteProduct delete) : IDisposable
+{
+    private readonly ProductSemaphore semaphore = new();
+
+    public async ValueTask Handle(ProductName name, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, HandleInner, cancellationToken);
+
+    private async ValueTask HandleInner(ProductName name, CancellationToken cancellationToken)
     {
-        if (directory is null)
+        if (isNameInSourceControl(name))
         {
-            return null;
+            await put(name, cancellationToken);
         }
-
-        var productsDirectory = TryGetProductsDirectory(directory.Parent, serviceDirectory);
-        if (productsDirectory is null)
+        else
         {
-            return null;
+            await delete(name, cancellationToken);
         }
-
-        var productName = new ProductName(directory.Name);
-        return new ProductDirectory(productName, productsDirectory);
     }
 
-    private static ProductsDirectory? TryGetProductsDirectory(DirectoryInfo? directory, ServiceDirectory serviceDirectory)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class IsProductNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
+{
+    public bool Handle(ProductName name) =>
+        DoesInformationFileExist(name);
+
+    private bool DoesInformationFileExist(ProductName name)
     {
-        return directory is null
-            || directory.Name.Equals(ProductsDirectory.Name) is false
-            || serviceDirectory.PathEquals(directory.Parent) is false
-            ? null
-            : new ProductsDirectory(serviceDirectory);
-    }
+        var artifactFiles = getArtifactFiles();
+        var informationFile = ProductInformationFile.From(name, serviceDirectory);
 
-    private static ProductName GetProductName(ProductInformationFile file)
+        return artifactFiles.Contains(informationFile.ToFileInfo());
+    }
+}
+
+file sealed class PutProductHandler(FindProductDto findDto, PutProductInApim putInApim) : IDisposable
+{
+    private readonly ProductSemaphore semaphore = new();
+
+    public async ValueTask Handle(ProductName name, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, Put, cancellationToken);
+
+    private async ValueTask Put(ProductName name, CancellationToken cancellationToken)
     {
-        return new(file.ProductDirectory.GetName());
+        var dtoOption = await findDto(name, cancellationToken);
+        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
     }
 
-    private static async ValueTask Delete(ProductName productName, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class FindProductDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
+{
+    public async ValueTask<Option<ProductDto>> Handle(ProductName name, CancellationToken cancellationToken)
     {
-        var uri = GetProductUri(productName, serviceUri);
+        var informationFile = ProductInformationFile.From(name, serviceDirectory);
+        var informationFileInfo = informationFile.ToFileInfo();
 
-        logger.LogInformation("Deleting product {productName}...", productName);
-        var builder = new UriBuilder(uri.Uri);
-        var query = HttpUtility.ParseQueryString(builder.Query);
-        query["deleteSubscriptions"] = "true";
-        builder.Query = query.ToString();
-        await deleteRestResource(builder.Uri, cancellationToken);
+        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+
+        return from contents in contentsOption
+               let dto = contents.ToObjectFromJson<ProductDto>()
+               let overrideDto = overrideFactory.Create<ProductName, ProductDto>()
+               select overrideDto(name, dto);
     }
+}
 
-    public static ProductUri GetProductUri(ProductName productName, ServiceUri serviceUri)
+file sealed class PutProductInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(ProductName name, ProductDto dto, CancellationToken cancellationToken)
     {
-        var productsUri = new ProductsUri(serviceUri);
-        return new ProductUri(productName, productsUri);
+        logger.LogInformation("Putting product {ProductName}...", name);
+
+        var productAlreadyExists = await DoesProductAlreadyExist(name, cancellationToken);
+        await ProductUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
+
+        // Delete automatically created resources if the product is new. This ensures that APIM is consistent with source control.
+        if (productAlreadyExists is false)
+        {
+            await DeleteAutomaticallyCreatedProductGroups(name, cancellationToken);
+            await DeleteAutomaticallyCreatedProductSubscriptions(name, cancellationToken);
+        }
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    private async ValueTask<bool> DoesProductAlreadyExist(ProductName name, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, configurationJson, serviceDirectory)
-                .ForEachParallel(async artifact => await PutProduct(artifact.Name, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
-                                 cancellationToken);
+        var productDtoOption = await ProductUri.From(name, serviceUri).TryGetDto(pipeline, cancellationToken);
+        return productDtoOption.IsSome;
     }
 
-    private static IEnumerable<(ProductName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    private async ValueTask DeleteAutomaticallyCreatedProductGroups(ProductName productName, CancellationToken cancellationToken) =>
+        await ProductGroupsUri.From(productName, serviceUri)
+                              .ListNames(pipeline, cancellationToken)
+                              .Do(groupName => logger.LogWarning("Removing automatically added {GroupName} from product {ProductName}...", groupName, productName))
+                              .IterParallel(async name => await ProductGroupUri.From(name, productName, serviceUri)
+                                                                               .Delete(pipeline, cancellationToken),
+                                            cancellationToken);
+
+    private async ValueTask DeleteAutomaticallyCreatedProductSubscriptions(ProductName productName, CancellationToken cancellationToken) =>
+        await ProductUri.From(productName, serviceUri)
+                        .ListSubscriptionNames(pipeline, cancellationToken)
+                        .WhereAwait(async subscriptionName =>
+                        {
+                            var dto = await SubscriptionUri.From(subscriptionName, serviceUri)
+                                                           .GetDto(pipeline, cancellationToken);
+
+                            // Automatically created subscriptions have no display name and end with "/users/1"
+                            return string.IsNullOrWhiteSpace(dto.Properties.DisplayName)
+                                   && (dto.Properties.OwnerId?.EndsWith("/users/1", StringComparison.OrdinalIgnoreCase) ?? false);
+                        })
+                        .Do(subscriptionName => logger.LogWarning("Deleting automatically created subscription {SubscriptionName} from product {ProductName}...", subscriptionName, productName))
+                        .IterParallel(async name => await SubscriptionUri.From(name, serviceUri)
+                                                                         .Delete(pipeline, cancellationToken),
+                                    cancellationToken);
+}
+
+file sealed class DeleteProductHandler(IEnumerable<OnDeletingProduct> onDeletingHandlers, DeleteProductFromApim deleteFromApim) : IDisposable
+{
+    private readonly ProductSemaphore semaphore = new();
+
+    public async ValueTask Handle(ProductName name, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, Delete, cancellationToken);
+
+    private async ValueTask Delete(ProductName name, CancellationToken cancellationToken)
     {
-        var configurationArtifacts = GetConfigurationProducts(configurationJson);
-
-        return GetProductInformationFiles(files, serviceDirectory)
-                .Select(file => (Name: GetProductName(file), Json: file.ReadAsJsonObject()))
-                .LeftJoin(configurationArtifacts,
-                          keySelector: artifact => artifact.Name,
-                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
+        await onDeletingHandlers.IterParallel(async handler => await handler(name, cancellationToken), cancellationToken);
+        await deleteFromApim(name, cancellationToken);
     }
 
-    private static IEnumerable<(ProductName Name, JsonObject Json)> GetConfigurationProducts(JsonObject configurationJson)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class DeleteProductFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(ProductName name, CancellationToken cancellationToken)
     {
-        return configurationJson.TryGetJsonArrayProperty("products")
-                                .IfNullEmpty()
-                                .Choose(node => node as JsonObject)
-                                .Choose(jsonObject =>
-                                {
-                                    var name = jsonObject.TryGetStringProperty("name");
-                                    return name is null
-                                            ? null as (ProductName, JsonObject)?
-                                            : (new ProductName(name), jsonObject);
-                                });
+        logger.LogInformation("Deleting product {ProductName}...", name);
+        await ProductUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
     }
+}
 
-    private static async ValueTask PutProduct(ProductName productName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+internal static class ProductServices
+{
+    public static void ConfigureFindProductAction(IServiceCollection services)
     {
-        logger.LogInformation("Putting product {productName}...", productName);
+        ConfigureTryParseProductName(services);
+        ConfigureProcessProduct(services);
 
-        var uri = GetProductUri(productName, serviceUri);
-        await putRestResource(uri.Uri, json, cancellationToken);
+        services.TryAddSingleton<FindProductActionHandler>();
+        services.TryAddSingleton<FindProductAction>(provider => provider.GetRequiredService<FindProductActionHandler>().Handle);
     }
+
+    private static void ConfigureTryParseProductName(IServiceCollection services)
+    {
+        services.TryAddSingleton<TryParseProductNameHandler>();
+        services.TryAddSingleton<TryParseProductName>(provider => provider.GetRequiredService<TryParseProductNameHandler>().Handle);
+    }
+
+    private static void ConfigureProcessProduct(IServiceCollection services)
+    {
+        ConfigureIsProductNameInSourceControl(services);
+        ConfigurePutProduct(services);
+        ConfigureDeleteProduct(services);
+
+        services.TryAddSingleton<ProcessProductHandler>();
+        services.TryAddSingleton<ProcessProduct>(provider => provider.GetRequiredService<ProcessProductHandler>().Handle);
+    }
+
+    private static void ConfigureIsProductNameInSourceControl(IServiceCollection services)
+    {
+        services.TryAddSingleton<IsProductNameInSourceControlHandler>();
+        services.TryAddSingleton<IsProductNameInSourceControl>(provider => provider.GetRequiredService<IsProductNameInSourceControlHandler>().Handle);
+    }
+
+    public static void ConfigurePutProduct(IServiceCollection services)
+    {
+        ConfigureFindProductDto(services);
+        ConfigurePutProductInApim(services);
+
+        services.TryAddSingleton<PutProductHandler>();
+        services.TryAddSingleton<PutProduct>(provider => provider.GetRequiredService<PutProductHandler>().Handle);
+    }
+
+    private static void ConfigureFindProductDto(IServiceCollection services)
+    {
+        services.TryAddSingleton<FindProductDtoHandler>();
+        services.TryAddSingleton<FindProductDto>(provider => provider.GetRequiredService<FindProductDtoHandler>().Handle);
+    }
+
+    private static void ConfigurePutProductInApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<PutProductInApimHandler>();
+        services.TryAddSingleton<PutProductInApim>(provider => provider.GetRequiredService<PutProductInApimHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteProduct(IServiceCollection services)
+    {
+        ConfigureOnDeletingProduct(services);
+        ConfigureDeleteProductFromApim(services);
+
+        services.TryAddSingleton<DeleteProductHandler>();
+        services.TryAddSingleton<DeleteProduct>(provider => provider.GetRequiredService<DeleteProductHandler>().Handle);
+    }
+
+    private static void ConfigureOnDeletingProduct(IServiceCollection services)
+    {
+        SubscriptionServices.ConfigureOnDeletingProduct(services);
+    }
+
+    private static void ConfigureDeleteProductFromApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<DeleteProductFromApimHandler>();
+        services.TryAddSingleton<DeleteProductFromApim>(provider => provider.GetRequiredService<DeleteProductFromApimHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory factory) =>
+        factory.CreateLogger("ProductPublisher");
 }

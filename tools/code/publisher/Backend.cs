@@ -1,126 +1,263 @@
-﻿using common;
+﻿using AsyncKeyedLock;
+using Azure.Core.Pipeline;
+using common;
+using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using MoreLinq;
+using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
-using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal static class Backend
+internal delegate Option<PublisherAction> FindBackendAction(FileInfo file);
+
+file delegate Option<BackendName> TryParseBackendName(FileInfo file);
+
+file delegate ValueTask ProcessBackend(BackendName name, CancellationToken cancellationToken);
+
+file delegate bool IsBackendNameInSourceControl(BackendName name);
+
+file delegate ValueTask<Option<BackendDto>> FindBackendDto(BackendName name, CancellationToken cancellationToken);
+
+internal delegate ValueTask PutBackend(BackendName name, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteBackend(BackendName name, CancellationToken cancellationToken);
+
+file delegate ValueTask PutBackendInApim(BackendName name, BackendDto dto, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteBackendFromApim(BackendName name, CancellationToken cancellationToken);
+
+file sealed class FindBackendActionHandler(TryParseBackendName tryParseName, ProcessBackend processBackend)
 {
-    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await GetBackendInformationFiles(files, serviceDirectory)
-                .Select(GetBackendName)
-                .ForEachParallel(async backendName => await Delete(backendName, serviceUri, deleteRestResource, logger, cancellationToken),
-                                 cancellationToken);
-    }
+    public Option<PublisherAction> Handle(FileInfo file) =>
+        from name in tryParseName(file)
+        select GetAction(name);
 
-    private static IEnumerable<BackendInformationFile> GetBackendInformationFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
-    {
-        return files.Choose(file => TryGetBackendInformationFile(file, serviceDirectory));
-    }
+    private PublisherAction GetAction(BackendName name) =>
+        async cancellationToken => await processBackend(name, cancellationToken);
+}
 
-    private static BackendInformationFile? TryGetBackendInformationFile(FileInfo? file, ServiceDirectory serviceDirectory)
+file sealed class TryParseBackendNameHandler(ManagementServiceDirectory serviceDirectory)
+{
+    public Option<BackendName> Handle(FileInfo file) =>
+        TryParseNameFromInformationFile(file);
+
+    private Option<BackendName> TryParseNameFromInformationFile(FileInfo file) =>
+        from informationFile in BackendInformationFile.TryParse(file, serviceDirectory)
+        select informationFile.Parent.Name;
+}
+
+/// <summary>
+/// Limits the number of simultaneous operations.
+/// </summary>
+file sealed class BackendSemaphore : IDisposable
+{
+    private readonly AsyncKeyedLocker<BackendName> locker = new();
+    private ImmutableHashSet<BackendName> processedNames = [];
+
+    /// <summary>
+    /// Runs the provided action, ensuring that each name is processed only once.
+    /// </summary>
+    public async ValueTask Run(BackendName name, Func<BackendName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
-        if (file is null || file.Name.Equals(BackendInformationFile.Name) is false)
+        // Do not process the same name simultaneously
+        using var _ = await locker.LockAsync(name, cancellationToken);
+
+        // Only process each name once
+        if (processedNames.Contains(name))
         {
-            return null;
+            return;
         }
 
-        var backendDirectory = TryGetBackendDirectory(file.Directory, serviceDirectory);
+        await action(name, cancellationToken);
 
-        return backendDirectory is null
-                ? null
-                : new BackendInformationFile(backendDirectory);
+        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
     }
 
-    private static BackendDirectory? TryGetBackendDirectory(DirectoryInfo? directory, ServiceDirectory serviceDirectory)
+    public void Dispose() => locker.Dispose();
+}
+
+file sealed class ProcessBackendHandler(IsBackendNameInSourceControl isNameInSourceControl, PutBackend put, DeleteBackend delete) : IDisposable
+{
+    private readonly BackendSemaphore semaphore = new();
+
+    public async ValueTask Handle(BackendName name, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, HandleInner, cancellationToken);
+
+    private async ValueTask HandleInner(BackendName name, CancellationToken cancellationToken)
     {
-        if (directory is null)
+        if (isNameInSourceControl(name))
         {
-            return null;
+            await put(name, cancellationToken);
         }
-
-        var backendsDirectory = TryGetBackendsDirectory(directory.Parent, serviceDirectory);
-        if (backendsDirectory is null)
+        else
         {
-            return null;
+            await delete(name, cancellationToken);
         }
-
-        var backendName = new BackendName(directory.Name);
-        return new BackendDirectory(backendName, backendsDirectory);
     }
 
-    private static BackendsDirectory? TryGetBackendsDirectory(DirectoryInfo? directory, ServiceDirectory serviceDirectory)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class IsBackendNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
+{
+    public bool Handle(BackendName name) =>
+        DoesInformationFileExist(name);
+
+    private bool DoesInformationFileExist(BackendName name)
     {
-        return directory is null
-            || directory.Name.Equals(BackendsDirectory.Name) is false
-            || serviceDirectory.PathEquals(directory.Parent) is false
-            ? null
-            : new BackendsDirectory(serviceDirectory);
-    }
+        var artifactFiles = getArtifactFiles();
+        var informationFile = BackendInformationFile.From(name, serviceDirectory);
 
-    private static BackendName GetBackendName(BackendInformationFile file)
+        return artifactFiles.Contains(informationFile.ToFileInfo());
+    }
+}
+
+file sealed class PutBackendHandler(FindBackendDto findDto, PutBackendInApim putInApim) : IDisposable
+{
+    private readonly BackendSemaphore semaphore = new();
+
+    public async ValueTask Handle(BackendName name, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, Put, cancellationToken);
+
+    private async ValueTask Put(BackendName name, CancellationToken cancellationToken)
     {
-        return new(file.BackendDirectory.GetName());
+        var dtoOption = await findDto(name, cancellationToken);
+        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
     }
 
-    private static async ValueTask Delete(BackendName backendName, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class FindBackendDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
+{
+    public async ValueTask<Option<BackendDto>> Handle(BackendName name, CancellationToken cancellationToken)
     {
-        var uri = GetBackendUri(backendName, serviceUri);
+        var informationFile = BackendInformationFile.From(name, serviceDirectory);
+        var informationFileInfo = informationFile.ToFileInfo();
 
-        logger.LogInformation("Deleting backend {backendName}...", backendName);
-        await deleteRestResource(uri.Uri, cancellationToken);
+        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+
+        return from contents in contentsOption
+               let dto = contents.ToObjectFromJson<BackendDto>()
+               let overrideDto = overrideFactory.Create<BackendName, BackendDto>()
+               select overrideDto(name, dto);
     }
+}
 
-    private static BackendUri GetBackendUri(BackendName backendName, ServiceUri serviceUri)
+file sealed class PutBackendInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(BackendName name, BackendDto dto, CancellationToken cancellationToken)
     {
-        var backendsUri = new BackendsUri(serviceUri);
-        return new BackendUri(backendName, backendsUri);
+        logger.LogInformation("Putting backend {BackendName}...", name);
+        await BackendUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
     }
+}
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+file sealed class DeleteBackendHandler(DeleteBackendFromApim deleteFromApim) : IDisposable
+{
+    private readonly BackendSemaphore semaphore = new();
+
+    public async ValueTask Handle(BackendName name, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, Delete, cancellationToken);
+
+    private async ValueTask Delete(BackendName name, CancellationToken cancellationToken)
     {
-        await GetArtifactsToPut(files, configurationJson, serviceDirectory)
-                .ForEachParallel(async artifact => await PutBackend(artifact.Name, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
-                                 cancellationToken);
+        await deleteFromApim(name, cancellationToken);
     }
 
-    private static IEnumerable<(BackendName Name, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class DeleteBackendFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(BackendName name, CancellationToken cancellationToken)
     {
-        var configurationArtifacts = GetConfigurationBackends(configurationJson);
-
-        return GetBackendInformationFiles(files, serviceDirectory)
-                .Select(file => (Name: GetBackendName(file), Json: file.ReadAsJsonObject()))
-                .LeftJoin(configurationArtifacts,
-                          keySelector: artifact => artifact.Name,
-                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.Name, fileArtifact.Json.Merge(configurationArtifact.Json)));
+        logger.LogInformation("Deleting backend {BackendName}...", name);
+        await BackendUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
     }
+}
 
-    private static IEnumerable<(BackendName Name, JsonObject Json)> GetConfigurationBackends(JsonObject configurationJson)
+internal static class BackendServices
+{
+    public static void ConfigureFindBackendAction(IServiceCollection services)
     {
-        return configurationJson.TryGetJsonArrayProperty("backends")
-                                .IfNullEmpty()
-                                .Choose(node => node as JsonObject)
-                                .Choose(jsonObject =>
-                                {
-                                    var name = jsonObject.TryGetStringProperty("name");
-                                    return name is null
-                                            ? null as (BackendName, JsonObject)?
-                                            : (new BackendName(name), jsonObject);
-                                });
+        ConfigureTryParseBackendName(services);
+        ConfigureProcessBackend(services);
+
+        services.TryAddSingleton<FindBackendActionHandler>();
+        services.TryAddSingleton<FindBackendAction>(provider => provider.GetRequiredService<FindBackendActionHandler>().Handle);
     }
 
-    private static async ValueTask PutBackend(BackendName backendName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureTryParseBackendName(IServiceCollection services)
     {
-        logger.LogInformation("Putting backend {backendName}...", backendName);
-
-        var uri = GetBackendUri(backendName, serviceUri);
-        await putRestResource(uri.Uri, json, cancellationToken);
+        services.TryAddSingleton<TryParseBackendNameHandler>();
+        services.TryAddSingleton<TryParseBackendName>(provider => provider.GetRequiredService<TryParseBackendNameHandler>().Handle);
     }
+
+    private static void ConfigureProcessBackend(IServiceCollection services)
+    {
+        ConfigureIsBackendNameInSourceControl(services);
+        ConfigurePutBackend(services);
+        ConfigureDeleteBackend(services);
+
+        services.TryAddSingleton<ProcessBackendHandler>();
+        services.TryAddSingleton<ProcessBackend>(provider => provider.GetRequiredService<ProcessBackendHandler>().Handle);
+    }
+
+    private static void ConfigureIsBackendNameInSourceControl(IServiceCollection services)
+    {
+        services.TryAddSingleton<IsBackendNameInSourceControlHandler>();
+        services.TryAddSingleton<IsBackendNameInSourceControl>(provider => provider.GetRequiredService<IsBackendNameInSourceControlHandler>().Handle);
+    }
+
+    public static void ConfigurePutBackend(IServiceCollection services)
+    {
+        ConfigureFindBackendDto(services);
+        ConfigurePutBackendInApim(services);
+
+        services.TryAddSingleton<PutBackendHandler>();
+        services.TryAddSingleton<PutBackend>(provider => provider.GetRequiredService<PutBackendHandler>().Handle);
+    }
+
+    private static void ConfigureFindBackendDto(IServiceCollection services)
+    {
+        services.TryAddSingleton<FindBackendDtoHandler>();
+        services.TryAddSingleton<FindBackendDto>(provider => provider.GetRequiredService<FindBackendDtoHandler>().Handle);
+    }
+
+    private static void ConfigurePutBackendInApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<PutBackendInApimHandler>();
+        services.TryAddSingleton<PutBackendInApim>(provider => provider.GetRequiredService<PutBackendInApimHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteBackend(IServiceCollection services)
+    {
+        ConfigureDeleteBackendFromApim(services);
+
+        services.TryAddSingleton<DeleteBackendHandler>();
+        services.TryAddSingleton<DeleteBackend>(provider => provider.GetRequiredService<DeleteBackendHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteBackendFromApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<DeleteBackendFromApimHandler>();
+        services.TryAddSingleton<DeleteBackendFromApim>(provider => provider.GetRequiredService<DeleteBackendFromApimHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory factory) =>
+        factory.CreateLogger("BackendPublisher");
 }

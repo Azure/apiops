@@ -1,103 +1,117 @@
 ﻿using common;
-using Medallion.Shell;
+using LanguageExt;
+using LibGit2Sharp;
 using System;
-using System.Collections.Immutable;
+using System.Collections.Frozen;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 
 namespace publisher;
 
-internal record CommitId
+public sealed record CommitId
 {
-    private readonly string value;
-
     public CommitId(string value)
     {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new ArgumentException($"Commit ID cannot be null or whitespace.", nameof(value));
-        }
-
-        this.value = value;
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, nameof(value));
+        Value = value;
     }
 
-    public override string ToString() => value;
+    public string Value { get; }
 }
 
-internal enum CommitStatus
+public static class Git
 {
-    Add,
-    Copy,
-    Delete,
-    Modify,
-    Rename,
-    ChangeType,
-    Unmerge,
-    Unknown,
-    Broken
-}
+    public static FrozenSet<FileInfo> GetChangedFilesInCommit(DirectoryInfo repositoryDirectory, CommitId commitId) =>
+        GetChanges(repositoryDirectory, commitId)
+            .SelectMany(change => (change.Path, change.OldPath) switch
+            {
+                (null, not null) => [change.OldPath],
+                (not null, null) => [change.Path],
+                (null, null) => [],
+                (var path, var oldPath) => new[] { path, oldPath }.Distinct()
+            })
+            .Select(path => new FileInfo(Path.Combine(repositoryDirectory.FullName, path)))
+            .ToFrozenSet(x => x.FullName);
 
-internal static class Git
-{
-    public static async ValueTask<ImmutableDictionary<CommitStatus, ImmutableList<FileInfo>>> GetFilesFromCommit(CommitId commitId, DirectoryInfo baseDirectory)
+    private static TreeChanges GetChanges(DirectoryInfo repositoryDirectory, CommitId commitId)
     {
-        var diffTreeOutput = await GetDiffTreeOutput(commitId, baseDirectory);
+        using var repository = new Repository(repositoryDirectory.FullName);
 
-        return ParseDiffTreeOutput(diffTreeOutput, baseDirectory);
+        var commit = GetCommit(repository, commitId);
+
+        var parentCommit = commit.Parents.FirstOrDefault();
+
+        return repository.Diff
+                         .Compare<TreeChanges>(parentCommit?.Tree, commit.Tree);
     }
 
-    private static async ValueTask<string> GetDiffTreeOutput(CommitId commitId, DirectoryInfo baseDirectory)
-    {
-        var command = Command.Run("git", "-C", baseDirectory.FullName, "diff-tree", "--no-commit-id", "--name-status", "--relative", "-r", $"{commitId}^", $"{commitId}");
-        var commandResult = await command.Task;
+    private static Commit GetCommit(Repository repository, CommitId commitId) =>
+        repository.Commits
+                  .Find(commit => commit.Id.Sha == commitId.Value)
+                  .IfNone(() => throw new InvalidOperationException($"Could not find commit with ID {commitId.Value}."));
 
-        return commandResult.Success
-            ? commandResult.StandardOutput
-            : throw new InvalidOperationException($"Failed to get files for commit {commitId} in directory {baseDirectory}. Error message is '{commandResult.StandardError}'.");
-    }
-
-    private static ImmutableDictionary<CommitStatus, ImmutableList<FileInfo>> ParseDiffTreeOutput(string output, DirectoryInfo baseDirectory)
+    public static Option<CommitId> TryGetPreviousCommitId(DirectoryInfo repositoryDirectory, CommitId commitId)
     {
-        return output.Split("\n", StringSplitOptions.RemoveEmptyEntries)
-                     .Choose<string, (CommitStatus Status, FileInfo File)>(line =>
-                     {
-                         var commitStatus = TryGetCommitStatusFromOutputLine(line);
-                         if (commitStatus is null)
-                         {
-                             return default;
-                         }
-                         else
-                         {
-                             var file = GetFileFromOutputLine(line, baseDirectory);
-                             return (commitStatus.Value, file);
-                         }
-                     })
-                     .GroupBy(pair => pair.Status, pair => pair.File)
-                     .ToImmutableDictionary(grouping => grouping.Key, grouping => grouping.ToImmutableList());
-    }
+        using var repository = new Repository(repositoryDirectory.FullName);
 
-    private static CommitStatus? TryGetCommitStatusFromOutputLine(string diffTreeOutputLine)
-    {
-        return diffTreeOutputLine.ToUpper()[0] switch
+        var commit = GetCommit(repository, commitId);
+
+        return commit.Parents.FirstOrDefault() switch
         {
-            'A' => CommitStatus.Add,
-            'C' => CommitStatus.Copy,
-            'D' => CommitStatus.Delete,
-            'M' => CommitStatus.Modify,
-            'R' => CommitStatus.Rename,
-            'T' => CommitStatus.ChangeType,
-            'U' => CommitStatus.Unmerge,
-            'X' => CommitStatus.Unknown,
-            'B' => CommitStatus.Broken,
-            _ => null
+            null => Option<CommitId>.None,
+            var parent => new CommitId(parent.Id.Sha)
         };
     }
 
-    private static FileInfo GetFileFromOutputLine(string outputLine, DirectoryInfo baseDirectory)
+    public static Option<Stream> TryGetFileContentsInCommit(DirectoryInfo repositoryDirectory, FileInfo file, CommitId commitId)
     {
-        var outputLinePath = outputLine[1..].Trim();
-        var filePath = Path.Combine(baseDirectory.FullName, outputLinePath);
-        return new FileInfo(filePath);
+        using var repository = new Repository(repositoryDirectory.FullName);
+        var relativePath = Path.GetRelativePath(repositoryDirectory.FullName, file.FullName);
+        var relativePathString = Path.DirectorySeparatorChar == '\\'
+                                    ? relativePath.Replace('\\', '/')
+                                    : relativePath;
+
+        var blob = repository.Lookup<Blob>($"{commitId.Value}:{relativePathString}");
+
+        return blob is null
+                ? Option<Stream>.None
+                : blob.GetContentStream();
+    }
+
+    public static FrozenSet<FileInfo> GetExistingFilesInCommit(DirectoryInfo repositoryDirectory, CommitId commitId)
+    {
+        using var repository = new Repository(repositoryDirectory.FullName);
+
+        var commit = GetCommit(repository, commitId);
+
+        return commit.Tree
+                     .SelectMany(treeEntry => GetFilesFromTreeEntry(treeEntry, repositoryDirectory))
+                     .ToFrozenSet(x => x.FullName);
+    }
+
+    private static IEnumerable<FileInfo> GetFilesFromTreeEntry(TreeEntry entry, DirectoryInfo repositoryDirectory) =>
+        entry.Target switch
+        {
+            Blob blob => [new FileInfo(Path.Combine(repositoryDirectory.FullName, entry.Path))],
+            Tree tree => tree.SelectMany(child => GetFilesFromTreeEntry(child, repositoryDirectory)),
+            _ => []
+        };
+
+    public static void InitializeRepository(DirectoryInfo directory, string commitMessage, string authorName, string authorEmail, DateTimeOffset signatureDate)
+    {
+        Repository.Init(directory.FullName);
+        CommitChanges(directory, commitMessage, authorName, authorEmail, signatureDate);
+    }
+
+    public static Commit CommitChanges(DirectoryInfo directory, string commitMessage, string authorName, string authorEmail, DateTimeOffset signatureDate)
+    {
+        using var repository = new Repository(directory.FullName);
+        Commands.Stage(repository, "*");
+        repository.Index.Write();
+
+        var author = new Signature(authorName, authorEmail, signatureDate);
+
+        return repository.Commit(commitMessage, author, author);
     }
 }

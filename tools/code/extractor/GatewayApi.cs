@@ -1,57 +1,91 @@
-﻿using common;
+﻿using Azure.Core.Pipeline;
+using common;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal static class GatewayApi
+internal delegate ValueTask ExtractGatewayApis(GatewayName gatewayName, CancellationToken cancellationToken);
+
+file delegate IAsyncEnumerable<(ApiName Name, GatewayApiDto Dto)> ListGatewayApis(GatewayName gatewayName, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteGatewayApiArtifacts(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteGatewayApiInformationFile(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
+
+file sealed class ExtractGatewayApisHandler(ListGatewayApis list, WriteGatewayApiArtifacts writeArtifacts)
 {
-    public static async ValueTask ExportAll(GatewayDirectory gatewayDirectory, GatewayUri gatewayUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
+    public async ValueTask Handle(GatewayName gatewayName, CancellationToken cancellationToken) =>
+        await list(gatewayName, cancellationToken)
+                .IterParallel(async gatewayapi => await writeArtifacts(gatewayapi.Name, gatewayapi.Dto, gatewayName, cancellationToken),
+                              cancellationToken);
+}
+
+file sealed class ListGatewayApisHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    public IAsyncEnumerable<(ApiName, GatewayApiDto)> Handle(GatewayName gatewayName, CancellationToken cancellationToken) =>
+        GatewayApisUri.From(gatewayName, serviceUri).List(pipeline, cancellationToken);
+}
+
+file sealed class WriteGatewayApiArtifactsHandler(WriteGatewayApiInformationFile writeApiFile)
+{
+    public async ValueTask Handle(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken)
     {
-        var gatewayApisFile = new GatewayApisFile(gatewayDirectory);
+        await writeApiFile(name, dto, gatewayName, cancellationToken);
+    }
+}
 
-        var gatewayApis = await List(gatewayUri, listRestResources, cancellationToken)
-                                    // Filter out apis that should not be exported
-                                    .Where(apiName => ShouldExport(apiName, apiNamesToExport))
-                                    .Select(SerializeGatewayApi)
-                                    .ToJsonArray(cancellationToken);
+file sealed class WriteGatewayApiInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
 
-        if (gatewayApis.Any())
-        {
-            logger.LogInformation("Writing gateway APIs file {filePath}...", gatewayApisFile.Path);
-            await gatewayApisFile.OverwriteWithJson(gatewayApis, cancellationToken);
-        }
+    public async ValueTask Handle(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken)
+    {
+        var informationFile = GatewayApiInformationFile.From(name, gatewayName, serviceDirectory);
+
+        logger.LogInformation("Writing gateway api information file {GatewayApiInformationFile}...", informationFile);
+        await informationFile.WriteDto(dto, cancellationToken);
+    }
+}
+
+internal static class GatewayApiServices
+{
+    public static void ConfigureExtractGatewayApis(IServiceCollection services)
+    {
+        ConfigureListGatewayApis(services);
+        ConfigureWriteGatewayApiArtifacts(services);
+
+        services.TryAddSingleton<ExtractGatewayApisHandler>();
+        services.TryAddSingleton<ExtractGatewayApis>(provider => provider.GetRequiredService<ExtractGatewayApisHandler>().Handle);
     }
 
-    private static IAsyncEnumerable<ApiName> List(GatewayUri gatewayUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    private static void ConfigureListGatewayApis(IServiceCollection services)
     {
-        var apisUri = new GatewayApisUri(gatewayUri);
-        var apiJsonObjects = listRestResources(apisUri.Uri, cancellationToken);
-        return apiJsonObjects.Select(json => json.GetStringProperty("name"))
-                             .Select(name => new ApiName(name));
+        services.TryAddSingleton<ListGatewayApisHandler>();
+        services.TryAddSingleton<ListGatewayApis>(provider => provider.GetRequiredService<ListGatewayApisHandler>().Handle);
     }
 
-    private static bool ShouldExport(ApiName apiName, IEnumerable<string>? apiNamesToExport)
+    private static void ConfigureWriteGatewayApiArtifacts(IServiceCollection services)
     {
-        return apiNamesToExport is null
-               || apiNamesToExport.Any(apiNameToExport => apiNameToExport.Equals(apiName.ToString(), StringComparison.OrdinalIgnoreCase)
-                                                          // Apis with revisions have the format 'apiName;revision'. We split by semicolon to get the name.
-                                                          || apiNameToExport.Equals(apiName.ToString()
-                                                                                           .Split(';')
-                                                                                           .First(),
-                                                                                    StringComparison.OrdinalIgnoreCase));
+        ConfigureWriteGatewayApiInformationFile(services);
+
+        services.TryAddSingleton<WriteGatewayApiArtifactsHandler>();
+        services.TryAddSingleton<WriteGatewayApiArtifacts>(provider => provider.GetRequiredService<WriteGatewayApiArtifactsHandler>().Handle);
     }
 
-    private static JsonObject SerializeGatewayApi(ApiName apiName)
+    private static void ConfigureWriteGatewayApiInformationFile(IServiceCollection services)
     {
-        return new JsonObject
-        {
-            ["name"] = apiName.ToString()
-        };
+        services.TryAddSingleton<WriteGatewayApiInformationFileHandler>();
+        services.TryAddSingleton<WriteGatewayApiInformationFile>(provider => provider.GetRequiredService<WriteGatewayApiInformationFileHandler>().Handle);
     }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
+        loggerFactory.CreateLogger("GatewayApiExtractor");
 }

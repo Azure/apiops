@@ -1,160 +1,267 @@
-﻿using common;
+﻿using AsyncKeyedLock;
+using Azure.Core.Pipeline;
+using common;
+using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using MoreLinq;
-using System.Collections.Generic;
+using System;
 using System.Collections.Immutable;
 using System.IO;
-using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal static class ApiTag
+internal delegate Option<PublisherAction> FindApiTagAction(FileInfo file);
+
+file delegate Option<(TagName Name, ApiName ApiName)> TryParseTagName(FileInfo file);
+
+file delegate ValueTask ProcessApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate bool IsTagNameInSourceControl(TagName name, ApiName apiName);
+
+file delegate ValueTask<Option<ApiTagDto>> FindApiTagDto(TagName name, ApiName apiName, CancellationToken cancellationToken);
+
+internal delegate ValueTask PutApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate ValueTask PutApiTagInApim(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteApiTagFromApim(TagName name, ApiName apiName, CancellationToken cancellationToken);
+
+file sealed class FindApiTagActionHandler(TryParseTagName tryParseName, ProcessApiTag processApiTag)
 {
-    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    public Option<PublisherAction> Handle(FileInfo file) =>
+        from names in tryParseName(file)
+        select GetAction(names.Name, names.ApiName);
+
+    private PublisherAction GetAction(TagName name, ApiName apiName) =>
+        async cancellationToken => await processApiTag(name, apiName, cancellationToken);
+}
+
+file sealed class TryParseTagNameHandler(ManagementServiceDirectory serviceDirectory)
+{
+    public Option<(TagName, ApiName)> Handle(FileInfo file) =>
+        TryParseNameFromTagInformationFile(file);
+
+    private Option<(TagName, ApiName)> TryParseNameFromTagInformationFile(FileInfo file) =>
+        from informationFile in ApiTagInformationFile.TryParse(file, serviceDirectory)
+        select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
+}
+
+/// <summary>
+/// Limits the number of simultaneous operations.
+/// </summary>
+file sealed class ApiTagSemaphore : IDisposable
+{
+    private readonly AsyncKeyedLocker<(TagName, ApiName)> locker = new();
+    private ImmutableHashSet<(TagName, ApiName)> processedNames = [];
+
+    /// <summary>
+    /// Runs the provided action, ensuring that each name is processed only once.
+    /// </summary>
+    public async ValueTask Run(TagName name, ApiName apiName, Func<TagName, ApiName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
-        await Put(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
-    }
+        // Do not process the same name simultaneously
+        using var _ = await locker.LockAsync((name, apiName), cancellationToken);
 
-    private static async ValueTask Put(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await GetArtifactApiTags(files, configurationJson, serviceDirectory)
-                .ForEachParallel(async api => await Put(api.ApiName, api.TagNames, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken),
-                                 cancellationToken);
-    }
-
-    private static IEnumerable<(ApiName ApiName, ImmutableList<TagName> TagNames)> GetArtifactApiTags(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
-    {
-        var fileArtifacts = GetApiTagsFiles(files, serviceDirectory)
-                                 .Select(file =>
-                                 {
-                                     var apiName = GetApiName(file);
-                                     var tagNames = file.ReadAsJsonArray()
-                                                        .Choose(node => node as JsonObject)
-                                                        .Choose(tagJsonObject => tagJsonObject.TryGetStringProperty("name"))
-                                                        .Select(name => new TagName(name))
-                                                        .ToImmutableList();
-                                     return (ApiName: apiName, TagNames: tagNames);
-                                 });
-
-        var configurationArtifacts = GetConfigurationApiTags(configurationJson);
-
-        return fileArtifacts.LeftJoin(configurationArtifacts,
-                                      keySelector: artifact => artifact.ApiName,
-                                      bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ApiName, configurationArtifact.TagNames));
-    }
-
-    private static IEnumerable<ApiTagsFile> GetApiTagsFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
-    {
-        return files.Choose(file => TryGetTagsFile(file, serviceDirectory));
-    }
-
-    private static ApiTagsFile? TryGetTagsFile(FileInfo? file, ServiceDirectory serviceDirectory)
-    {
-        if (file is null || file.Name.Equals(ApiTagsFile.Name) is false)
+        // Only process each name once
+        if (processedNames.Contains((name, apiName)))
         {
-            return null;
+            return;
         }
 
-        var apiDirectory = Api.TryGetApiDirectory(file.Directory, serviceDirectory);
+        await action(name, apiName, cancellationToken);
 
-        return apiDirectory is null
-                ? null
-                : new ApiTagsFile(apiDirectory);
+        ImmutableInterlocked.Update(ref processedNames, set => set.Add((name, apiName)));
     }
 
-    private static ApiName GetApiName(ApiTagsFile file)
+    public void Dispose() => locker.Dispose();
+}
+
+file sealed class ProcessApiTagHandler(IsTagNameInSourceControl isNameInSourceControl, PutApiTag put, DeleteApiTag delete) : IDisposable
+{
+    private readonly ApiTagSemaphore semaphore = new();
+
+    public async ValueTask Handle(TagName name, ApiName apiName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, apiName, HandleInner, cancellationToken);
+
+    private async ValueTask HandleInner(TagName name, ApiName apiName, CancellationToken cancellationToken)
     {
-        return new(file.ApiDirectory.GetName());
-    }
-
-    private static IEnumerable<(ApiName ApiName, ImmutableList<TagName> TagNames)> GetConfigurationApiTags(JsonObject configurationJson)
-    {
-        return configurationJson.TryGetJsonArrayProperty("apis")
-                                .IfNullEmpty()
-                                .Choose(node => node as JsonObject)
-                                .Choose<JsonObject, (ApiName ApiName, ImmutableList<TagName> TagNames)>(apiJsonObject =>
-                                {
-                                    var apiNameString = apiJsonObject.TryGetStringProperty("name");
-                                    if (apiNameString is null)
-                                    {
-                                        return default;
-                                    }
-
-                                    var apiName = new ApiName(apiNameString);
-
-                                    var tagsJsonArray = apiJsonObject.TryGetJsonArrayProperty("tags");
-                                    if (tagsJsonArray is null)
-                                    {
-                                        return default;
-                                    }
-
-                                    if (tagsJsonArray.Any() is false)
-                                    {
-                                        return (apiName, ImmutableList.Create<TagName>());
-                                    }
-
-                                    // If tags are defined in configuration but none have a 'name' property, skip this resource
-                                    var tagNames = tagsJsonArray.Choose(node => node as JsonObject)
-                                                                    .Choose(tagJsonObject => tagJsonObject.TryGetStringProperty("name"))
-                                                                    .Select(name => new TagName(name))
-                                                                    .ToImmutableList();
-                                    return tagNames.Any() ? (apiName, tagNames) : default;
-                                });
-    }
-
-    private static async ValueTask Put(ApiName apiName, IReadOnlyCollection<TagName> tagNames, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        var apiUri = GetApiUri(apiName, serviceUri);
-        var apiTagsUri = new ApiTagsUri(apiUri);
-
-        var existingTagNames = await listRestResources(apiTagsUri.Uri, cancellationToken)
-                                        .Select(tagJsonObject => tagJsonObject.GetStringProperty("name"))
-                                        .Select(name => new TagName(name))
-                                        .ToListAsync(cancellationToken);
-
-        var tagNamesToPut = tagNames.Except(existingTagNames);
-        var tagNamesToRemove = existingTagNames.Except(tagNames);
-
-        await tagNamesToRemove.ForEachParallel(async tagName =>
+        if (isNameInSourceControl(name, apiName))
         {
-            logger.LogInformation("Removing tag {tagName} in api {apiName}...", tagName, apiName);
-            await Delete(tagName, apiUri, deleteRestResource, cancellationToken);
-        }, cancellationToken);
-
-        await tagNamesToPut.ForEachParallel(async tagName =>
+            await put(name, apiName, cancellationToken);
+        }
+        else
         {
-            logger.LogInformation("Putting tag {tagName} in api {apiName}...", tagName, apiName);
-            await Put(tagName, apiUri, putRestResource, cancellationToken);
-        }, cancellationToken);
+            await delete(name, apiName, cancellationToken);
+        }
     }
 
-    private static ApiUri GetApiUri(ApiName apiName, ServiceUri serviceUri)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class IsTagNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
+{
+    public bool Handle(TagName name, ApiName apiName) =>
+        DoesTagInformationFileExist(name, apiName);
+
+    private bool DoesTagInformationFileExist(TagName name, ApiName apiName)
     {
-        var apisUri = new ApisUri(serviceUri);
-        return new ApiUri(apiName, apisUri);
-    }
+        var artifactFiles = getArtifactFiles();
+        var informationFile = ApiTagInformationFile.From(name, apiName, serviceDirectory);
 
-    private static async ValueTask Delete(TagName tagName, ApiUri apiUri, DeleteRestResource deleteRestResource, CancellationToken cancellationToken)
+        return artifactFiles.Contains(informationFile.ToFileInfo());
+    }
+}
+
+file sealed class PutApiTagHandler(FindApiTagDto findDto, PutApi putApi, PutTag putTag, PutApiTagInApim putInApim) : IDisposable
+{
+    private readonly ApiTagSemaphore semaphore = new();
+
+    public async ValueTask Handle(TagName name, ApiName apiName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, apiName, Put, cancellationToken);
+
+    private async ValueTask Put(TagName name, ApiName apiName, CancellationToken cancellationToken)
     {
-        var apiTagsUri = new ApiTagsUri(apiUri);
-        var apiTagUri = new ApiTagUri(tagName, apiTagsUri);
-
-        await deleteRestResource(apiTagUri.Uri, cancellationToken);
+        var dtoOption = await findDto(name, apiName, cancellationToken);
+        await dtoOption.IterTask(async dto => await Put(name, dto, apiName, cancellationToken));
     }
 
-    private static async ValueTask Put(TagName tagName, ApiUri apiUri, PutRestResource putRestResource, CancellationToken cancellationToken)
+    private async ValueTask Put(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken)
     {
-        var apiTagsUri = new ApiTagsUri(apiUri);
-        var apiTagUri = new ApiTagUri(tagName, apiTagsUri);
-
-        await putRestResource(apiTagUri.Uri, new JsonObject(), cancellationToken);
+        await putApi(apiName, cancellationToken);
+        await putTag(name, cancellationToken);
+        await putInApim(name, dto, apiName, cancellationToken);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class FindApiTagDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents)
+{
+    public async ValueTask<Option<ApiTagDto>> Handle(TagName name, ApiName apiName, CancellationToken cancellationToken)
     {
-        await Put(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
+        var informationFile = ApiTagInformationFile.From(name, apiName, serviceDirectory);
+        var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
+
+        return from contents in contentsOption
+               select contents.ToObjectFromJson<ApiTagDto>();
     }
+}
+
+file sealed class PutApiTagInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Adding tag {TagName} to api {ApiName}...", name, apiName);
+        await ApiTagUri.From(name, apiName, serviceUri).PutDto(dto, pipeline, cancellationToken);
+    }
+}
+
+file sealed class DeleteApiTagHandler(DeleteApiTagFromApim deleteFromApim) : IDisposable
+{
+    private readonly ApiTagSemaphore semaphore = new();
+
+    public async ValueTask Handle(TagName name, ApiName apiName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, apiName, Delete, cancellationToken);
+
+    private async ValueTask Delete(TagName name, ApiName apiName, CancellationToken cancellationToken)
+    {
+        await deleteFromApim(name, apiName, cancellationToken);
+    }
+
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class DeleteApiTagFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(TagName name, ApiName apiName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Deleting tag {TagName} from api {ApiName}...", name, apiName);
+        await ApiTagUri.From(name, apiName, serviceUri).Delete(pipeline, cancellationToken);
+    }
+}
+
+internal static class ApiTagServices
+{
+    public static void ConfigureFindApiTagAction(IServiceCollection services)
+    {
+        ConfigureTryParseTagName(services);
+        ConfigureProcessApiTag(services);
+
+        services.TryAddSingleton<FindApiTagActionHandler>();
+        services.TryAddSingleton<FindApiTagAction>(provider => provider.GetRequiredService<FindApiTagActionHandler>().Handle);
+    }
+
+    private static void ConfigureTryParseTagName(IServiceCollection services)
+    {
+        services.TryAddSingleton<TryParseTagNameHandler>();
+        services.TryAddSingleton<TryParseTagName>(provider => provider.GetRequiredService<TryParseTagNameHandler>().Handle);
+    }
+
+    private static void ConfigureProcessApiTag(IServiceCollection services)
+    {
+        ConfigureIsTagNameInSourceControl(services);
+        ConfigurePutApiTag(services);
+        ConfigureDeleteApiTag(services);
+
+        services.TryAddSingleton<ProcessApiTagHandler>();
+        services.TryAddSingleton<ProcessApiTag>(provider => provider.GetRequiredService<ProcessApiTagHandler>().Handle);
+    }
+
+    private static void ConfigureIsTagNameInSourceControl(IServiceCollection services)
+    {
+        services.TryAddSingleton<IsTagNameInSourceControlHandler>();
+        services.TryAddSingleton<IsTagNameInSourceControl>(provider => provider.GetRequiredService<IsTagNameInSourceControlHandler>().Handle);
+    }
+
+    public static void ConfigurePutApiTag(IServiceCollection services)
+    {
+        ConfigureFindApiTagDto(services);
+        ConfigurePutApiTagInApim(services);
+        ApiServices.ConfigurePutApi(services);
+        TagServices.ConfigurePutTag(services);
+
+        services.TryAddSingleton<PutApiTagHandler>();
+        services.TryAddSingleton<PutApiTag>(provider => provider.GetRequiredService<PutApiTagHandler>().Handle);
+    }
+
+    private static void ConfigureFindApiTagDto(IServiceCollection services)
+    {
+        services.TryAddSingleton<FindApiTagDtoHandler>();
+        services.TryAddSingleton<FindApiTagDto>(provider => provider.GetRequiredService<FindApiTagDtoHandler>().Handle);
+    }
+
+    private static void ConfigurePutApiTagInApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<PutApiTagInApimHandler>();
+        services.TryAddSingleton<PutApiTagInApim>(provider => provider.GetRequiredService<PutApiTagInApimHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteApiTag(IServiceCollection services)
+    {
+        ConfigureDeleteApiTagFromApim(services);
+
+        services.TryAddSingleton<DeleteApiTagHandler>();
+        services.TryAddSingleton<DeleteApiTag>(provider => provider.GetRequiredService<DeleteApiTagHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteApiTagFromApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<DeleteApiTagFromApimHandler>();
+        services.TryAddSingleton<DeleteApiTagFromApim>(provider => provider.GetRequiredService<DeleteApiTagFromApimHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory factory) =>
+        factory.CreateLogger("ApiTagPublisher");
 }

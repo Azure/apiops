@@ -1,31 +1,28 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net7.0</TargetFramework>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Nullable>enable</Nullable>
-    <!-- <AnalysisLevel>latest-all</AnalysisLevel> -->
-    <UserSecretsId>05a138d4-2528-4536-b7d8-e2185a272594</UserSecretsId>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<AnalysisLevel>latest-all</AnalysisLevel>
+		<WarningsNotAsErrors>CA1708,CA1724,CA1812,CA1848,CA2007,CA1034,CA1062</WarningsNotAsErrors>
+		<OutputType>Exe</OutputType>
+		<Nullable>enable</Nullable>
+		<UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
+    <Version>6.0.0-alpha</Version>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Azure.Identity" Version="1.10.2" />
-    <PackageReference Include="MedallionShell.StrongName" Version="1.6.2" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="7.0.0" />
-    <PackageReference Include="NetEscapades.Configuration.Yaml" Version="2.2.0" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
-    <PackageReference Include="System.Reactive" Version="5.0.0" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="AsyncKeyedLock" Version="6.4.2" />
+		<PackageReference Include="DotNext.Threading" Version="5.3.0" />
+		<PackageReference Include="LanguageExt.Transformers" Version="4.4.8" />
+		<PackageReference Include="LibGit2Sharp" Version="0.30.0" />
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+		<PackageReference Include="morelinq" Version="4.2.0" />
+		<PackageReference Include="NetEscapades.Configuration.Yaml" Version="3.1.0" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\common\common.csproj" />
-  </ItemGroup>
-  
-  <ItemGroup>
-    <None Update="appsettings.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\common\common.csproj" />
+	</ItemGroup>
 
 </Project>

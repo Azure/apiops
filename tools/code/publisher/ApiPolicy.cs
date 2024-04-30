@@ -1,152 +1,278 @@
-﻿using common;
+﻿using AsyncKeyedLock;
+using Azure.Core.Pipeline;
+using common;
+using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using System.Collections.Generic;
+using System;
+using System.Collections.Immutable;
 using System.IO;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal static class ApiPolicy
+internal delegate Option<PublisherAction> FindApiPolicyAction(FileInfo file);
+
+file delegate Option<(ApiPolicyName Name, ApiName ApiName)> TryParseApiPolicyName(FileInfo file);
+
+file delegate ValueTask ProcessApiPolicy(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate bool IsApiPolicyNameInSourceControl(ApiPolicyName name, ApiName apiName);
+
+file delegate ValueTask<Option<ApiPolicyDto>> FindApiPolicyDto(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken);
+
+internal delegate ValueTask PutApiPolicy(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteApiPolicy(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate ValueTask PutApiPolicyInApim(ApiPolicyName name, ApiPolicyDto dto, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteApiPolicyFromApim(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken);
+
+file sealed class FindApiPolicyActionHandler(TryParseApiPolicyName tryParseName, ProcessApiPolicy processApiPolicy)
 {
-    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await GetPolicyFiles(files, serviceDirectory)
-                .Select(file => (PolicyName: GetPolicyName(file), ApiName: GetApiName(file)))
-                .ForEachParallel(async policy => await Delete(policy.PolicyName, policy.ApiName, serviceUri, deleteRestResource, logger, cancellationToken),
-                                 cancellationToken);
-    }
+    public Option<PublisherAction> Handle(FileInfo file) =>
+        from names in tryParseName(file)
+        select GetAction(names.Name, names.ApiName);
 
-    private static IEnumerable<ApiPolicyFile> GetPolicyFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
-    {
-        return files.Choose(file => TryGetApiPolicyFile(file, serviceDirectory));
-    }
+    private PublisherAction GetAction(ApiPolicyName name, ApiName apiName) =>
+        async cancellationToken => await processApiPolicy(name, apiName, cancellationToken);
+}
 
-    private static ApiPolicyFile? TryGetApiPolicyFile(FileInfo file, ServiceDirectory serviceDirectory)
+file sealed class TryParseApiPolicyNameHandler(ManagementServiceDirectory serviceDirectory)
+{
+    public Option<(ApiPolicyName, ApiName)> Handle(FileInfo file) =>
+        TryParseNameFromPolicyFile(file);
+
+    private Option<(ApiPolicyName, ApiName)> TryParseNameFromPolicyFile(FileInfo file) =>
+        from policyFile in ApiPolicyFile.TryParse(file, serviceDirectory)
+        select (policyFile.Name, policyFile.Parent.Name);
+}
+
+/// <summary>
+/// Limits the number of simultaneous operations.
+/// </summary>
+file sealed class ApiPolicySemaphore : IDisposable
+{
+    private readonly AsyncKeyedLocker<(ApiPolicyName, ApiName)> locker = new();
+    private ImmutableHashSet<(ApiPolicyName, ApiName)> processedNames = [];
+
+    /// <summary>
+    /// Runs the provided action, ensuring that each name is processed only once.
+    /// </summary>
+    public async ValueTask Run(ApiPolicyName name, ApiName apiName, Func<ApiPolicyName, ApiName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
-        if (file is null || file.Name.EndsWith("xml") is false)
+        // Do not process the same name simultaneously
+        using var _ = await locker.LockAsync((name, apiName), cancellationToken);
+
+        // Only process each name once
+        if (processedNames.Contains((name, apiName)))
         {
-            return null;
+            return;
         }
 
-        var apiDirectory = Api.TryGetApiDirectory(file.Directory, serviceDirectory);
-        if (apiDirectory is null)
+        await action(name, apiName, cancellationToken);
+
+        ImmutableInterlocked.Update(ref processedNames, set => set.Add((name, apiName)));
+    }
+
+    public void Dispose() => locker.Dispose();
+}
+
+file sealed class ProcessApiPolicyHandler(IsApiPolicyNameInSourceControl isNameInSourceControl, PutApiPolicy put, DeleteApiPolicy delete) : IDisposable
+{
+    private readonly ApiPolicySemaphore semaphore = new();
+
+    public async ValueTask Handle(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, apiName, HandleInner, cancellationToken);
+
+    private async ValueTask HandleInner(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken)
+    {
+        if (isNameInSourceControl(name, apiName))
         {
-            return null;
+            await put(name, apiName, cancellationToken);
         }
-
-        var policyNameString = Path.GetFileNameWithoutExtension(file.FullName);
-        var policyName = new ApiPolicyName(policyNameString);
-        return new ApiPolicyFile(policyName, apiDirectory);
-    }
-
-    private static ApiPolicyName GetPolicyName(ApiPolicyFile file)
-    {
-        return new(file.GetNameWithoutExtensions());
-    }
-
-    private static ApiName GetApiName(ApiPolicyFile file)
-    {
-        return new(file.ApiDirectory.GetName());
-    }
-
-    private static async ValueTask Delete(ApiPolicyName policyName, ApiName apiName, ServiceUri serviceUri, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Deleting policy {policyName} in API {apiName}...", policyName, apiName);
-
-        var uri = GetApiPolicyUri(policyName, apiName, serviceUri);
-        await deleteRestResource(uri.Uri, cancellationToken);
-    }
-
-    private static ApiPolicyUri GetApiPolicyUri(ApiPolicyName policyName, ApiName apiName, ServiceUri serviceUri)
-    {
-        var apiUri = Api.GetApiUri(apiName, serviceUri);
-        var policiesUri = new ApiPoliciesUri(apiUri);
-        return new ApiPolicyUri(policyName, policiesUri);
-    }
-
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await GetArtifactsToPut(files, configurationJson, serviceDirectory, cancellationToken)
-                .ForEachParallel(async artifact => await PutPolicy(artifact.PolicyName, artifact.ApiName, artifact.Json, serviceUri, putRestResource, logger, cancellationToken),
-                                 cancellationToken);
-    }
-
-    private static async IAsyncEnumerable<(ApiPolicyName PolicyName, ApiName ApiName, JsonObject Json)> GetArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var fileArtifacts = await GetFilePolicies(files, serviceDirectory, cancellationToken).ToListAsync(cancellationToken);
-        var configurationArtifacts = GetConfigurationPolicies(configurationJson);
-        var artifacts = fileArtifacts.LeftJoin(configurationArtifacts,
-                                               keySelector: artifact => (artifact.PolicyName, artifact.ApiName),
-                                               bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.PolicyName, fileArtifact.ApiName, fileArtifact.Json.Merge(configurationArtifact.Json)));
-
-        foreach (var artifact in artifacts)
+        else
         {
-            yield return artifact;
+            await delete(name, apiName, cancellationToken);
         }
     }
 
-    private static IAsyncEnumerable<(ApiPolicyName PolicyName, ApiName ApiName, JsonObject Json)> GetFilePolicies(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class IsApiPolicyNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
+{
+    public bool Handle(ApiPolicyName name, ApiName apiName) =>
+        DoesPolicyFileExist(name, apiName);
+
+    private bool DoesPolicyFileExist(ApiPolicyName name, ApiName apiName)
     {
-        return GetPolicyFiles(files, serviceDirectory)
-                .ToAsyncEnumerable()
-                .SelectAwaitWithCancellation(async (file, token) =>
-                {
-                    var policyText = await file.ReadAsString(cancellationToken);
-                    var policyJson = new JsonObject
-                    {
-                        ["properties"] = new JsonObject
-                        {
-                            ["format"] = "rawxml",
-                            ["value"] = policyText
-                        }
-                    };
-                    return (GetPolicyName(file), GetApiName(file), policyJson);
-                });
+        var artifactFiles = getArtifactFiles();
+        var policyFile = ApiPolicyFile.From(name, apiName, serviceDirectory);
+
+        return artifactFiles.Contains(policyFile.ToFileInfo());
+    }
+}
+
+file sealed class PutApiPolicyHandler(FindApiPolicyDto findDto, PutApi putApi, PutApiPolicyInApim putInApim) : IDisposable
+{
+    private readonly ApiPolicySemaphore semaphore = new();
+
+    public async ValueTask Handle(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, apiName, Put, cancellationToken);
+
+    private async ValueTask Put(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var dtoOption = await findDto(name, apiName, cancellationToken);
+        await dtoOption.IterTask(async dto => await Put(name, dto, apiName, cancellationToken));
     }
 
-    private static IEnumerable<(ApiPolicyName PolicyName, ApiName ApiName, JsonObject Json)> GetConfigurationPolicies(JsonObject configurationJson)
+    private async ValueTask Put(ApiPolicyName name, ApiPolicyDto dto, ApiName apiName, CancellationToken cancellationToken)
     {
-        return GetConfigurationApis(configurationJson)
-                .SelectMany(api => GetConfigurationPolicies(api.ApiName, api.Json));
+        await putApi(apiName, cancellationToken);
+        await putInApim(name, dto, apiName, cancellationToken);
     }
 
-    private static IEnumerable<(ApiName ApiName, JsonObject Json)> GetConfigurationApis(JsonObject configurationJson)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class FindApiPolicyDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents)
+{
+    public async ValueTask<Option<ApiPolicyDto>> Handle(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken)
     {
-        return configurationJson.TryGetJsonArrayProperty("apis")
-                                .IfNullEmpty()
-                                .Choose(node => node as JsonObject)
-                                .Choose(apiJsonObject =>
-                                {
-                                    var name = apiJsonObject.TryGetStringProperty("name");
-                                    return name is null
-                                            ? null as (ApiName, JsonObject)?
-                                            : (new ApiName(name), apiJsonObject);
-                                });
+        var contentsOption = await TryGetPolicyContents(name, apiName, cancellationToken);
+
+        return from contents in contentsOption
+               select new ApiPolicyDto
+               {
+                   Properties = new ApiPolicyDto.ApiPolicyContract
+                   {
+                       Format = "rawxml",
+                       Value = contents.ToString()
+                   }
+               };
     }
 
-    private static IEnumerable<(ApiPolicyName PolicyName, ApiName ApiName, JsonObject Json)> GetConfigurationPolicies(ApiName apiName, JsonObject configurationOperationJson)
+    private async ValueTask<Option<BinaryData>> TryGetPolicyContents(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken)
     {
-        return configurationOperationJson.TryGetJsonArrayProperty("policies")
-                                         .IfNullEmpty()
-                                         .Choose(node => node as JsonObject)
-                                         .Choose(policyJsonObject =>
-                                         {
-                                             var name = policyJsonObject.TryGetStringProperty("name");
-                                             return name is null
-                                                     ? null as (ApiPolicyName, ApiName, JsonObject)?
-                                                     : (new ApiPolicyName(name), apiName, policyJsonObject);
-                                         });
+        var policyFile = ApiPolicyFile.From(name, apiName, serviceDirectory);
+
+        return await tryGetFileContents(policyFile.ToFileInfo(), cancellationToken);
+    }
+}
+
+file sealed class PutApiPolicyInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(ApiPolicyName name, ApiPolicyDto dto, ApiName apiName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Putting policy {ApiPolicyName} for API {ApiName}...", name, apiName);
+        await ApiPolicyUri.From(name, apiName, serviceUri).PutDto(dto, pipeline, cancellationToken);
+    }
+}
+
+file sealed class DeleteApiPolicyHandler(DeleteApiPolicyFromApim deleteFromApim) : IDisposable
+{
+    private readonly ApiPolicySemaphore semaphore = new();
+
+    public async ValueTask Handle(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, apiName, Delete, cancellationToken);
+
+    private async ValueTask Delete(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken)
+    {
+        await deleteFromApim(name, apiName, cancellationToken);
     }
 
-    private static async ValueTask PutPolicy(ApiPolicyName policyName, ApiName apiName, JsonObject json, ServiceUri serviceUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting policy {policyName} in api {apiName}...", policyName, apiName);
+    public void Dispose() => semaphore.Dispose();
+}
 
-        var policyUri = GetApiPolicyUri(policyName, apiName, serviceUri);
-        await putRestResource(policyUri.Uri, json, cancellationToken);
+file sealed class DeleteApiPolicyFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(ApiPolicyName name, ApiName apiName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Deleting policy {ApiPolicyName} from API {ApiName}...", name, apiName);
+        await ApiPolicyUri.From(name, apiName, serviceUri).Delete(pipeline, cancellationToken);
     }
+}
+
+internal static class ApiPolicyServices
+{
+    public static void ConfigureFindApiPolicyAction(IServiceCollection services)
+    {
+        ConfigureTryParseApiPolicyName(services);
+        ConfigureProcessApiPolicy(services);
+
+        services.TryAddSingleton<FindApiPolicyActionHandler>();
+        services.TryAddSingleton<FindApiPolicyAction>(provider => provider.GetRequiredService<FindApiPolicyActionHandler>().Handle);
+    }
+
+    private static void ConfigureTryParseApiPolicyName(IServiceCollection services)
+    {
+        services.TryAddSingleton<TryParseApiPolicyNameHandler>();
+        services.TryAddSingleton<TryParseApiPolicyName>(provider => provider.GetRequiredService<TryParseApiPolicyNameHandler>().Handle);
+    }
+
+    private static void ConfigureProcessApiPolicy(IServiceCollection services)
+    {
+        ConfigureIsApiPolicyNameInSourceControl(services);
+        ConfigurePutApiPolicy(services);
+        ConfigureDeleteApiPolicy(services);
+
+        services.TryAddSingleton<ProcessApiPolicyHandler>();
+        services.TryAddSingleton<ProcessApiPolicy>(provider => provider.GetRequiredService<ProcessApiPolicyHandler>().Handle);
+    }
+
+    private static void ConfigureIsApiPolicyNameInSourceControl(IServiceCollection services)
+    {
+        services.TryAddSingleton<IsApiPolicyNameInSourceControlHandler>();
+        services.TryAddSingleton<IsApiPolicyNameInSourceControl>(provider => provider.GetRequiredService<IsApiPolicyNameInSourceControlHandler>().Handle);
+    }
+
+    public static void ConfigurePutApiPolicy(IServiceCollection services)
+    {
+        ConfigureFindApiPolicyDto(services);
+        ConfigurePutApiPolicyInApim(services);
+        ApiServices.ConfigurePutApi(services);
+
+        services.TryAddSingleton<PutApiPolicyHandler>();
+        services.TryAddSingleton<PutApiPolicy>(provider => provider.GetRequiredService<PutApiPolicyHandler>().Handle);
+    }
+
+    private static void ConfigureFindApiPolicyDto(IServiceCollection services)
+    {
+        services.TryAddSingleton<FindApiPolicyDtoHandler>();
+        services.TryAddSingleton<FindApiPolicyDto>(provider => provider.GetRequiredService<FindApiPolicyDtoHandler>().Handle);
+    }
+
+    private static void ConfigurePutApiPolicyInApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<PutApiPolicyInApimHandler>();
+        services.TryAddSingleton<PutApiPolicyInApim>(provider => provider.GetRequiredService<PutApiPolicyInApimHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteApiPolicy(IServiceCollection services)
+    {
+        ConfigureDeleteApiPolicyFromApim(services);
+
+        services.TryAddSingleton<DeleteApiPolicyHandler>();
+        services.TryAddSingleton<DeleteApiPolicy>(provider => provider.GetRequiredService<DeleteApiPolicyHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteApiPolicyFromApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<DeleteApiPolicyFromApimHandler>();
+        services.TryAddSingleton<DeleteApiPolicyFromApim>(provider => provider.GetRequiredService<DeleteApiPolicyFromApimHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory factory) =>
+        factory.CreateLogger("ApiPolicyPublisher");
 }

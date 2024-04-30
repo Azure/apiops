@@ -1,220 +1,241 @@
-﻿using common;
-using Flurl;
+﻿using Azure.Core.Pipeline;
+using common;
+using LanguageExt;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using YamlDotNet.Serialization;
-using static common.ApiModel.ApiCreateOrUpdateProperties;
 
 namespace extractor;
 
-internal static class Api
+internal delegate ValueTask ExtractApis(CancellationToken cancellationToken);
+
+file delegate IAsyncEnumerable<(ApiName Name, ApiDto Dto, Option<(ApiSpecification Specification, BinaryData Contents)> SpecificationOption)> ListApis(CancellationToken cancellationToken);
+
+file delegate bool ShouldExtractApi(ApiName name);
+
+file delegate ValueTask WriteApiArtifacts(ApiName name, ApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteApiInformationFile(ApiName name, ApiDto dto, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteApiSpecificationFile(ApiName name, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken);
+
+file sealed class ExtractApisHandler(ListApis list,
+                                     ShouldExtractApi shouldExtract,
+                                     WriteApiArtifacts writeArtifacts,
+                                     ExtractApiPolicies extractApiPolicies,
+                                     ExtractApiTags extractApiTags,
+                                     ExtractApiOperations extractApiOperations)
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, DefaultApiSpecification defaultSpecification, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await List(serviceUri, listRestResources, cancellationToken)
-                // Filter out apis that should not be exported
-                .Where(apiName => ShouldExport(apiName, apiNamesToExport))
+    public async ValueTask Handle(CancellationToken cancellationToken) =>
+        await list(cancellationToken)
+                .Where(api => shouldExtract(api.Name))
                 // Group APIs by version set (https://github.com/Azure/apiops/issues/316).
                 // We'll process each group in parallel, but each API within a group sequentially.
-                .SelectAwait(async apiName =>
-                {
-                    var model = await GetModel(serviceUri, apiName, getRestResource, cancellationToken);
-                    return (Name: apiName, Model: model);
-                })
-                .GroupBy(api => api.Model.Properties.ApiVersionSetId)
-                // Export each group in parallel
-                .ForEachParallel(async group => await group.ForEachAwaitAsync(async api => await Export(serviceDirectory, serviceUri, api.Name, api.Model, defaultSpecification, listRestResources, getRestResource, downloadResource, logger, cancellationToken),
-                                                                              cancellationToken),
-                                 cancellationToken);
-    }
+                .GroupBy(api => api.Dto.Properties.ApiVersionSetId ?? Guid.NewGuid().ToString())
+                .IterParallel(async group => await group.Iter(async api => await ExtractApi(api.Name, api.Dto, api.SpecificationOption, cancellationToken),
+                                                                cancellationToken),
+                                cancellationToken);
 
-    private static IAsyncEnumerable<ApiName> List(ServiceUri serviceUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    private async ValueTask ExtractApi(ApiName name, ApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, CancellationToken cancellationToken)
     {
-        var apisUri = new ApisUri(serviceUri);
-        var apiJsonObjects = listRestResources(apisUri.Uri, cancellationToken);
-        return apiJsonObjects.Select(json => json.GetStringProperty("name"))
-                             .Select(name => new ApiName(name));
+        await writeArtifacts(name, dto, specificationOption, cancellationToken);
+        await extractApiPolicies(name, cancellationToken);
+        await extractApiTags(name, cancellationToken);
+        await extractApiOperations(name, cancellationToken);
     }
+}
 
-    private static bool ShouldExport(ApiName apiName, IEnumerable<string>? apiNamesToExport)
+file sealed class ListApisHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline, IConfiguration configuration)
+{
+    private readonly ApiSpecification defaultApiSpecification = GetDefaultApiSpecification(configuration);
+
+    public IAsyncEnumerable<(ApiName, ApiDto, Option<(ApiSpecification, BinaryData)>)> Handle(CancellationToken cancellationToken) =>
+        ApisUri.From(serviceUri)
+               .List(pipeline, cancellationToken)
+               .SelectAwait(async api =>
+               {
+                   var (name, dto) = api;
+                   var specificationContentsOption = await TryGetSpecificationContents(name, dto, cancellationToken);
+                   return (name, dto, specificationContentsOption);
+               });
+
+    private async ValueTask<Option<(ApiSpecification, BinaryData)>> TryGetSpecificationContents(ApiName name, ApiDto dto, CancellationToken cancellationToken)
     {
-        return apiNamesToExport is null
-               || apiNamesToExport.Any(apiNameToExport => apiNameToExport.Equals(apiName.ToString(), StringComparison.OrdinalIgnoreCase)
-                                                          // Apis with revisions have the format 'apiName;revision'. We split by semicolon to get the name.
-                                                          || apiNameToExport.Equals(apiName.ToString()
-                                                                                           .Split(';')
-                                                                                           .First(),
-                                                                                    StringComparison.OrdinalIgnoreCase));
-    }
+        var specificationOption = TryGetSpecification(dto);
 
-    private static async ValueTask<ApiModel> GetModel(ServiceUri serviceUri, ApiName apiName, GetRestResource getRestResource, CancellationToken cancellationToken)
-    {
-        var apisUri = new ApisUri(serviceUri);
-        var apiUri = new ApiUri(apiName, apisUri);
-
-        var apiResponseJson = await getRestResource(apiUri.Uri, cancellationToken);
-
-        return ApiModel.Deserialize(apiName, apiResponseJson);
-    }
-
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ApiName apiName, ApiModel apiModel, DefaultApiSpecification defaultSpecification, ListRestResources listRestResources, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        var apisDirectory = new ApisDirectory(serviceDirectory);
-        var apiDirectory = new ApiDirectory(apiName, apisDirectory);
-
-        var apisUri = new ApisUri(serviceUri);
-        var apiUri = new ApiUri(apiName, apisUri);
-
-        await ExportInformationFile(apiModel, apiDirectory, logger, cancellationToken);
-        await ExportSpecification(apiModel, apiDirectory, apiUri, defaultSpecification, getRestResource, downloadResource, logger, cancellationToken);
-        await ExportTags(apiDirectory, apiUri, listRestResources, logger, cancellationToken);
-        await ExportPolicies(apiDirectory, apiUri, listRestResources, getRestResource, logger, cancellationToken);
-        await ExportDiagnostics(apiDirectory, apiUri, listRestResources, getRestResource, logger, cancellationToken);
-        await ExportOperations(apiDirectory, apiUri, listRestResources, getRestResource, logger, cancellationToken);
-    }
-
-    private static async ValueTask ExportInformationFile(ApiModel apiModel, ApiDirectory apiDirectory, ILogger logger, CancellationToken cancellationToken)
-    {
-        var apiInformationFile = new ApiInformationFile(apiDirectory);
-        var contentJson = apiModel.Serialize();
-
-        logger.LogInformation("Writing API information file {filePath}...", apiInformationFile.Path);
-        await apiInformationFile.OverwriteWithJson(contentJson, cancellationToken);
-    }
-
-    private static async ValueTask ExportSpecification(ApiModel apiModel, ApiDirectory apiDirectory, ApiUri apiUri, DefaultApiSpecification defaultSpecification, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await (apiModel.Properties.Type switch
+        return await specificationOption.BindTask(async specification =>
         {
-            var apiType when apiType == ApiTypeOption.GraphQl => ExportGraphQlSpecification(apiDirectory, apiUri, getRestResource, logger, cancellationToken),
-            var apiType when apiType == ApiTypeOption.Soap => ExportWsdlSpecification(apiDirectory, apiUri, getRestResource, downloadResource, logger, cancellationToken),
-            var apiType when apiType == ApiTypeOption.WebSocket => ValueTask.CompletedTask,
-            _ => ExportApiSpecification(apiDirectory, apiUri, defaultSpecification, getRestResource, downloadResource, logger, cancellationToken)
+            var uri = ApiUri.From(name, serviceUri);
+            var contentsOption = await uri.TryGetSpecificationContents(specification, pipeline, cancellationToken);
+
+            return from contents in contentsOption
+                   select (specification, contents);
         });
     }
 
-    private static async ValueTask ExportGraphQlSpecification(ApiDirectory apiDirectory, ApiUri apiUri, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static ApiSpecification GetDefaultApiSpecification(IConfiguration configuration)
     {
-        var schemaName = ApiSchemaName.GraphQl;
-        var schemasUri = new ApiSchemasUri(apiUri);
-        var schemaUri = new ApiSchemaUri(schemaName, schemasUri);
-        var schemaJson = await getRestResource(schemaUri.Uri, cancellationToken);
-        var schemaModel = ApiSchemaModel.Deserialize(schemaName, schemaJson);
-        var schemaText = schemaModel.Properties.Document?.Value;
+        var formatOption = configuration.TryGetValue("API_SPECIFICATION_FORMAT")
+                            | configuration.TryGetValue("apiSpecificationFormat");
 
-        if (schemaText is not null)
+        return formatOption.Map(format => format switch
         {
-            var specificationFile = new ApiSpecificationFile.GraphQl(apiDirectory);
-
-            logger.LogInformation("Writing API specification file {filePath}...", specificationFile.Path);
-            await specificationFile.OverwriteWithText(schemaText, cancellationToken);
-        }
-    }
-
-    private static async ValueTask ExportWsdlSpecification(ApiDirectory apiDirectory, ApiUri apiUri, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        var specificationFile = new ApiSpecificationFile.Wsdl(apiDirectory);
-        using var fileStream = await DownloadSpecificationFile(apiUri, format: "wsdl-link", getRestResource, downloadResource, cancellationToken);
-
-        logger.LogInformation("Writing API specification file {filePath}...", specificationFile.Path);
-        await specificationFile.OverwriteWithStream(fileStream, cancellationToken);
-    }
-
-    private static async ValueTask<Stream> DownloadSpecificationFile(ApiUri apiUri, string format, GetRestResource getRestResource, DownloadResource downloadResource, CancellationToken cancellationToken)
-    {
-        var exportUri = apiUri.Uri.SetQueryParam("format", format)
-                                  .SetQueryParam("export", "true")
-                                  .ToUri();
-
-        var exportResponse = await getRestResource(exportUri, cancellationToken);
-        var downloadUri = new Uri(exportResponse.GetJsonObjectProperty("value")
-                                                .GetStringProperty("link"));
-
-        return await downloadResource(downloadUri, cancellationToken);
-    }
-
-    private static async ValueTask ExportApiSpecification(ApiDirectory apiDirectory, ApiUri apiUri, DefaultApiSpecification defaultSpecification, GetRestResource getRestResource, DownloadResource downloadResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        ApiSpecificationFile specificationFile = defaultSpecification switch
+            var value when "Wadl".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.Wadl() as ApiSpecification,
+            var value when "JSON".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
+            {
+                Format = new OpenApiFormat.Json(),
+                Version = new OpenApiVersion.V3()
+            },
+            var value when "YAML".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
+            {
+                Format = new OpenApiFormat.Yaml(),
+                Version = new OpenApiVersion.V3()
+            },
+            var value when "OpenApiV2Json".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
+            {
+                Format = new OpenApiFormat.Json(),
+                Version = new OpenApiVersion.V2()
+            },
+            var value when "OpenApiV2Yaml".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
+            {
+                Format = new OpenApiFormat.Yaml(),
+                Version = new OpenApiVersion.V2()
+            },
+            var value when "OpenApiV3Json".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
+            {
+                Format = new OpenApiFormat.Json(),
+                Version = new OpenApiVersion.V3()
+            },
+            var value when "OpenApiV3Yaml".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
+            {
+                Format = new OpenApiFormat.Yaml(),
+                Version = new OpenApiVersion.V3()
+            },
+            var value => throw new NotSupportedException($"API specification format '{value}' defined in configuration is not supported.")
+        }).IfNone(() => new ApiSpecification.OpenApi
         {
-            DefaultApiSpecification.Wadl => new ApiSpecificationFile.Wadl(apiDirectory),
-            DefaultApiSpecification.OpenApi openApi => new ApiSpecificationFile.OpenApi(openApi.Version, openApi.Format, apiDirectory),
-            _ => throw new NotSupportedException()
+            Format = new OpenApiFormat.Yaml(),
+            Version = new OpenApiVersion.V3()
+        });
+    }
+
+    private Option<ApiSpecification> TryGetSpecification(ApiDto dto) =>
+        (dto.Properties.Type ?? dto.Properties.ApiType) switch
+        {
+            "graphql" => new ApiSpecification.GraphQl(),
+            "soap" => new ApiSpecification.Wsdl(),
+            "http" => defaultApiSpecification,
+            null => defaultApiSpecification,
+            _ => Option<ApiSpecification>.None
         };
+}
 
-        var format = defaultSpecification switch
+file sealed class ShouldExtractApiHandler(ShouldExtractFactory shouldExtractFactory)
+{
+    public bool Handle(ApiName name)
+    {
+        var shouldExtract = shouldExtractFactory.Create<ApiName>();
+        return shouldExtract(name);
+    }
+}
+
+file sealed class WriteApiArtifactsHandler(WriteApiInformationFile writeInformationFile,
+                                           WriteApiSpecificationFile writeSpecificationFile)
+{
+    public async ValueTask Handle(ApiName name, ApiDto dto, Option<(ApiSpecification, BinaryData)> specificationContentsOption, CancellationToken cancellationToken)
+    {
+        await writeInformationFile(name, dto, cancellationToken);
+
+        await specificationContentsOption.IterTask(async x =>
         {
-            DefaultApiSpecification.Wadl => "wadl-link",
-            DefaultApiSpecification.OpenApi openApi =>
-                (openApi.Version, openApi.Format) switch
-                {
-                    (OpenApiSpecVersion.OpenApi2_0, _) => "swagger-link",
-                    (OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Yaml) => "openapi-link",
-                    (OpenApiSpecVersion.OpenApi3_0, OpenApiFormat.Json) => "openapi+json-link",
-                    _ => throw new NotSupportedException()
-                },
-            _ => throw new NotSupportedException()
-        };
-
-        using var downloadFileStream = await DownloadSpecificationFile(apiUri, format, getRestResource, downloadResource, cancellationToken);
-
-        logger.LogInformation("Writing API specification file {filePath}...", specificationFile.Path);
-        switch (defaultSpecification)
-        {
-            // APIM exports OpenApiv2 to JSON. Convert to YAML if needed.
-            case DefaultApiSpecification.OpenApi openApi when openApi.Version is OpenApiSpecVersion.OpenApi2_0 && openApi.Format is OpenApiFormat.Yaml:
-                {
-                    var bytes = ConvertJsonStreamToYaml(downloadFileStream);
-                    await specificationFile.OverwriteWithBytes(bytes, cancellationToken);
-                    break;
-                }
-            default:
-                await specificationFile.OverwriteWithStream(downloadFileStream, cancellationToken);
-                break;
-        }
+            var (specification, contents) = x;
+            await writeSpecificationFile(name, specification, contents, cancellationToken);
+        });
     }
+}
 
-    private static object ConvertStreamToYamlObject(Stream stream)
+file sealed class WriteApiInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(ApiName name, ApiDto dto, CancellationToken cancellationToken)
     {
-        using var streamReader = new StreamReader(stream);
-        return new Deserializer().Deserialize(streamReader) ?? throw new InvalidOperationException("Failed to deserialize YAML.");
-    }
+        var informationFile = ApiInformationFile.From(name, serviceDirectory);
 
-    private static byte[] ConvertJsonStreamToYaml(Stream stream)
+        logger.LogInformation("Writing API information file {ApiInformationFile}...", informationFile);
+        await informationFile.WriteDto(dto, cancellationToken);
+    }
+}
+
+file sealed class WriteApiSpecificationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(ApiName name, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken)
     {
-        using var memoryStream = new MemoryStream();
-        using var streamWriter = new StreamWriter(memoryStream);
-        var yaml = ConvertStreamToYamlObject(stream);
+        var specificationFile = ApiSpecificationFile.From(specification, name, serviceDirectory);
 
-        new Serializer().Serialize(streamWriter, yaml);
-        memoryStream.Position = 0;
-
-        return memoryStream.ToArray();
+        logger.LogInformation("Writing API specification file {ApiSpecificationFile}...", specificationFile);
+        await specificationFile.WriteSpecification(contents, cancellationToken);
     }
+}
 
-    private static async ValueTask ExportTags(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
+internal static class ApiServices
+{
+    public static void ConfigureExtractApis(IServiceCollection services)
     {
-        await ApiTag.ExportAll(apiDirectory, apiUri, listRestResources, logger, cancellationToken);
+        ConfigureListApis(services);
+        ConfigureShouldExtractApi(services);
+        ConfigureWriteApiArtifacts(services);
+        ApiPolicyServices.ConfigureExtractApiPolicies(services);
+        ApiTagServices.ConfigureExtractApiTags(services);
+        ApiOperationServices.ConfigureExtractApiOperations(services);
+
+        services.TryAddSingleton<ExtractApisHandler>();
+        services.TryAddSingleton<ExtractApis>(provider => provider.GetRequiredService<ExtractApisHandler>().Handle);
+    }
+    private static void ConfigureListApis(IServiceCollection services)
+    {
+        services.TryAddSingleton<ListApisHandler>();
+        services.TryAddSingleton<ListApis>(provider => provider.GetRequiredService<ListApisHandler>().Handle);
     }
 
-    private static async ValueTask ExportDiagnostics(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureShouldExtractApi(IServiceCollection services)
     {
-        await ApiDiagnostic.ExportAll(apiUri, apiDirectory, listRestResources, getRestResource, logger, cancellationToken);
+        services.TryAddSingleton<ShouldExtractApiHandler>();
+        services.TryAddSingleton<ShouldExtractApi>(provider => provider.GetRequiredService<ShouldExtractApiHandler>().Handle);
     }
 
-    private static async ValueTask ExportPolicies(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureWriteApiArtifacts(IServiceCollection services)
     {
-        await ApiPolicy.ExportAll(apiDirectory, apiUri, listRestResources, getRestResource, logger, cancellationToken);
+        ConfigureWriteApiInformationFile(services);
+        ConfigureWriteApiSpecificationFile(services);
+
+        services.TryAddSingleton<WriteApiArtifactsHandler>();
+        services.TryAddSingleton<WriteApiArtifacts>(provider => provider.GetRequiredService<WriteApiArtifactsHandler>().Handle);
     }
 
-    private static async ValueTask ExportOperations(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureWriteApiInformationFile(IServiceCollection services)
     {
-        await ApiOperation.ExportAll(apiUri, apiDirectory, listRestResources, getRestResource, logger, cancellationToken);
+        services.TryAddSingleton<WriteApiInformationFileHandler>();
+        services.TryAddSingleton<WriteApiInformationFile>(provider => provider.GetRequiredService<WriteApiInformationFileHandler>().Handle);
     }
+
+    private static void ConfigureWriteApiSpecificationFile(IServiceCollection services)
+    {
+        services.TryAddSingleton<WriteApiSpecificationFileHandler>();
+        services.TryAddSingleton<WriteApiSpecificationFile>(provider => provider.GetRequiredService<WriteApiSpecificationFileHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
+         loggerFactory.CreateLogger("ApiExtractor");
 }
