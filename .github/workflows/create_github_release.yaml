@@ -15,7 +15,7 @@ jobs:
       matrix:
         dotnet-runtime: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, win-x64, osx-arm64, osx-x64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu:latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -61,7 +61,7 @@ jobs:
       matrix:
         dotnet-runtime: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, win-x64, osx-arm64, osx-x64]
     # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu:latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
+    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
