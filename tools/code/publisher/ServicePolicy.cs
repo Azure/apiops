@@ -56,7 +56,7 @@ file sealed class TryParseServicePolicyNameHandler(ManagementServiceDirectory se
 /// </summary>
 file sealed class ServicePolicySemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<ServicePolicyName> locker = new();
+    private readonly AsyncKeyedLocker<ServicePolicyName> locker = new(LockOptions.Default);
     private ImmutableHashSet<ServicePolicyName> processedNames = [];
 
     /// <summary>
@@ -65,7 +65,7 @@ file sealed class ServicePolicySemaphore : IDisposable
     public async ValueTask Run(ServicePolicyName name, Func<ServicePolicyName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))

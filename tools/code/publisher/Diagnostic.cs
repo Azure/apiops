@@ -61,7 +61,7 @@ file sealed class TryParseDiagnosticNameHandler(ManagementServiceDirectory servi
 /// </summary>
 file sealed class DiagnosticSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<DiagnosticName> locker = new();
+    private readonly AsyncKeyedLocker<DiagnosticName> locker = new(LockOptions.Default);
     private ImmutableHashSet<DiagnosticName> processedNames = [];
 
     /// <summary>
@@ -70,7 +70,7 @@ file sealed class DiagnosticSemaphore : IDisposable
     public async ValueTask Run(DiagnosticName name, Func<DiagnosticName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))
