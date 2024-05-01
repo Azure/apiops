@@ -40,8 +40,6 @@ jobs:
 #           $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
 #           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
 #           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
-#           ## DELETE
-#           Get-ChildItem -Path $outputFolderPath -Recurse
 
 #           Write-Information "Zipping application..."
 #           $sourceFolderPath = Join-Path "$outputFolderPath" "*"
@@ -89,13 +87,12 @@ jobs:
           $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
-          ## DELETE
-          Get-ChildItem -Path $outputFolderPath -Recurse
 
           Write-Information "Zipping application..."
+          ## DELETE
+          Get-ChildItem -Path $outputFolderPath -Recurse
           $sourceFolderPath = Join-Path "$outputFolderPath" "*"
-          $publisherFileNameWithoutExtension = "${{ format('publisher.{0}', matrix.dotnet-runtime) }}"
-          $destinationFilePath = Join-Path "$outputFolderPath" "$($publisherFileNameWithoutExtension).zip"
+          $destinationFilePath = Join-Path "$outputFolderPath" "publisher.${{ matrix.dotnet-runtime) }}.zip"
           Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath -CompressionLevel Optimal
           "{ZIP_FILE_PATH}=$destinationFilePath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
@@ -103,8 +100,9 @@ jobs:
         shell: pwsh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
+          name: publisher-${{ matrix.dotnet-runtime }}
           path: ${{ format('{0}/{1}', runner.temp, env.ZIP_FILE_PATH) }}
 
   # generate_github_pipeline_artifacts:
