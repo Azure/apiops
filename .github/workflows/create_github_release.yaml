@@ -103,7 +103,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: publisher-${{ matrix.dotnet-runtime }}
-          path: ${{ env.ZIP_FILE_PATH) }}
+          path: ${{ env.ZIP_FILE_PATH }}
 
   # generate_github_pipeline_artifacts:
   #   name: Generate GitHub artifacts
