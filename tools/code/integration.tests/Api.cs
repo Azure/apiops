@@ -3,6 +3,7 @@ using common;
 using common.tests;
 using CsCheck;
 using FluentAssertions;
+using Flurl;
 using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
 using publisher;
@@ -100,17 +101,6 @@ internal static class Api
                     ApiType.WebSocket => "websocket",
                     _ => throw new NotSupportedException()
                 },
-                Format = revision.Specification.IsSome
-                         ? type switch
-                         {
-                             ApiType.Http => "openapi+json",
-                             ApiType.Soap => "wsdl",
-                             _ => null
-                         }
-                         : null,
-                Value = type is ApiType.Http or ApiType.Soap
-                        ? revision.Specification.ValueUnsafe()
-                        : null,
                 Protocols = type switch
                 {
                     ApiType.Http => ["http", "https"],
@@ -156,6 +146,57 @@ internal static class Api
         await ApiPolicy.Put(revision.Policies, revisionedName, serviceUri, pipeline, cancellationToken);
         await ApiTag.Put(revision.Tags, revisionedName, serviceUri, pipeline, cancellationToken);
     }
+
+    private static ApiDto GetPutDto(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision) =>
+        new ApiDto()
+        {
+            Properties = new ApiDto.ApiCreateOrUpdateProperties
+            {
+                // APIM sets the description to null when it imports for SOAP APIs.
+                DisplayName = name.ToString(),
+                Path = path,
+                ApiType = type switch
+                {
+                    ApiType.Http => null,
+                    ApiType.Soap => "soap",
+                    ApiType.GraphQl => null,
+                    ApiType.WebSocket => null,
+                    _ => throw new NotSupportedException()
+                },
+                Type = type switch
+                {
+                    ApiType.Http => "http",
+                    ApiType.Soap => "soap",
+                    ApiType.GraphQl => "graphql",
+                    ApiType.WebSocket => "websocket",
+                    _ => throw new NotSupportedException()
+                },
+                Format = revision.Specification.IsSome
+                         ? type switch
+                         {
+                             ApiType.Http => "openapi+json",
+                             ApiType.Soap => "wsdl",
+                             _ => null
+                         }
+                         : null,
+                Value = type is ApiType.Http or ApiType.Soap
+                        ? revision.Specification.ValueUnsafe()
+                        : null,
+                Protocols = type switch
+                {
+                    ApiType.Http => ["http", "https"],
+                    ApiType.Soap => ["http", "https"],
+                    ApiType.GraphQl => ["http", "https"],
+                    ApiType.WebSocket => ["ws", "wss"],
+                    _ => throw new NotSupportedException()
+                },
+                ServiceUrl = revision.ServiceUri.ValueUnsafe()?.ToString(),
+                ApiRevisionDescription = revision.Description.ValueUnsafe(),
+                ApiRevision = $"{revision.Number.ToInt()}",
+                ApiVersion = version.Map(version => version.Version).ValueUnsafe(),
+                ApiVersionSetId = version.Map(version => $"/apiVersionSets/{version.VersionSetName}").ValueUnsafe()
+            }
+        };
 
     public static async ValueTask DeleteAll(ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await ApisUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
@@ -285,13 +326,9 @@ internal static class Api
             Path = dto.Properties.Path ?? string.Empty,
             RevisionDescription = dto.Properties.ApiRevisionDescription ?? string.Empty,
             Revision = dto.Properties.ApiRevision ?? string.Empty,
-            ServiceUrl = (dto.Properties.ApiType ?? dto.Properties.Type) switch
-            {
-                // Soap API URLs don't work properly with configuration overrides.
-                // TODO: Investigate why.
-                "soap" => string.Empty,
-                _ => dto.Properties.ServiceUrl ?? string.Empty
-            }
+            ServiceUrl = Uri.TryCreate(dto.Properties.ServiceUrl, UriKind.Absolute, out var uri)
+                            ? uri.RemovePath().ToString()
+                            : string.Empty
         }.ToString()!;
 
     private static async ValueTask ValidateExtractedSpecificationFiles(IDictionary<ApiName, ApiDto> expectedResources, Option<ApiSpecification> defaultApiSpecification, ManagementServiceDirectory serviceDirectory, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)

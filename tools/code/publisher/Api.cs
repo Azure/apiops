@@ -49,7 +49,6 @@ file delegate ValueTask DeleteApi(ApiName name, CancellationToken cancellationTo
 
 internal delegate ValueTask OnDeletingApi(ApiName name, CancellationToken cancellationToken);
 
-
 file sealed class FindApiActionHandler(TryParseApiName tryParseName, ProcessApi processApi)
 {
     public Option<PublisherAction> Handle(FileInfo file) =>

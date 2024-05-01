@@ -94,6 +94,7 @@ internal static class Subscription
         var fileResources = await GetFileResources(serviceDirectory, cancellationToken);
 
         var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, namesToExtract))
+                                    .WhereKey(name => name != SubscriptionName.From("master"))
                                     .MapValue(NormalizeDto);
         var actual = fileResources.MapValue(NormalizeDto);
 

@@ -44,7 +44,7 @@ internal static class ServiceModule
             location = location,
             sku = new
             {
-                name = "BasicV2",
+                name = "StandardV2",
                 capacity = 1
             },
             identity = new
