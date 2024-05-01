@@ -92,7 +92,7 @@ jobs:
           ## DELETE
           Get-ChildItem -Path $outputFolderPath -Recurse
           $sourceFolderPath = Join-Path "$outputFolderPath" "*"
-          $destinationFilePath = Join-Path "$outputFolderPath" "publisher.${{ matrix.dotnet-runtime) }}.zip"
+          $destinationFilePath = Join-Path "$outputFolderPath" "publisher.${{ matrix.dotnet-runtime }}.zip"
           Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath -CompressionLevel Optimal
           "{ZIP_FILE_PATH}=$destinationFilePath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
