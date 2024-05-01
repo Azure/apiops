@@ -1,183 +1,230 @@
-﻿using System;
-using System.Text.Json;
+﻿using Azure.Core.Pipeline;
+using Flurl;
+using LanguageExt;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record LoggersUri : IArtifactUri
+public sealed record LoggerName : ResourceName
 {
-    public Uri Uri { get; }
+    private LoggerName(string value) : base(value) { }
 
-    public LoggersUri(ServiceUri serviceUri)
-    {
-        Uri = serviceUri.AppendPath("loggers");
-    }
+    /// <summary>
+    /// Logger names with revisions have the format 'loggerName;revision'
+    /// </summary>
+    public LoggerName ToNonRevisionedName() =>
+        new(Value.Split(';').First());
+
+    public static LoggerName From(string value) => new(value);
 }
 
-public sealed record LoggersDirectory : IArtifactDirectory
+public sealed record LoggersUri : ResourceUri
 {
-    public static string Name { get; } = "loggers";
+    public required ManagementServiceUri ServiceUri { get; init; }
 
-    public ArtifactPath Path { get; }
+    private static string PathSegment { get; } = "loggers";
 
-    public ServiceDirectory ServiceDirectory { get; }
+    protected override Uri Value => ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public LoggersDirectory(ServiceDirectory serviceDirectory)
-    {
-        Path = serviceDirectory.Path.Append(Name);
-        ServiceDirectory = serviceDirectory;
-    }
+    public static LoggersUri From(ManagementServiceUri serviceUri) =>
+        new() { ServiceUri = serviceUri };
 }
 
-public sealed record LoggerName
+public sealed record LoggerUri : ResourceUri
 {
-    private readonly string value;
+    public required LoggersUri Parent { get; init; }
+    public required LoggerName Name { get; init; }
 
-    public LoggerName(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new ArgumentException($"Logger name cannot be null or whitespace.", nameof(value));
-        }
+    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
 
-        this.value = value;
-    }
-
-    public override string ToString() => value;
-}
-
-public sealed record LoggerUri : IArtifactUri
-{
-    public Uri Uri { get; }
-
-    public LoggerUri(LoggerName loggerName, LoggersUri loggersUri)
-    {
-        Uri = loggersUri.AppendPath(loggerName.ToString());
-    }
-}
-
-public sealed record LoggerDirectory : IArtifactDirectory
-{
-    public ArtifactPath Path { get; }
-
-    public LoggersDirectory LoggersDirectory { get; }
-
-    public LoggerDirectory(LoggerName name, LoggersDirectory loggersDirectory)
-    {
-        Path = loggersDirectory.Path.Append(name.ToString());
-        LoggersDirectory = loggersDirectory;
-    }
-}
-
-public sealed record LoggerInformationFile : IArtifactFile
-{
-    public static string Name { get; } = "loggerInformation.json";
-
-    public ArtifactPath Path { get; }
-
-    public LoggerDirectory LoggerDirectory { get; }
-
-    public LoggerInformationFile(LoggerDirectory loggerDirectory)
-    {
-        Path = loggerDirectory.Path.Append(Name);
-        LoggerDirectory = loggerDirectory;
-    }
-}
-
-public sealed record LoggerModel
-{
-    public required string Name { get; init; }
-
-    public required LoggerContractProperties Properties { get; init; }
-
-    public sealed record LoggerContractProperties
-    {
-        public LoggerCredentials? Credentials { get; init; }
-        public string? Description { get; init; }
-        public bool? IsBuffered { get; init; }
-        public LoggerTypeOption? LoggerType { get; init; }
-        public string? ResourceId { get; init; }
-
-        public JsonObject Serialize() =>
-            new JsonObject()
-                .AddPropertyIfNotNull("credentials", Credentials?.Serialize())
-                .AddPropertyIfNotNull("description", Description)
-                .AddPropertyIfNotNull("isBuffered", IsBuffered)
-                .AddPropertyIfNotNull("loggerType", LoggerType?.Serialize())
-                .AddPropertyIfNotNull("resourceId", ResourceId);
-
-        public static LoggerContractProperties Deserialize(JsonObject jsonObject) =>
-            new()
-            {
-                Credentials = jsonObject.TryGetJsonObjectProperty("credentials")
-                                         .Map(LoggerCredentials.Deserialize),
-                Description = jsonObject.TryGetStringProperty("description"),
-                IsBuffered = jsonObject.TryGetBoolProperty("isBuffered"),
-                LoggerType = jsonObject.TryGetProperty("loggerType")
-                                             .Map(LoggerTypeOption.Deserialize),
-                ResourceId = jsonObject.TryGetStringProperty("resourceId")
-            };
-
-        public sealed record LoggerCredentials
-        {
-            public string? Name { get; init; }
-            public string? ConnectionString { get; init; }
-            public string? InstrumentationKey { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("name", Name)
-                    .AddPropertyIfNotNull("connectionString", ConnectionString)
-                    .AddPropertyIfNotNull("instrumentationKey", InstrumentationKey);
-
-            public static LoggerCredentials Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Name = jsonObject.TryGetStringProperty("name"),
-                    ConnectionString = jsonObject.TryGetStringProperty("connectionString"),
-                    InstrumentationKey = jsonObject.TryGetStringProperty("instrumentationKey")
-                };
-        }
-
-        public sealed record LoggerTypeOption
-        {
-            private readonly string value;
-
-            private LoggerTypeOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static LoggerTypeOption ApplicationInsights => new("applicationInsights");
-            public static LoggerTypeOption AzureEventHub => new("azureEventHub");
-            public static LoggerTypeOption AzureMonitor => new("azureMonitor");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static LoggerTypeOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(ApplicationInsights).Equals(value, StringComparison.OrdinalIgnoreCase) => ApplicationInsights,
-                        _ when nameof(AzureEventHub).Equals(value, StringComparison.OrdinalIgnoreCase) => AzureEventHub,
-                        _ when nameof(AzureMonitor).Equals(value, StringComparison.OrdinalIgnoreCase) => AzureMonitor,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(LoggerTypeOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-    }
-
-    public JsonObject Serialize() =>
-        new JsonObject()
-            .AddProperty("properties", Properties.Serialize());
-
-    public static LoggerModel Deserialize(LoggerName name, JsonObject jsonObject) =>
+    public static LoggerUri From(LoggerName name, ManagementServiceUri serviceUri) =>
         new()
         {
-            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
-            Properties = jsonObject.GetJsonObjectProperty("properties")
-                                   .Map(LoggerContractProperties.Deserialize)!
+            Parent = LoggersUri.From(serviceUri),
+            Name = name
         };
+}
+
+public sealed record LoggersDirectory : ResourceDirectory
+{
+    public required ManagementServiceDirectory ServiceDirectory { get; init; }
+
+    private static string Name { get; } = "loggers";
+
+    protected override DirectoryInfo Value =>
+        ServiceDirectory.ToDirectoryInfo().GetChildDirectory(Name);
+
+    public static LoggersDirectory From(ManagementServiceDirectory serviceDirectory) =>
+        new() { ServiceDirectory = serviceDirectory };
+
+    public static Option<LoggersDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        directory is not null &&
+        directory.Name == Name &&
+        directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
+            ? new LoggersDirectory { ServiceDirectory = serviceDirectory }
+            : Option<LoggersDirectory>.None;
+}
+
+public sealed record LoggerDirectory : ResourceDirectory
+{
+    public required LoggersDirectory Parent { get; init; }
+
+    public required LoggerName Name { get; init; }
+
+    protected override DirectoryInfo Value =>
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+
+    public static LoggerDirectory From(LoggerName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = LoggersDirectory.From(serviceDirectory),
+            Name = name
+        };
+
+    public static Option<LoggerDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        from parent in LoggersDirectory.TryParse(directory?.Parent, serviceDirectory)
+        select new LoggerDirectory
+        {
+            Parent = parent,
+            Name = LoggerName.From(directory!.Name)
+        };
+}
+
+public sealed record LoggerInformationFile : ResourceFile
+{
+    public required LoggerDirectory Parent { get; init; }
+    private static string Name { get; } = "loggerInformation.json";
+
+    protected override FileInfo Value =>
+        Parent.ToDirectoryInfo().GetChildFile(Name);
+
+    public static LoggerInformationFile From(LoggerName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = new LoggerDirectory
+            {
+                Parent = LoggersDirectory.From(serviceDirectory),
+                Name = name
+            }
+        };
+
+    public static Option<LoggerInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
+        file is not null && file.Name == Name
+            ? from parent in LoggerDirectory.TryParse(file.Directory, serviceDirectory)
+              select new LoggerInformationFile { Parent = parent }
+            : Option<LoggerInformationFile>.None;
+}
+
+public sealed record LoggerDto
+{
+    [JsonPropertyName("properties")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public required LoggerContract Properties { get; init; }
+
+    public record LoggerContract
+    {
+        [JsonPropertyName("loggerType")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? LoggerType { get; init; }
+
+        [JsonPropertyName("credentials")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public JsonObject? Credentials { get; init; }
+
+        [JsonPropertyName("description")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Description { get; init; }
+
+        [JsonPropertyName("isBuffered")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? IsBuffered { get; init; }
+
+        [JsonPropertyName("resourceId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ResourceId { get; init; }
+    }
+}
+
+public static class LoggerModule
+{
+    public static async ValueTask DeleteAll(this LoggersUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await uri.ListNames(pipeline, cancellationToken)
+                 .IterParallel(async name => await LoggerUri.From(name, uri.ServiceUri)
+                                                                .Delete(pipeline, cancellationToken),
+                               cancellationToken);
+
+    public static IAsyncEnumerable<LoggerName> ListNames(this LoggersUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+                .Select(jsonObject => jsonObject.GetStringProperty("name"))
+                .Select(LoggerName.From);
+
+    public static IAsyncEnumerable<(LoggerName Name, LoggerDto Dto)> List(this LoggersUri loggersUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        loggersUri.ListNames(pipeline, cancellationToken)
+                      .SelectAwait(async name =>
+                      {
+                          var uri = new LoggerUri { Parent = loggersUri, Name = name };
+                          var dto = await uri.GetDto(pipeline, cancellationToken);
+                          return (name, dto);
+                      });
+
+    public static async ValueTask<LoggerDto> GetDto(this LoggerUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
+        return content.ToObjectFromJson<LoggerDto>();
+    }
+
+    public static async ValueTask<Option<LoggerDto>> TryGetDto(this LoggerUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
+
+        return either.Map(content => content.ToObjectFromJson<LoggerDto>())
+                     .Match(Option<LoggerDto>.Some,
+                            response => response.Status == (int)HttpStatusCode.NotFound
+                                          ? Option<LoggerDto>.None
+                                          : throw response.ToHttpRequestException(uri.ToUri()));
+    }
+
+    public static async ValueTask Delete(this LoggerUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
+
+    public static async ValueTask PutDto(this LoggerUri uri, LoggerDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto);
+        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+    }
+
+    public static IEnumerable<LoggerDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory)
+    {
+        var loggersDirectory = LoggersDirectory.From(serviceDirectory);
+
+        return loggersDirectory.ToDirectoryInfo()
+                            .ListDirectories("*")
+                            .Select(directoryInfo => LoggerName.From(directoryInfo.Name))
+                            .Select(name => new LoggerDirectory { Parent = loggersDirectory, Name = name });
+    }
+
+    public static IEnumerable<LoggerInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
+        ListDirectories(serviceDirectory)
+            .Select(directory => new LoggerInformationFile { Parent = directory })
+            .Where(informationFile => informationFile.ToFileInfo().Exists());
+
+    public static async ValueTask WriteDto(this LoggerInformationFile file, LoggerDto dto, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
+        await file.ToFileInfo().OverwriteWithBinaryData(content, cancellationToken);
+    }
+
+    public static async ValueTask<LoggerDto> ReadDto(this LoggerInformationFile file, CancellationToken cancellationToken)
+    {
+        var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
+        return content.ToObjectFromJson<LoggerDto>();
+    }
 }

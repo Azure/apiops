@@ -1,42 +1,57 @@
-﻿using common;
+﻿using Azure.Core.Pipeline;
+using common;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal static class ApiOperation
+internal delegate ValueTask ExtractApiOperations(ApiName apiName, CancellationToken cancellationToken);
+
+file delegate IAsyncEnumerable<ApiOperationName> ListApiOperations(ApiName apiName, CancellationToken cancellationToken);
+
+file sealed class ExtractApiOperationsHandler(ListApiOperations list, ExtractApiOperationPolicies extractApiOperationPolicies)
 {
-    public static async ValueTask ExportAll(ApiUri apiUri, ApiDirectory apiDirectory, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public async ValueTask Handle(ApiName apiName, CancellationToken cancellationToken) =>
+        await list(apiName, cancellationToken)
+                .IterParallel(async name => await ExtractApiOperation(name, apiName, cancellationToken),
+                              cancellationToken);
+
+    private async ValueTask ExtractApiOperation(ApiOperationName name, ApiName apiName, CancellationToken cancellationToken)
     {
-        await List(apiUri, listRestResources, cancellationToken)
-                .ForEachParallel(async operationName => await Export(apiDirectory, apiUri, operationName, listRestResources, getRestResource, logger, cancellationToken),
-                                 cancellationToken);
+        await extractApiOperationPolicies(name, apiName, cancellationToken);
+    }
+}
+
+file sealed class ListApiOperationsHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    public IAsyncEnumerable<ApiOperationName> Handle(ApiName apiName, CancellationToken cancellationToken) =>
+        ApiOperationsUri.From(apiName, serviceUri).ListNames(pipeline, cancellationToken);
+}
+
+internal static class ApiOperationServices
+{
+    public static void ConfigureExtractApiOperations(IServiceCollection services)
+    {
+        ConfigureListApiOperations(services);
+        ApiOperationPolicyServices.ConfigureExtractApiOperationPolicies(services);
+
+        services.TryAddSingleton<ExtractApiOperationsHandler>();
+        services.TryAddSingleton<ExtractApiOperations>(provider => provider.GetRequiredService<ExtractApiOperationsHandler>().Handle);
     }
 
-    private static IAsyncEnumerable<ApiOperationName> List(ApiUri apiUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    private static void ConfigureListApiOperations(IServiceCollection services)
     {
-        var operationsUri = new ApiOperationsUri(apiUri);
-        var operationJsonObjects = listRestResources(operationsUri.Uri, cancellationToken);
-        return operationJsonObjects.Select(json => json.GetStringProperty("name"))
-                                   .Select(name => new ApiOperationName(name));
+        services.TryAddSingleton<ListApiOperationsHandler>();
+        services.TryAddSingleton<ListApiOperations>(provider => provider.GetRequiredService<ListApiOperationsHandler>().Handle);
     }
+}
 
-    private static async ValueTask Export(ApiDirectory apiDirectory, ApiUri apiUri, ApiOperationName apiOperationName, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        var apiOperationsDirectory = new ApiOperationsDirectory(apiDirectory);
-        var apiOperationDirectory = new ApiOperationDirectory(apiOperationName, apiOperationsDirectory);
-
-        var apiOperationsUri = new ApiOperationsUri(apiUri);
-        var apiOperationUri = new ApiOperationUri(apiOperationName, apiOperationsUri);
-
-        await ExportPolicies(apiOperationDirectory, apiOperationUri, listRestResources, getRestResource, logger, cancellationToken);
-    }
-
-    private static async ValueTask ExportPolicies(ApiOperationDirectory apiOperationDirectory, ApiOperationUri apiOperationUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await ApiOperationPolicy.ExportAll(apiOperationDirectory, apiOperationUri, listRestResources, getRestResource, logger, cancellationToken);
-    }
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
+        loggerFactory.CreateLogger("ApiOperationExtractor");
 }

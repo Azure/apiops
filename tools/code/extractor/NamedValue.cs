@@ -1,6 +1,9 @@
-﻿using common;
+﻿using Azure.Core.Pipeline;
+using common;
+using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,51 +11,102 @@ using System.Threading.Tasks;
 
 namespace extractor;
 
-internal static class NamedValue
+internal delegate ValueTask ExtractNamedValues(CancellationToken cancellationToken);
+
+file delegate IAsyncEnumerable<(NamedValueName Name, NamedValueDto Dto)> ListNamedValues(CancellationToken cancellationToken);
+
+file delegate bool ShouldExtractNamedValue(NamedValueName name);
+
+file delegate ValueTask WriteNamedValueArtifacts(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteNamedValueInformationFile(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken);
+
+file sealed class ExtractNamedValuesHandler(ListNamedValues list, ShouldExtractNamedValue shouldExtract, WriteNamedValueArtifacts writeArtifacts)
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, IEnumerable<string>? namedValueNamesToExport, CancellationToken cancellationToken)
+    public async ValueTask Handle(CancellationToken cancellationToken) =>
+        await list(cancellationToken)
+                .Where(namedvalue => shouldExtract(namedvalue.Name))
+                .IterParallel(async namedvalue => await writeArtifacts(namedvalue.Name, namedvalue.Dto, cancellationToken),
+                              cancellationToken);
+}
+
+file sealed class ListNamedValuesHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    public IAsyncEnumerable<(NamedValueName, NamedValueDto)> Handle(CancellationToken cancellationToken) =>
+        NamedValuesUri.From(serviceUri).List(pipeline, cancellationToken);
+}
+
+file sealed class ShouldExtractNamedValueHandler(ShouldExtractFactory shouldExtractFactory)
+{
+    public bool Handle(NamedValueName name)
     {
-        await List(serviceUri, listRestResources, cancellationToken)
-                // Filter out namedValues that should not be exported
-                .Where(namedValueName => ShouldExport(namedValueName, namedValueNamesToExport))
-                .ForEachParallel(async namedValueName => await Export(serviceDirectory, serviceUri, namedValueName, getRestResource, logger, cancellationToken),
-                                 cancellationToken);
+        var shouldExtract = shouldExtractFactory.Create<NamedValueName>();
+        return shouldExtract(name);
+    }
+}
+
+file sealed class WriteNamedValueArtifactsHandler(WriteNamedValueInformationFile writeInformationFile)
+{
+    public async ValueTask Handle(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken)
+    {
+        await writeInformationFile(name, dto, cancellationToken);
+    }
+}
+
+file sealed class WriteNamedValueInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken)
+    {
+        var informationFile = NamedValueInformationFile.From(name, serviceDirectory);
+
+        logger.LogInformation("Writing named value information file {NamedValueInformationFile}...", informationFile);
+        await informationFile.WriteDto(dto, cancellationToken);
+    }
+}
+
+internal static class NamedValueServices
+{
+    public static void ConfigureExtractNamedValues(IServiceCollection services)
+    {
+        ConfigureListNamedValues(services);
+        ConfigureShouldExtractNamedValue(services);
+        ConfigureWriteNamedValueArtifacts(services);
+
+        services.TryAddSingleton<ExtractNamedValuesHandler>();
+        services.TryAddSingleton<ExtractNamedValues>(provider => provider.GetRequiredService<ExtractNamedValuesHandler>().Handle);
     }
 
-    private static IAsyncEnumerable<NamedValueName> List(ServiceUri serviceUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    private static void ConfigureListNamedValues(IServiceCollection services)
     {
-        var namedValuesUri = new NamedValuesUri(serviceUri);
-        var namedValueJsonObjects = listRestResources(namedValuesUri.Uri, cancellationToken);
-        return namedValueJsonObjects.Select(json => json.GetStringProperty("name"))
-                                    .Select(name => new NamedValueName(name));
+        services.TryAddSingleton<ListNamedValuesHandler>();
+        services.TryAddSingleton<ListNamedValues>(provider => provider.GetRequiredService<ListNamedValuesHandler>().Handle);
     }
 
-    private static bool ShouldExport(NamedValueName namedValueName, IEnumerable<string>? namedValueNamesToExport)
+    private static void ConfigureShouldExtractNamedValue(IServiceCollection services)
     {
-        return namedValueNamesToExport is null
-               || namedValueNamesToExport.Any(namedValueNameToExport => namedValueNameToExport.Equals(namedValueName.ToString(), StringComparison.OrdinalIgnoreCase));
+        services.TryAddSingleton<ShouldExtractNamedValueHandler>();
+        services.TryAddSingleton<ShouldExtractNamedValue>(provider => provider.GetRequiredService<ShouldExtractNamedValueHandler>().Handle);
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, NamedValueName namedValueName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureWriteNamedValueArtifacts(IServiceCollection services)
     {
-        var namedValuesDirectory = new NamedValuesDirectory(serviceDirectory);
-        var namedValueDirectory = new NamedValueDirectory(namedValueName, namedValuesDirectory);
+        ConfigureWriteNamedValueInformationFile(services);
 
-        var namedValuesUri = new NamedValuesUri(serviceUri);
-        var namedValueUri = new NamedValueUri(namedValueName, namedValuesUri);
-
-        await ExportInformationFile(namedValueDirectory, namedValueUri, namedValueName, getRestResource, logger, cancellationToken);
+        services.TryAddSingleton<WriteNamedValueArtifactsHandler>();
+        services.TryAddSingleton<WriteNamedValueArtifacts>(provider => provider.GetRequiredService<WriteNamedValueArtifactsHandler>().Handle);
     }
 
-    private static async ValueTask ExportInformationFile(NamedValueDirectory namedValueDirectory, NamedValueUri namedValueUri, NamedValueName namedValueName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureWriteNamedValueInformationFile(IServiceCollection services)
     {
-        var namedValueInformationFile = new NamedValueInformationFile(namedValueDirectory);
-
-        var responseJson = await getRestResource(namedValueUri.Uri, cancellationToken);
-        var namedValueModel = NamedValueModel.Deserialize(namedValueName, responseJson);
-        var contentJson = namedValueModel.Serialize();
-
-        logger.LogInformation("Writing named value information file {filePath}...", namedValueInformationFile.Path);
-        await namedValueInformationFile.OverwriteWithJson(contentJson, cancellationToken);
+        services.TryAddSingleton<WriteNamedValueInformationFileHandler>();
+        services.TryAddSingleton<WriteNamedValueInformationFile>(provider => provider.GetRequiredService<WriteNamedValueInformationFileHandler>().Handle);
     }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
+        loggerFactory.CreateLogger("NamedValueExtractor");
 }

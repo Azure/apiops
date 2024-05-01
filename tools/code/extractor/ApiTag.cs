@@ -1,43 +1,91 @@
-﻿using common;
+﻿using Azure.Core.Pipeline;
+using common;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal static class ApiTag
+internal delegate ValueTask ExtractApiTags(ApiName apiName, CancellationToken cancellationToken);
+
+file delegate IAsyncEnumerable<(TagName Name, ApiTagDto Dto)> ListApiTags(ApiName apiName, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteApiTagArtifacts(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteApiTagInformationFile(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
+
+file sealed class ExtractApiTagsHandler(ListApiTags list, WriteApiTagArtifacts writeArtifacts)
 {
-    public static async ValueTask ExportAll(ApiDirectory apiDirectory, ApiUri apiUri, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
+    public async ValueTask Handle(ApiName apiName, CancellationToken cancellationToken) =>
+        await list(apiName, cancellationToken)
+                .IterParallel(async apitag => await writeArtifacts(apitag.Name, apitag.Dto, apiName, cancellationToken),
+                              cancellationToken);
+}
+
+file sealed class ListApiTagsHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    public IAsyncEnumerable<(TagName, ApiTagDto)> Handle(ApiName apiName, CancellationToken cancellationToken) =>
+        ApiTagsUri.From(apiName, serviceUri).List(pipeline, cancellationToken);
+}
+
+file sealed class WriteApiTagArtifactsHandler(WriteApiTagInformationFile writeTagFile)
+{
+    public async ValueTask Handle(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken)
     {
-        var apiTagsFile = new ApiTagsFile(apiDirectory);
+        await writeTagFile(name, dto, apiName, cancellationToken);
+    }
+}
 
-        var apiTags = await List(apiUri, listRestResources, cancellationToken)
-                            .Select(SerializeApiTag)
-                            .ToJsonArray(cancellationToken);
+file sealed class WriteApiTagInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
 
-        if (apiTags.Any())
-        {
-            logger.LogInformation("Writing API tags file {filePath}...", apiTagsFile.Path);
-            await apiTagsFile.OverwriteWithJson(apiTags, cancellationToken);
-        }
+    public async ValueTask Handle(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken)
+    {
+        var informationFile = ApiTagInformationFile.From(name, apiName, serviceDirectory);
+
+        logger.LogInformation("Writing API tag information file {ApiTagInformationFile}...", informationFile);
+        await informationFile.WriteDto(dto, cancellationToken);
+    }
+}
+
+internal static class ApiTagServices
+{
+    public static void ConfigureExtractApiTags(IServiceCollection services)
+    {
+        ConfigureListApiTags(services);
+        ConfigureWriteApiTagArtifacts(services);
+
+        services.TryAddSingleton<ExtractApiTagsHandler>();
+        services.TryAddSingleton<ExtractApiTags>(provider => provider.GetRequiredService<ExtractApiTagsHandler>().Handle);
     }
 
-    private static IAsyncEnumerable<TagName> List(ApiUri apiUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    private static void ConfigureListApiTags(IServiceCollection services)
     {
-        var tagsUri = new ApiTagsUri(apiUri);
-        var tagJsonObjects = listRestResources(tagsUri.Uri, cancellationToken);
-        return tagJsonObjects.Select(json => json.GetStringProperty("name"))
-                             .Select(name => new TagName(name));
+        services.TryAddSingleton<ListApiTagsHandler>();
+        services.TryAddSingleton<ListApiTags>(provider => provider.GetRequiredService<ListApiTagsHandler>().Handle);
     }
 
-    private static JsonObject SerializeApiTag(TagName tagName)
+    private static void ConfigureWriteApiTagArtifacts(IServiceCollection services)
     {
-        return new JsonObject
-        {
-            ["name"] = tagName.ToString()
-        };
+        ConfigureWriteApiTagInformationFile(services);
+
+        services.TryAddSingleton<WriteApiTagArtifactsHandler>();
+        services.TryAddSingleton<WriteApiTagArtifacts>(provider => provider.GetRequiredService<WriteApiTagArtifactsHandler>().Handle);
     }
+
+    private static void ConfigureWriteApiTagInformationFile(IServiceCollection services)
+    {
+        services.TryAddSingleton<WriteApiTagInformationFileHandler>();
+        services.TryAddSingleton<WriteApiTagInformationFile>(provider => provider.GetRequiredService<WriteApiTagInformationFileHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
+        loggerFactory.CreateLogger("ApiTagExtractor");
 }

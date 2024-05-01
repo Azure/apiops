@@ -1,54 +1,91 @@
-﻿using common;
+﻿using Azure.Core.Pipeline;
+using common;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal static class ProductApi
+internal delegate ValueTask ExtractProductApis(ProductName productName, CancellationToken cancellationToken);
+
+file delegate IAsyncEnumerable<(ApiName Name, ProductApiDto Dto)> ListProductApis(ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteProductApiArtifacts(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteProductApiInformationFile(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken);
+
+file sealed class ExtractProductApisHandler(ListProductApis list, WriteProductApiArtifacts writeArtifacts)
 {
-    public static async ValueTask ExportAll(ProductDirectory productDirectory, ProductUri productUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
+    public async ValueTask Handle(ProductName productName, CancellationToken cancellationToken) =>
+        await list(productName, cancellationToken)
+                .IterParallel(async productapi => await writeArtifacts(productapi.Name, productapi.Dto, productName, cancellationToken),
+                              cancellationToken);
+}
+
+file sealed class ListProductApisHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    public IAsyncEnumerable<(ApiName, ProductApiDto)> Handle(ProductName productName, CancellationToken cancellationToken) =>
+        ProductApisUri.From(productName, serviceUri).List(pipeline, cancellationToken);
+}
+
+file sealed class WriteProductApiArtifactsHandler(WriteProductApiInformationFile writeApiFile)
+{
+    public async ValueTask Handle(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken)
     {
-        var productApisFile = new ProductApisFile(productDirectory);
+        await writeApiFile(name, dto, productName, cancellationToken);
+    }
+}
 
-        var productApis = await List(productUri, listRestResources, cancellationToken)
-                                    // Filter out apis that should not be exported
-                                    .Where(apiName => ShouldExport(apiName, apiNamesToExport))
-                                    .Select(SerializeProductApi)
-                                    .ToJsonArray(cancellationToken);
+file sealed class WriteProductApiInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
 
-       logger.LogInformation("Writing product APIs file {filePath}...", productApisFile.Path);
-       await productApisFile.OverwriteWithJson(productApis, cancellationToken);        
+    public async ValueTask Handle(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken)
+    {
+        var informationFile = ProductApiInformationFile.From(name, productName, serviceDirectory);
+
+        logger.LogInformation("Writing product api information file {ProductApiInformationFile}...", informationFile);
+        await informationFile.WriteDto(dto, cancellationToken);
+    }
+}
+
+internal static class ProductApiServices
+{
+    public static void ConfigureExtractProductApis(IServiceCollection services)
+    {
+        ConfigureListProductApis(services);
+        ConfigureWriteProductApiArtifacts(services);
+
+        services.TryAddSingleton<ExtractProductApisHandler>();
+        services.TryAddSingleton<ExtractProductApis>(provider => provider.GetRequiredService<ExtractProductApisHandler>().Handle);
     }
 
-    private static IAsyncEnumerable<ApiName> List(ProductUri productUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    private static void ConfigureListProductApis(IServiceCollection services)
     {
-        var apisUri = new ProductApisUri(productUri);
-        var apiJsonObjects = listRestResources(apisUri.Uri, cancellationToken);
-        return apiJsonObjects.Select(json => json.GetStringProperty("name"))
-                             .Select(name => new ApiName(name));
+        services.TryAddSingleton<ListProductApisHandler>();
+        services.TryAddSingleton<ListProductApis>(provider => provider.GetRequiredService<ListProductApisHandler>().Handle);
     }
 
-    private static bool ShouldExport(ApiName apiName, IEnumerable<string>? apiNamesToExport)
+    private static void ConfigureWriteProductApiArtifacts(IServiceCollection services)
     {
-        return apiNamesToExport is null
-               || apiNamesToExport.Any(apiNameToExport => apiNameToExport.Equals(apiName.ToString(), StringComparison.OrdinalIgnoreCase)
-                                                          // Apis with revisions have the format 'apiName;revision'. We split by semicolon to get the name.
-                                                          || apiNameToExport.Equals(apiName.ToString()
-                                                                                           .Split(';')
-                                                                                           .First(),
-                                                                                    StringComparison.OrdinalIgnoreCase));
+        ConfigureWriteProductApiInformationFile(services);
+
+        services.TryAddSingleton<WriteProductApiArtifactsHandler>();
+        services.TryAddSingleton<WriteProductApiArtifacts>(provider => provider.GetRequiredService<WriteProductApiArtifactsHandler>().Handle);
     }
 
-    private static JsonObject SerializeProductApi(ApiName apiName)
+    private static void ConfigureWriteProductApiInformationFile(IServiceCollection services)
     {
-        return new JsonObject
-        {
-            ["name"] = apiName.ToString()
-        };
+        services.TryAddSingleton<WriteProductApiInformationFileHandler>();
+        services.TryAddSingleton<WriteProductApiInformationFile>(provider => provider.GetRequiredService<WriteProductApiInformationFileHandler>().Handle);
     }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
+        loggerFactory.CreateLogger("ProductApiExtractor");
 }

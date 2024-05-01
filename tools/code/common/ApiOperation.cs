@@ -1,68 +1,117 @@
-﻿using System;
+﻿using Azure.Core.Pipeline;
+using Flurl;
+using LanguageExt;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
 
 namespace common;
 
-public sealed record ApiOperationsUri : IArtifactUri
+public sealed record ApiOperationName : ResourceName
 {
-    public Uri Uri { get; }
+    private ApiOperationName(string value) : base(value) { }
 
-    public ApiOperationsUri(ApiUri apiUri)
-    {
-        Uri = apiUri.AppendPath("operations");
-    }
+    public static ApiOperationName From(string value) => new(value);
 }
 
-public sealed record ApiOperationsDirectory : IArtifactDirectory
+public sealed record ApiOperationsUri : ResourceUri
 {
-    public static string Name { get; } = "operations";
+    public required ApiUri Parent { get; init; }
 
-    public ArtifactPath Path { get; }
+    private static string PathSegment { get; } = "operations";
 
-    public ApiDirectory ApiDirectory { get; }
+    protected override Uri Value => Parent.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public ApiOperationsDirectory(ApiDirectory apiDirectory)
-    {
-        Path = apiDirectory.Path.Append(Name);
-        ApiDirectory = apiDirectory;
-    }
+    public static ApiOperationsUri From(ApiName apiName, ManagementServiceUri serviceUri) =>
+        new() { Parent = ApiUri.From(apiName, serviceUri) };
 }
 
-public sealed record ApiOperationName
+public sealed record ApiOperationUri : ResourceUri
 {
-    private readonly string value;
+    public required ApiOperationsUri Parent { get; init; }
+    public required ApiOperationName Name { get; init; }
 
-    public ApiOperationName(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
+    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+
+    public static ApiOperationUri From(ApiOperationName name, ApiName apiName, ManagementServiceUri serviceUri) =>
+        new()
         {
-            throw new ArgumentException($"API operation name cannot be null or whitespace.", nameof(value));
-        }
-
-        this.value = value;
-    }
-
-    public override string ToString() => value;
+            Parent = ApiOperationsUri.From(apiName, serviceUri),
+            Name = name
+        };
 }
 
-public sealed record ApiOperationUri : IArtifactUri
+public sealed record ApiOperationsDirectory : ResourceDirectory
 {
-    public Uri Uri { get; }
+    public required ApiDirectory Parent { get; init; }
 
-    public ApiOperationUri(ApiOperationName apiOperationName, ApiOperationsUri apiOperationsUri)
-    {
-        Uri = apiOperationsUri.AppendPath(apiOperationName.ToString());
-    }
+    private static string Name { get; } = "operations";
+
+    protected override DirectoryInfo Value =>
+        Parent.ToDirectoryInfo().GetChildDirectory(Name);
+
+    public static ApiOperationsDirectory From(ApiName name, ManagementServiceDirectory serviceDirectory) =>
+        new() { Parent = ApiDirectory.From(name, serviceDirectory) };
+
+    public static Option<ApiOperationsDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        directory is not null &&
+        directory.Name == Name
+            ? from parent in ApiDirectory.TryParse(directory.Parent, serviceDirectory)
+              select new ApiOperationsDirectory { Parent = parent }
+            : Option<ApiOperationsDirectory>.None;
 }
 
-public sealed record ApiOperationDirectory : IArtifactDirectory
+public sealed record ApiOperationDirectory : ResourceDirectory
 {
-    public ArtifactPath Path { get; }
+    public required ApiOperationsDirectory Parent { get; init; }
 
-    public ApiOperationsDirectory ApiOperationsDirectory { get; }
+    public required ApiOperationName Name { get; init; }
 
-    public ApiOperationDirectory(ApiOperationName name, ApiOperationsDirectory apiOperationsDirectory)
+    protected override DirectoryInfo Value =>
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+
+    public static ApiOperationDirectory From(ApiOperationName name, ApiName apiName, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = ApiOperationsDirectory.From(apiName, serviceDirectory),
+            Name = name
+        };
+
+    public static Option<ApiOperationDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        from name in TryParseApiOperationName(directory)
+        from parent in ApiOperationsDirectory.TryParse(directory?.Parent, serviceDirectory)
+        select new ApiOperationDirectory
+        {
+            Parent = parent,
+            Name = name
+        };
+
+    internal static Option<ApiOperationName> TryParseApiOperationName(DirectoryInfo? directory) =>
+        string.IsNullOrWhiteSpace(directory?.Name)
+        ? Option<ApiOperationName>.None
+        : ApiOperationName.From(directory.Name);
+}
+
+public static class ApiOperationModule
+{
+    public static IAsyncEnumerable<ApiOperationName> ListNames(this ApiOperationsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+                .Select(jsonObject => jsonObject.GetStringProperty("name"))
+                .Select(ApiOperationName.From);
+
+    public static IEnumerable<ApiOperationDirectory> ListDirectories(ApiName apiName, ManagementServiceDirectory serviceDirectory)
     {
-        Path = apiOperationsDirectory.Path.Append(name.ToString());
-        ApiOperationsDirectory = apiOperationsDirectory;
+        var parentDirectory = ApiOperationsDirectory.From(apiName, serviceDirectory);
+
+        return parentDirectory.ToDirectoryInfo()
+                              .ListDirectories("*")
+                              .Choose(ApiOperationDirectory.TryParseApiOperationName)
+                              .Select(apiOperationName => new ApiOperationDirectory
+                              {
+                                  Name = apiOperationName,
+                                  Parent = parentDirectory
+                              });
     }
 }

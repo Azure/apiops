@@ -1,159 +1,267 @@
-﻿using common;
+﻿using AsyncKeyedLock;
+using Azure.Core.Pipeline;
+using common;
+using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using MoreLinq;
-using System.Collections.Generic;
+using System;
 using System.Collections.Immutable;
 using System.IO;
-using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal static class ProductTag
+internal delegate Option<PublisherAction> FindProductTagAction(FileInfo file);
+
+file delegate Option<(TagName Name, ProductName ProductName)> TryParseTagName(FileInfo file);
+
+file delegate ValueTask ProcessProductTag(TagName name, ProductName productName, CancellationToken cancellationToken);
+
+file delegate bool IsTagNameInSourceControl(TagName name, ProductName productName);
+
+file delegate ValueTask<Option<ProductTagDto>> FindProductTagDto(TagName name, ProductName productName, CancellationToken cancellationToken);
+
+internal delegate ValueTask PutProductTag(TagName name, ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteProductTag(TagName name, ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask PutProductTagInApim(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteProductTagFromApim(TagName name, ProductName productName, CancellationToken cancellationToken);
+
+file sealed class FindProductTagActionHandler(TryParseTagName tryParseName, ProcessProductTag processProductTag)
 {
-    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await Put(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
-    }
+    public Option<PublisherAction> Handle(FileInfo file) =>
+        from names in tryParseName(file)
+        select GetAction(names.Name, names.ProductName);
 
-    private static async ValueTask Put(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await GetArtifactProductTags(files, configurationJson, serviceDirectory)
-                .ForEachParallel(async product => await Put(product.ProductName, product.TagNames, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken),
-                                 cancellationToken);
-    }
+    private PublisherAction GetAction(TagName name, ProductName productName) =>
+        async cancellationToken => await processProductTag(name, productName, cancellationToken);
+}
 
-    private static IEnumerable<(ProductName ProductName, ImmutableList<TagName> TagNames)> GetArtifactProductTags(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
-    {
-        var configurationArtifacts = GetConfigurationProductTags(configurationJson);
+file sealed class TryParseTagNameHandler(ManagementServiceDirectory serviceDirectory)
+{
+    public Option<(TagName, ProductName)> Handle(FileInfo file) =>
+        TryParseNameFromTagInformationFile(file);
 
-        return GetProductTagsFiles(files, serviceDirectory)
-                .Select(file =>
-                {
-                    var productName = GetProductName(file);
-                    var tagNames = file.ReadAsJsonArray()
-                                    .Choose(node => node as JsonObject)
-                                    .Choose(tagJsonObject => tagJsonObject.TryGetStringProperty("name"))
-                                    .Select(name => new TagName(name))
-                                    .ToImmutableList();
-                    return (ProductName: productName, TagNames: tagNames);
-                })
-                .LeftJoin(configurationArtifacts,
-                          keySelector: artifact => artifact.ProductName,
-                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ProductName, configurationArtifact.TagNames));
-    }
+    private Option<(TagName, ProductName)> TryParseNameFromTagInformationFile(FileInfo file) =>
+        from informationFile in ProductTagInformationFile.TryParse(file, serviceDirectory)
+        select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
+}
 
-    private static IEnumerable<ProductTagsFile> GetProductTagsFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
-    {
-        return files.Choose(file => TryGetTagsFile(file, serviceDirectory));
-    }
+/// <summary>
+/// Limits the number of simultaneous operations.
+/// </summary>
+file sealed class ProductTagSemaphore : IDisposable
+{
+    private readonly AsyncKeyedLocker<(TagName, ProductName)> locker = new();
+    private ImmutableHashSet<(TagName, ProductName)> processedNames = [];
 
-    private static ProductTagsFile? TryGetTagsFile(FileInfo? file, ServiceDirectory serviceDirectory)
+    /// <summary>
+    /// Runs the provided action, ensuring that each name is processed only once.
+    /// </summary>
+    public async ValueTask Run(TagName name, ProductName productName, Func<TagName, ProductName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
-        if (file is null || file.Name.Equals(ProductTagsFile.Name) is false)
+        // Do not process the same name simultaneously
+        using var _ = await locker.LockAsync((name, productName), cancellationToken);
+
+        // Only process each name once
+        if (processedNames.Contains((name, productName)))
         {
-            return null;
+            return;
         }
 
-        var productDirectory = Product.TryGetProductDirectory(file.Directory, serviceDirectory);
+        await action(name, productName, cancellationToken);
 
-        return productDirectory is null
-                ? null
-                : new ProductTagsFile(productDirectory);
+        ImmutableInterlocked.Update(ref processedNames, set => set.Add((name, productName)));
     }
 
-    private static ProductName GetProductName(ProductTagsFile file)
+    public void Dispose() => locker.Dispose();
+}
+
+file sealed class ProcessProductTagHandler(IsTagNameInSourceControl isNameInSourceControl, PutProductTag put, DeleteProductTag delete) : IDisposable
+{
+    private readonly ProductTagSemaphore semaphore = new();
+
+    public async ValueTask Handle(TagName name, ProductName productName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, productName, HandleInner, cancellationToken);
+
+    private async ValueTask HandleInner(TagName name, ProductName productName, CancellationToken cancellationToken)
     {
-        return new(file.ProductDirectory.GetName());
-    }
-
-    private static IEnumerable<(ProductName ProductName, ImmutableList<TagName> TagNames)> GetConfigurationProductTags(JsonObject configurationJson)
-    {
-        return configurationJson.TryGetJsonArrayProperty("products")
-                                .IfNullEmpty()
-                                .Choose(node => node as JsonObject)
-                                .Choose<JsonObject, (ProductName ProductName, ImmutableList<TagName> TagNames)>(productJsonObject =>
-                                {
-                                    var productNameString = productJsonObject.TryGetStringProperty("name");
-                                    if (productNameString is null)
-                                    {
-                                        return default;
-                                    }
-
-                                    var productName = new ProductName(productNameString);
-
-                                    var tagsJsonArray = productJsonObject.TryGetJsonArrayProperty("tags");
-                                    if (tagsJsonArray is null)
-                                    {
-                                        return default;
-                                    }
-
-                                    if (tagsJsonArray.Any() is false)
-                                    {
-                                        return (productName, ImmutableList.Create<TagName>());
-                                    }
-
-                                    // If tags are defined in configuration but none have a 'name' property, skip this resource
-                                    var tagNames = tagsJsonArray.Choose(node => node as JsonObject)
-                                                                    .Choose(tagJsonObject => tagJsonObject.TryGetStringProperty("name"))
-                                                                    .Select(name => new TagName(name))
-                                                                    .ToImmutableList();
-                                    return tagNames.Any() ? (productName, tagNames) : default;
-                                });
-    }
-
-    private static async ValueTask Put(ProductName productName, IReadOnlyCollection<TagName> tagNames, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        var productUri = GetProductUri(productName, serviceUri);
-        var productTagsUri = new ProductTagsUri(productUri);
-
-        var existingTagNames = await listRestResources(productTagsUri.Uri, cancellationToken)
-                                        .Select(tagJsonObject => tagJsonObject.GetStringProperty("name"))
-                                        .Select(name => new TagName(name))
-                                        .ToListAsync(cancellationToken);
-
-        var tagNamesToPut = tagNames.Except(existingTagNames);
-        var tagNamesToRemove = existingTagNames.Except(tagNames);
-
-        await tagNamesToRemove.ForEachParallel(async tagName =>
+        if (isNameInSourceControl(name, productName))
         {
-            logger.LogInformation("Removing tag {tagName} in product {productName}...", tagName, productName);
-            await Delete(tagName, productUri, deleteRestResource, cancellationToken);
-        }, cancellationToken);
-
-        await tagNamesToPut.ForEachParallel(async tagName =>
+            await put(name, productName, cancellationToken);
+        }
+        else
         {
-            logger.LogInformation("Putting tag {tagName} in product {productName}...", tagName, productName);
-            await Put(tagName, productUri, putRestResource, cancellationToken);
-        }, cancellationToken);
+            await delete(name, productName, cancellationToken);
+        }
     }
 
-    private static ProductUri GetProductUri(ProductName productName, ServiceUri serviceUri)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class IsTagNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
+{
+    public bool Handle(TagName name, ProductName productName) =>
+        DoesTagInformationFileExist(name, productName);
+
+    private bool DoesTagInformationFileExist(TagName name, ProductName productName)
     {
-        var productsUri = new ProductsUri(serviceUri);
-        return new ProductUri(productName, productsUri);
-    }
+        var artifactFiles = getArtifactFiles();
+        var informationFile = ProductTagInformationFile.From(name, productName, serviceDirectory);
 
-    private static async ValueTask Delete(TagName tagName, ProductUri productUri, DeleteRestResource deleteRestResource, CancellationToken cancellationToken)
+        return artifactFiles.Contains(informationFile.ToFileInfo());
+    }
+}
+
+file sealed class PutProductTagHandler(FindProductTagDto findDto, PutProduct putProduct, PutTag putTag, PutProductTagInApim putInApim) : IDisposable
+{
+    private readonly ProductTagSemaphore semaphore = new();
+
+    public async ValueTask Handle(TagName name, ProductName productName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, productName, Put, cancellationToken);
+
+    private async ValueTask Put(TagName name, ProductName productName, CancellationToken cancellationToken)
     {
-        var productTagsUri = new ProductTagsUri(productUri);
-        var productTagUri = new ProductTagUri(tagName, productTagsUri);
-
-        await deleteRestResource(productTagUri.Uri, cancellationToken);
+        var dtoOption = await findDto(name, productName, cancellationToken);
+        await dtoOption.IterTask(async dto => await Put(name, dto, productName, cancellationToken));
     }
 
-    private static async ValueTask Put(TagName tagName, ProductUri productUri, PutRestResource putRestResource, CancellationToken cancellationToken)
+    private async ValueTask Put(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken)
     {
-        var productTagsUri = new ProductTagsUri(productUri);
-        var productTagUri = new ProductTagUri(tagName, productTagsUri);
-
-        await putRestResource(productTagUri.Uri, new JsonObject(), cancellationToken);
+        await putProduct(productName, cancellationToken);
+        await putTag(name, cancellationToken);
+        await putInApim(name, dto, productName, cancellationToken);
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class FindProductTagDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents)
+{
+    public async ValueTask<Option<ProductTagDto>> Handle(TagName name, ProductName productName, CancellationToken cancellationToken)
     {
-        await Put(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
+        var informationFile = ProductTagInformationFile.From(name, productName, serviceDirectory);
+        var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
+
+        return from contents in contentsOption
+               select contents.ToObjectFromJson<ProductTagDto>();
     }
+}
+
+file sealed class PutProductTagInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Adding tag {TagName} to product {ProductName}...", name, productName);
+        await ProductTagUri.From(name, productName, serviceUri).PutDto(dto, pipeline, cancellationToken);
+    }
+}
+
+file sealed class DeleteProductTagHandler(DeleteProductTagFromApim deleteFromApim) : IDisposable
+{
+    private readonly ProductTagSemaphore semaphore = new();
+
+    public async ValueTask Handle(TagName name, ProductName productName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, productName, Delete, cancellationToken);
+
+    private async ValueTask Delete(TagName name, ProductName productName, CancellationToken cancellationToken)
+    {
+        await deleteFromApim(name, productName, cancellationToken);
+    }
+
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class DeleteProductTagFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(TagName name, ProductName productName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Deleting tag {TagName} from product {ProductName}...", name, productName);
+        await ProductTagUri.From(name, productName, serviceUri).Delete(pipeline, cancellationToken);
+    }
+}
+
+internal static class ProductTagServices
+{
+    public static void ConfigureFindProductTagAction(IServiceCollection services)
+    {
+        ConfigureTryParseTagName(services);
+        ConfigureProcessProductTag(services);
+
+        services.TryAddSingleton<FindProductTagActionHandler>();
+        services.TryAddSingleton<FindProductTagAction>(provider => provider.GetRequiredService<FindProductTagActionHandler>().Handle);
+    }
+
+    private static void ConfigureTryParseTagName(IServiceCollection services)
+    {
+        services.TryAddSingleton<TryParseTagNameHandler>();
+        services.TryAddSingleton<TryParseTagName>(provider => provider.GetRequiredService<TryParseTagNameHandler>().Handle);
+    }
+
+    private static void ConfigureProcessProductTag(IServiceCollection services)
+    {
+        ConfigureIsTagNameInSourceControl(services);
+        ConfigurePutProductTag(services);
+        ConfigureDeleteProductTag(services);
+
+        services.TryAddSingleton<ProcessProductTagHandler>();
+        services.TryAddSingleton<ProcessProductTag>(provider => provider.GetRequiredService<ProcessProductTagHandler>().Handle);
+    }
+
+    private static void ConfigureIsTagNameInSourceControl(IServiceCollection services)
+    {
+        services.TryAddSingleton<IsTagNameInSourceControlHandler>();
+        services.TryAddSingleton<IsTagNameInSourceControl>(provider => provider.GetRequiredService<IsTagNameInSourceControlHandler>().Handle);
+    }
+
+    public static void ConfigurePutProductTag(IServiceCollection services)
+    {
+        ConfigureFindProductTagDto(services);
+        ConfigurePutProductTagInApim(services);
+        ProductServices.ConfigurePutProduct(services);
+        TagServices.ConfigurePutTag(services);
+
+        services.TryAddSingleton<PutProductTagHandler>();
+        services.TryAddSingleton<PutProductTag>(provider => provider.GetRequiredService<PutProductTagHandler>().Handle);
+    }
+
+    private static void ConfigureFindProductTagDto(IServiceCollection services)
+    {
+        services.TryAddSingleton<FindProductTagDtoHandler>();
+        services.TryAddSingleton<FindProductTagDto>(provider => provider.GetRequiredService<FindProductTagDtoHandler>().Handle);
+    }
+
+    private static void ConfigurePutProductTagInApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<PutProductTagInApimHandler>();
+        services.TryAddSingleton<PutProductTagInApim>(provider => provider.GetRequiredService<PutProductTagInApimHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteProductTag(IServiceCollection services)
+    {
+        ConfigureDeleteProductTagFromApim(services);
+
+        services.TryAddSingleton<DeleteProductTagHandler>();
+        services.TryAddSingleton<DeleteProductTag>(provider => provider.GetRequiredService<DeleteProductTagHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteProductTagFromApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<DeleteProductTagFromApimHandler>();
+        services.TryAddSingleton<DeleteProductTagFromApim>(provider => provider.GetRequiredService<DeleteProductTagFromApimHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory factory) =>
+        factory.CreateLogger("ProductTagPublisher");
 }

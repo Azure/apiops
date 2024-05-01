@@ -1,146 +1,240 @@
-﻿using System;
-using System.Text.Json.Nodes;
+﻿using Azure.Core.Pipeline;
+using Flurl;
+using LanguageExt;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record GatewaysUri : IArtifactUri
+public sealed record GatewayName : ResourceName
 {
-    public Uri Uri { get; }
+    private GatewayName(string value) : base(value) { }
 
-    public GatewaysUri(ServiceUri serviceUri)
-    {
-        Uri = serviceUri.AppendPath("gateways");
-    }
+    public static GatewayName From(string value) => new(value);
 }
 
-public sealed record GatewaysDirectory : IArtifactDirectory
+public sealed record GatewaysUri : ResourceUri
 {
-    public static string Name { get; } = "gateways";
+    public required ManagementServiceUri ServiceUri { get; init; }
 
-    public ArtifactPath Path { get; }
+    private static string PathSegment { get; } = "gateways";
 
-    public ServiceDirectory ServiceDirectory { get; }
+    protected override Uri Value => ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public GatewaysDirectory(ServiceDirectory serviceDirectory)
-    {
-        Path = serviceDirectory.Path.Append(Name);
-        ServiceDirectory = serviceDirectory;
-    }
+    public static GatewaysUri From(ManagementServiceUri serviceUri) =>
+        new() { ServiceUri = serviceUri };
 }
 
-public sealed record GatewayName
+public sealed record GatewayUri : ResourceUri
 {
-    private readonly string value;
+    public required GatewaysUri Parent { get; init; }
+    public required GatewayName Name { get; init; }
 
-    public GatewayName(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new ArgumentException($"Gateway name cannot be null or whitespace.", nameof(value));
-        }
+    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
 
-        this.value = value;
-    }
-
-    public override string ToString() => value;
-}
-
-public sealed record GatewayUri : IArtifactUri
-{
-    public Uri Uri { get; }
-
-    public GatewayUri(GatewayName gatewayName, GatewaysUri gatewaysUri)
-    {
-        Uri = gatewaysUri.AppendPath(gatewayName.ToString());
-    }
-}
-
-public sealed record GatewayDirectory : IArtifactDirectory
-{
-    public ArtifactPath Path { get; }
-
-    public GatewaysDirectory GatewaysDirectory { get; }
-
-    public GatewayDirectory(GatewayName gatewayName, GatewaysDirectory gatewaysDirectory)
-    {
-        Path = gatewaysDirectory.Path.Append(gatewayName.ToString());
-        GatewaysDirectory = gatewaysDirectory;
-    }
-}
-
-public sealed record GatewayInformationFile : IArtifactFile
-{
-    public static string Name { get; } = "gatewayInformation.json";
-
-    public ArtifactPath Path { get; }
-
-    public GatewayDirectory GatewayDirectory { get; }
-
-    public GatewayInformationFile(GatewayDirectory gatewayDirectory)
-    {
-        Path = gatewayDirectory.Path.Append(Name);
-        GatewayDirectory = gatewayDirectory;
-    }
-}
-
-public sealed record GatewayModel
-{
-    public required string Name { get; init; }
-
-    public required GatewayContractProperties Properties { get; init; }
-
-    public sealed record GatewayContractProperties
-    {
-        public string? Description { get; init; }
-        public ResourceLocationDataContract? LocationData { get; init; }
-
-        public JsonObject Serialize() =>
-            new JsonObject()
-                .AddPropertyIfNotNull("description", Description)
-                .AddPropertyIfNotNull("locationData", LocationData?.Serialize());
-
-        public static GatewayContractProperties Deserialize(JsonObject jsonObject) =>
-            new()
-            {
-                Description = jsonObject.TryGetStringProperty("description"),
-                LocationData = jsonObject.TryGetJsonObjectProperty("locationData")
-                                         .Map(ResourceLocationDataContract.Deserialize)
-            };
-
-        public sealed record ResourceLocationDataContract
-        {
-            public string? City { get; init; }
-            public string? CountryOrRegion { get; init; }
-            public string? District { get; init; }
-            public string? Name { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("city", City)
-                    .AddPropertyIfNotNull("countryOrRegion", CountryOrRegion)
-                    .AddPropertyIfNotNull("district", District)
-                    .AddPropertyIfNotNull("name", Name);
-
-            public static ResourceLocationDataContract Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    City = jsonObject.TryGetStringProperty("city"),
-                    CountryOrRegion = jsonObject.TryGetStringProperty("countryOrRegion"),
-                    District = jsonObject.TryGetStringProperty("district"),
-                    Name = jsonObject.TryGetStringProperty("name")
-                };
-        }
-    }
-
-    public JsonObject Serialize() =>
-        new JsonObject()
-            .AddProperty("properties", Properties.Serialize());
-
-    public static GatewayModel Deserialize(GatewayName name, JsonObject jsonObject) =>
+    public static GatewayUri From(GatewayName name, ManagementServiceUri serviceUri) =>
         new()
         {
-            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
-            Properties = jsonObject.GetJsonObjectProperty("properties")
-                                   .Map(GatewayContractProperties.Deserialize)!
+            Parent = GatewaysUri.From(serviceUri),
+            Name = name
         };
+}
+
+public sealed record GatewaysDirectory : ResourceDirectory
+{
+    public required ManagementServiceDirectory ServiceDirectory { get; init; }
+
+    private static string Name { get; } = "gateways";
+
+    protected override DirectoryInfo Value =>
+        ServiceDirectory.ToDirectoryInfo().GetChildDirectory(Name);
+
+    public static GatewaysDirectory From(ManagementServiceDirectory serviceDirectory) =>
+        new() { ServiceDirectory = serviceDirectory };
+
+    public static Option<GatewaysDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        directory is not null &&
+        directory.Name == Name &&
+        directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
+            ? new GatewaysDirectory { ServiceDirectory = serviceDirectory }
+            : Option<GatewaysDirectory>.None;
+}
+
+public sealed record GatewayDirectory : ResourceDirectory
+{
+    public required GatewaysDirectory Parent { get; init; }
+
+    public required GatewayName Name { get; init; }
+
+    protected override DirectoryInfo Value =>
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+
+    public static GatewayDirectory From(GatewayName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = GatewaysDirectory.From(serviceDirectory),
+            Name = name
+        };
+
+    public static Option<GatewayDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        from parent in GatewaysDirectory.TryParse(directory?.Parent, serviceDirectory)
+        select new GatewayDirectory
+        {
+            Parent = parent,
+            Name = GatewayName.From(directory!.Name)
+        };
+}
+
+public sealed record GatewayInformationFile : ResourceFile
+{
+    public required GatewayDirectory Parent { get; init; }
+    private static string Name { get; } = "gatewayInformation.json";
+
+    protected override FileInfo Value =>
+        Parent.ToDirectoryInfo().GetChildFile(Name);
+
+    public static GatewayInformationFile From(GatewayName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = new GatewayDirectory
+            {
+                Parent = GatewaysDirectory.From(serviceDirectory),
+                Name = name
+            }
+        };
+
+    public static Option<GatewayInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
+        file is not null && file.Name == Name
+            ? from parent in GatewayDirectory.TryParse(file.Directory, serviceDirectory)
+              select new GatewayInformationFile { Parent = parent }
+            : Option<GatewayInformationFile>.None;
+}
+
+public sealed record GatewayDto
+{
+    [JsonPropertyName("properties")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public required GatewayContract Properties { get; init; }
+
+    public sealed record GatewayContract
+    {
+        [JsonPropertyName("description")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Description { get; init; }
+
+        [JsonPropertyName("locationData")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ResourceLocationDataContract? LocationData { get; init; }
+    }
+
+    public sealed record ResourceLocationDataContract
+    {
+        [JsonPropertyName("city")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? City { get; init; }
+
+        [JsonPropertyName("countryOrRegion")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? CountryOrRegion { get; init; }
+
+        [JsonPropertyName("district")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? District { get; init; }
+
+        [JsonPropertyName("name")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Name { get; init; }
+    }
+}
+
+public static class GatewayModule
+{
+    public static async ValueTask DeleteAll(this GatewaysUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await uri.ListNames(pipeline, cancellationToken)
+                 .IterParallel(async name => await GatewayUri.From(name, uri.ServiceUri)
+                                                                .Delete(pipeline, cancellationToken),
+                               cancellationToken);
+
+    public static IAsyncEnumerable<GatewayName> ListNames(this GatewaysUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var exceptionHandler = (HttpRequestException exception) =>
+            exception.StatusCode == HttpStatusCode.BadRequest
+             && exception.Message.Contains("MethodNotAllowedInPricingTier", StringComparison.OrdinalIgnoreCase)
+            ? AsyncEnumerable.Empty<GatewayName>()
+            : throw exception;
+
+        return pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+                       .Select(jsonObject => jsonObject.GetStringProperty("name"))
+                       .Select(GatewayName.From)
+                       .Catch(exceptionHandler);
+    }
+
+    public static IAsyncEnumerable<(GatewayName Name, GatewayDto Dto)> List(this GatewaysUri gatewaysUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        gatewaysUri.ListNames(pipeline, cancellationToken)
+                      .SelectAwait(async name =>
+                      {
+                          var uri = new GatewayUri { Parent = gatewaysUri, Name = name };
+                          var dto = await uri.GetDto(pipeline, cancellationToken);
+                          return (name, dto);
+                      });
+
+    public static async ValueTask<GatewayDto> GetDto(this GatewayUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
+        return content.ToObjectFromJson<GatewayDto>();
+    }
+
+    public static async ValueTask<Option<GatewayDto>> TryGetDto(this GatewayUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
+
+        return either.Map(content => content.ToObjectFromJson<GatewayDto>())
+                     .Match(Option<GatewayDto>.Some,
+                            response => response.Status == (int)HttpStatusCode.NotFound
+                                          ? Option<GatewayDto>.None
+                                          : throw response.ToHttpRequestException(uri.ToUri()));
+    }
+
+    public static async ValueTask Delete(this GatewayUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
+
+    public static async ValueTask PutDto(this GatewayUri uri, GatewayDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto);
+        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+    }
+
+    public static IEnumerable<GatewayDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory)
+    {
+        var gatewaysDirectory = GatewaysDirectory.From(serviceDirectory);
+
+        return gatewaysDirectory.ToDirectoryInfo()
+                                   .ListDirectories("*")
+                                   .Select(directoryInfo => GatewayName.From(directoryInfo.Name))
+                                   .Select(name => new GatewayDirectory { Parent = gatewaysDirectory, Name = name });
+    }
+
+    public static IEnumerable<GatewayInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
+        ListDirectories(serviceDirectory)
+            .Select(directory => new GatewayInformationFile { Parent = directory })
+            .Where(informationFile => informationFile.ToFileInfo().Exists());
+
+    public static async ValueTask WriteDto(this GatewayInformationFile file, GatewayDto dto, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
+        await file.ToFileInfo().OverwriteWithBinaryData(content, cancellationToken);
+    }
+
+    public static async ValueTask<GatewayDto> ReadDto(this GatewayInformationFile file, CancellationToken cancellationToken)
+    {
+        var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
+        return content.ToObjectFromJson<GatewayDto>();
+    }
 }

@@ -1,442 +1,311 @@
-﻿using System;
+﻿using Azure.Core.Pipeline;
+using Flurl;
+using LanguageExt;
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.IO;
 using System.Linq;
-using System.Text.Json;
+using System.Net;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record DiagnosticsUri : IArtifactUri
+public sealed record DiagnosticName : ResourceName
 {
-    public Uri Uri { get; }
+    private DiagnosticName(string value) : base(value) { }
 
-    public DiagnosticsUri(ServiceUri serviceUri)
-    {
-        Uri = serviceUri.AppendPath("diagnostics");
-    }
+    public static DiagnosticName From(string value) => new(value);
 }
 
-public sealed record DiagnosticsDirectory : IArtifactDirectory
+public sealed record DiagnosticsUri : ResourceUri
 {
-    public static string Name { get; } = "diagnostics";
+    public required ManagementServiceUri ServiceUri { get; init; }
 
-    public ArtifactPath Path { get; }
+    private static string PathSegment { get; } = "diagnostics";
 
-    public ServiceDirectory ServiceDirectory { get; }
+    protected override Uri Value => ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public DiagnosticsDirectory(ServiceDirectory serviceDirectory)
-    {
-        Path = serviceDirectory.Path.Append(Name);
-        ServiceDirectory = serviceDirectory;
-    }
+    public static DiagnosticsUri From(ManagementServiceUri serviceUri) =>
+        new() { ServiceUri = serviceUri };
 }
 
-public sealed record DiagnosticName
+public sealed record DiagnosticUri : ResourceUri
 {
-    private readonly string value;
+    public required DiagnosticsUri Parent { get; init; }
+    public required DiagnosticName Name { get; init; }
 
-    public DiagnosticName(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new ArgumentException($"Diagnostic name cannot be null or whitespace.", nameof(value));
-        }
+    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
 
-        this.value = value;
-    }
-
-    public override string ToString() => value;
-}
-
-public sealed record DiagnosticUri : IArtifactUri
-{
-    public Uri Uri { get; }
-
-    public DiagnosticUri(DiagnosticName diagnosticName, DiagnosticsUri diagnosticsUri)
-    {
-        Uri = diagnosticsUri.AppendPath(diagnosticName.ToString());
-    }
-}
-
-public sealed record DiagnosticDirectory : IArtifactDirectory
-{
-    public ArtifactPath Path { get; }
-
-    public DiagnosticsDirectory DiagnosticsDirectory { get; }
-
-    public DiagnosticDirectory(DiagnosticName diagnosticName, DiagnosticsDirectory diagnosticsDirectory)
-    {
-        Path = diagnosticsDirectory.Path.Append(diagnosticName.ToString());
-        DiagnosticsDirectory = diagnosticsDirectory;
-    }
-}
-
-public sealed record DiagnosticInformationFile : IArtifactFile
-{
-    public static string Name { get; } = "diagnosticInformation.json";
-
-    public ArtifactPath Path { get; }
-
-    public DiagnosticDirectory DiagnosticDirectory { get; }
-
-    public DiagnosticInformationFile(DiagnosticDirectory diagnosticDirectory)
-    {
-        Path = diagnosticDirectory.Path.Append(Name);
-        DiagnosticDirectory = diagnosticDirectory;
-    }
-}
-
-public sealed record DiagnosticModel
-{
-    public required string Name { get; init; }
-
-    public required DiagnosticContractProperties Properties { get; init; }
-
-    public sealed record DiagnosticContractProperties
-    {
-        public AlwaysLogOption? AlwaysLog { get; init; }
-        public PipelineDiagnosticSettings? Backend { get; init; }
-        public PipelineDiagnosticSettings? Frontend { get; init; }
-        public HttpCorrelationProtocolOption? HttpCorrelationProtocol { get; init; }
-        public bool? LogClientIp { get; init; }
-        public string? LoggerId { get; init; }
-        public bool? Metrics { get; init; }
-        public OperationNameFormatOption? OperationNameFormat { get; init; }
-        public SamplingSettings? Sampling { get; init; }
-        public VerbosityOption? Verbosity { get; init; }
-
-        public JsonObject Serialize() =>
-            new JsonObject()
-                .AddPropertyIfNotNull("alwaysLog", AlwaysLog?.Serialize())
-                .AddPropertyIfNotNull("backend", Backend?.Serialize())
-                .AddPropertyIfNotNull("frontend", Frontend?.Serialize())
-                .AddPropertyIfNotNull("httpCorrelationProtocol", HttpCorrelationProtocol?.Serialize())
-                .AddPropertyIfNotNull("logClientIp", LogClientIp)
-                .AddPropertyIfNotNull("loggerId", LoggerId)
-                .AddPropertyIfNotNull("metrics", Metrics)
-                .AddPropertyIfNotNull("operationNameFormat", OperationNameFormat?.Serialize())
-                .AddPropertyIfNotNull("sampling", Sampling?.Serialize())
-                .AddPropertyIfNotNull("verbosity", Verbosity?.Serialize());
-
-        public static DiagnosticContractProperties Deserialize(JsonObject jsonObject) =>
-            new()
-            {
-                AlwaysLog = jsonObject.TryGetProperty("alwaysLog")
-                                      .Map(AlwaysLogOption.Deserialize),
-                Backend = jsonObject.TryGetJsonObjectProperty("backend")
-                                    .Map(PipelineDiagnosticSettings.Deserialize),
-                Frontend = jsonObject.TryGetJsonObjectProperty("frontend")
-                                    .Map(PipelineDiagnosticSettings.Deserialize),
-                HttpCorrelationProtocol = jsonObject.TryGetProperty("httpCorrelationProtocol")
-                                                    .Map(HttpCorrelationProtocolOption.Deserialize),
-                LogClientIp = jsonObject.TryGetBoolProperty("logClientIp"),
-                LoggerId = jsonObject.TryGetStringProperty("loggerId"),
-                Metrics = jsonObject.TryGetBoolProperty("metrics"),
-                OperationNameFormat = jsonObject.TryGetProperty("operationNameFormat")
-                                      .Map(OperationNameFormatOption.Deserialize),
-                Sampling = jsonObject.TryGetJsonObjectProperty("sampling")
-                                     .Map(SamplingSettings.Deserialize),
-                Verbosity = jsonObject.TryGetProperty("verbosity")
-                                      .Map(VerbosityOption.Deserialize)
-            };
-
-        public sealed record AlwaysLogOption
-        {
-            private readonly string value;
-
-            private AlwaysLogOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static AlwaysLogOption AllErrors => new("allErrors");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static AlwaysLogOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(AllErrors).Equals(value, StringComparison.OrdinalIgnoreCase) => AllErrors,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(AlwaysLogOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-
-        public sealed record PipelineDiagnosticSettings
-        {
-            public HttpMessageDiagnostic? Request { get; init; }
-            public HttpMessageDiagnostic? Response { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("request", Request?.Serialize())
-                    .AddPropertyIfNotNull("response", Response?.Serialize());
-
-            public static PipelineDiagnosticSettings Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Request = jsonObject.TryGetJsonObjectProperty("request")
-                                        .Map(HttpMessageDiagnostic.Deserialize),
-                    Response = jsonObject.TryGetJsonObjectProperty("response")
-                                         .Map(HttpMessageDiagnostic.Deserialize),
-                };
-
-            public sealed record HttpMessageDiagnostic
-            {
-                public BodyDiagnosticSettings? Body { get; init; }
-                public DataMaskingSettings? DataMasking { get; init; }
-                public string[]? Headers { get; init; }
-
-                public JsonObject Serialize() =>
-                    new JsonObject()
-                        .AddPropertyIfNotNull("body", Body?.Serialize())
-                        .AddPropertyIfNotNull("dataMasking", DataMasking?.Serialize())
-                        .AddPropertyIfNotNull("headers", Headers?.Select(JsonNodeExtensions.FromString)
-                                                                ?.ToJsonArray());
-
-                public static HttpMessageDiagnostic Deserialize(JsonObject jsonObject) =>
-                    new()
-                    {
-                        Body = jsonObject.TryGetJsonObjectProperty("body")
-                                         .Map(BodyDiagnosticSettings.Deserialize),
-                        DataMasking = jsonObject.TryGetJsonObjectProperty("dataMasking")
-                                                .Map(DataMaskingSettings.Deserialize),
-                        Headers = jsonObject.TryGetJsonArrayProperty("headers")
-                                           ?.Choose(node => node?.GetValue<string>())
-                                           ?.ToArray()
-                    };
-
-                public sealed record BodyDiagnosticSettings
-                {
-                    public int? Bytes { get; init; }
-
-                    public JsonObject Serialize() =>
-                        new JsonObject()
-                            .AddPropertyIfNotNull("bytes", Bytes);
-
-                    public static BodyDiagnosticSettings Deserialize(JsonObject jsonObject) =>
-                        new()
-                        {
-                            Bytes = jsonObject.TryGetIntProperty("bytes")
-                        };
-                }
-
-                public sealed record DataMaskingSettings
-                {
-                    public DataMaskingEntity[]? Headers { get; init; }
-                    public DataMaskingEntity[]? QueryParams { get; init; }
-
-                    public JsonObject Serialize() =>
-                        new JsonObject()
-                            .AddPropertyIfNotNull("headers", Headers?.Select(x => x.Serialize())
-                                                                    ?.ToJsonArray())
-                            .AddPropertyIfNotNull("queryParams", QueryParams?.Select(x => x.Serialize())
-                                                                        ?.ToJsonArray());
-
-                    public static DataMaskingSettings Deserialize(JsonObject jsonObject) =>
-                        new()
-                        {
-                            Headers = jsonObject.TryGetJsonArrayProperty("headers")
-                                               ?.Choose(node => node?.AsObject())
-                                               ?.Select(DataMaskingEntity.Deserialize)
-                                               ?.ToArray(),
-                            QueryParams = jsonObject.TryGetJsonArrayProperty("queryParams")
-                                                   ?.Choose(node => node?.AsObject())
-                                                   ?.Select(DataMaskingEntity.Deserialize)
-                                                   ?.ToArray(),
-                        };
-
-                    public sealed record DataMaskingEntity
-                    {
-                        public DataMaskingModeOption? Mode { get; init; }
-                        public string? Value { get; init; }
-
-                        public JsonObject Serialize() =>
-                            new JsonObject()
-                                .AddPropertyIfNotNull("mode", Mode?.Serialize())
-                                .AddPropertyIfNotNull("value", Value);
-
-                        public static DataMaskingEntity Deserialize(JsonObject jsonObject) =>
-                            new()
-                            {
-                                Mode = jsonObject.TryGetProperty("mode")
-                                                 .Map(DataMaskingModeOption.Deserialize),
-                                Value = jsonObject.TryGetStringProperty("value")
-                            };
-
-                        public sealed record DataMaskingModeOption
-                        {
-                            private readonly string value;
-
-                            private DataMaskingModeOption(string value)
-                            {
-                                this.value = value;
-                            }
-
-                            public static DataMaskingModeOption Hide => new("Hide");
-                            public static DataMaskingModeOption Mask => new("Mask");
-
-                            public override string ToString() => value;
-
-                            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-                            public static DataMaskingModeOption Deserialize(JsonNode node) =>
-                                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                                    ? value switch
-                                    {
-                                        _ when nameof(Hide).Equals(value, StringComparison.OrdinalIgnoreCase) => Hide,
-                                        _ when nameof(Mask).Equals(value, StringComparison.OrdinalIgnoreCase) => Mask,
-                                        _ => throw new JsonException($"'{value}' is not a valid {nameof(DataMaskingModeOption)}.")
-                                    }
-                                        : throw new JsonException("Node must be a string JSON value.");
-                        }
-                    }
-                }
-            }
-        }
-
-        public sealed record HttpCorrelationProtocolOption
-        {
-            private readonly string value;
-
-            private HttpCorrelationProtocolOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static HttpCorrelationProtocolOption Legacy => new("Legacy");
-            public static HttpCorrelationProtocolOption None => new("None");
-            public static HttpCorrelationProtocolOption W3C => new("W3C");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static HttpCorrelationProtocolOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(Legacy).Equals(value, StringComparison.OrdinalIgnoreCase) => Legacy,
-                        _ when nameof(None).Equals(value, StringComparison.OrdinalIgnoreCase) => None,
-                        _ when nameof(W3C).Equals(value, StringComparison.OrdinalIgnoreCase) => W3C,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(HttpCorrelationProtocolOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-
-        public sealed record OperationNameFormatOption
-        {
-            private readonly string value;
-
-            private OperationNameFormatOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static OperationNameFormatOption Name => new("Name");
-            public static OperationNameFormatOption Url => new("Url");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static OperationNameFormatOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(Name).Equals(value, StringComparison.OrdinalIgnoreCase) => Name,
-                        _ when nameof(Url).Equals(value, StringComparison.OrdinalIgnoreCase) => Url,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(OperationNameFormatOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-
-        public sealed record SamplingSettings
-        {
-            public double? Percentage { get; init; }
-
-            public SamplingTypeOption? SamplingType { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("percentage", Percentage)
-                    .AddPropertyIfNotNull("samplingType", SamplingType?.Serialize());
-
-            public static SamplingSettings Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    Percentage = jsonObject.TryGetDoubleProperty("percentage"),
-                    SamplingType = jsonObject.TryGetProperty("samplingType")
-                                             .Map(SamplingTypeOption.Deserialize)
-                };
-
-            public sealed record SamplingTypeOption
-            {
-                private readonly string value;
-
-                private SamplingTypeOption(string value)
-                {
-                    this.value = value;
-                }
-
-                public static SamplingTypeOption Fixed => new("Fixed");
-
-                public override string ToString() => value;
-
-                public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-                public static SamplingTypeOption Deserialize(JsonNode node) =>
-                    node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                        ? value switch
-                        {
-                            _ when nameof(Fixed).Equals(value, StringComparison.OrdinalIgnoreCase) => Fixed,
-                            _ => throw new JsonException($"'{value}' is not a valid {nameof(SamplingTypeOption)}.")
-                        }
-                            : throw new JsonException("Node must be a string JSON value.");
-            }
-        }
-
-        public sealed record VerbosityOption
-        {
-            private readonly string value;
-
-            private VerbosityOption(string value)
-            {
-                this.value = value;
-            }
-
-            public static VerbosityOption Error => new("error");
-            public static VerbosityOption Information => new("information");
-            public static VerbosityOption Verbose => new("verbose");
-
-            public override string ToString() => value;
-
-            public JsonNode Serialize() => JsonValue.Create(ToString()) ?? throw new JsonException("Value cannot be null.");
-
-            public static VerbosityOption Deserialize(JsonNode node) =>
-                node is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var value)
-                    ? value switch
-                    {
-                        _ when nameof(Error).Equals(value, StringComparison.OrdinalIgnoreCase) => Error,
-                        _ when nameof(Information).Equals(value, StringComparison.OrdinalIgnoreCase) => Information,
-                        _ when nameof(Verbose).Equals(value, StringComparison.OrdinalIgnoreCase) => Verbose,
-                        _ => throw new JsonException($"'{value}' is not a valid {nameof(VerbosityOption)}.")
-                    }
-                        : throw new JsonException("Node must be a string JSON value.");
-        }
-    }
-
-    public JsonObject Serialize() =>
-        new JsonObject()
-            .AddProperty("properties", Properties.Serialize());
-
-    public static DiagnosticModel Deserialize(DiagnosticName name, JsonObject jsonObject) =>
+    public static DiagnosticUri From(DiagnosticName name, ManagementServiceUri serviceUri) =>
         new()
         {
-            Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
-            Properties = jsonObject.GetJsonObjectProperty("properties")
-                                   .Map(DiagnosticContractProperties.Deserialize)!
+            Parent = DiagnosticsUri.From(serviceUri),
+            Name = name
         };
+}
+
+public sealed record DiagnosticsDirectory : ResourceDirectory
+{
+    public required ManagementServiceDirectory ServiceDirectory { get; init; }
+
+    private static string Name { get; } = "diagnostics";
+
+    protected override DirectoryInfo Value =>
+        ServiceDirectory.ToDirectoryInfo().GetChildDirectory(Name);
+
+    public static DiagnosticsDirectory From(ManagementServiceDirectory serviceDirectory) =>
+        new() { ServiceDirectory = serviceDirectory };
+
+    public static Option<DiagnosticsDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        directory is not null &&
+        directory.Name == Name &&
+        directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
+            ? new DiagnosticsDirectory { ServiceDirectory = serviceDirectory }
+            : Option<DiagnosticsDirectory>.None;
+}
+
+public sealed record DiagnosticDirectory : ResourceDirectory
+{
+    public required DiagnosticsDirectory Parent { get; init; }
+
+    public required DiagnosticName Name { get; init; }
+
+    protected override DirectoryInfo Value =>
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+
+    public static DiagnosticDirectory From(DiagnosticName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = DiagnosticsDirectory.From(serviceDirectory),
+            Name = name
+        };
+
+    public static Option<DiagnosticDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        from parent in DiagnosticsDirectory.TryParse(directory?.Parent, serviceDirectory)
+        select new DiagnosticDirectory
+        {
+            Parent = parent,
+            Name = DiagnosticName.From(directory!.Name)
+        };
+}
+
+public sealed record DiagnosticInformationFile : ResourceFile
+{
+    public required DiagnosticDirectory Parent { get; init; }
+    private static string Name { get; } = "diagnosticInformation.json";
+
+    protected override FileInfo Value =>
+        Parent.ToDirectoryInfo().GetChildFile(Name);
+
+    public static DiagnosticInformationFile From(DiagnosticName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = new DiagnosticDirectory
+            {
+                Parent = DiagnosticsDirectory.From(serviceDirectory),
+                Name = name
+            }
+        };
+
+    public static Option<DiagnosticInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
+        file is not null && file.Name == Name
+            ? from parent in DiagnosticDirectory.TryParse(file.Directory, serviceDirectory)
+              select new DiagnosticInformationFile { Parent = parent }
+            : Option<DiagnosticInformationFile>.None;
+}
+
+public sealed record DiagnosticDto
+{
+    [JsonPropertyName("properties")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public required DiagnosticContract Properties { get; init; }
+
+    public sealed record DiagnosticContract
+    {
+        [JsonPropertyName("loggerId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? LoggerId { get; init; }
+
+        [JsonPropertyName("alwaysLog")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? AlwaysLog { get; init; }
+
+        [JsonPropertyName("backend")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public PipelineDiagnosticSettings? Backend { get; init; }
+
+        [JsonPropertyName("frontend")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public PipelineDiagnosticSettings? Frontend { get; init; }
+
+        [JsonPropertyName("httpCorrelationProtocol")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? HttpCorrelationProtocol { get; init; }
+
+        [JsonPropertyName("logClientIp")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? LogClientIp { get; init; }
+
+        [JsonPropertyName("metrics")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? Metrics { get; init; }
+
+        [JsonPropertyName("operationNameFormat")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? OperationNameFormat { get; init; }
+
+        [JsonPropertyName("sampling")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public SamplingSettings? Sampling { get; init; }
+
+        [JsonPropertyName("verbosity")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Verbosity { get; init; }
+    }
+
+    public sealed record PipelineDiagnosticSettings
+    {
+        [JsonPropertyName("request")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public HttpMessageDiagnostic? Request { get; init; }
+
+        [JsonPropertyName("response")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public HttpMessageDiagnostic? Response { get; init; }
+    }
+
+    public sealed record HttpMessageDiagnostic
+    {
+        [JsonPropertyName("body")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BodyDiagnosticSettings? Body { get; init; }
+
+        [JsonPropertyName("dataMasking")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public DataMasking? DataMasking { get; init; }
+
+        [JsonPropertyName("headers")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<string>? Headers { get; init; }
+    }
+
+    public sealed record BodyDiagnosticSettings
+    {
+        [JsonPropertyName("bytes")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Bytes { get; init; }
+    }
+
+    public sealed record DataMasking
+    {
+        [JsonPropertyName("headers")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<DataMaskingEntity>? Headers { get; init; }
+
+        [JsonPropertyName("queryParams")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<DataMaskingEntity>? QueryParams { get; init; }
+    }
+
+    public sealed record DataMaskingEntity
+    {
+        [JsonPropertyName("mode")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Mode { get; init; }
+
+        [JsonPropertyName("value")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Value { get; init; }
+    }
+
+    public sealed record SamplingSettings
+    {
+        [JsonPropertyName("percentage")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public float? Percentage { get; init; }
+
+        [JsonPropertyName("samplingType")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? SamplingType { get; init; }
+    }
+}
+
+public static class DiagnosticModule
+{
+    public static async ValueTask DeleteAll(this DiagnosticsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await uri.ListNames(pipeline, cancellationToken)
+                 .IterParallel(async name => await DiagnosticUri.From(name, uri.ServiceUri)
+                                                                .Delete(pipeline, cancellationToken),
+                               cancellationToken);
+
+    public static IAsyncEnumerable<DiagnosticName> ListNames(this DiagnosticsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+                .Select(jsonObject => jsonObject.GetStringProperty("name"))
+                .Select(DiagnosticName.From);
+
+    public static IAsyncEnumerable<(DiagnosticName Name, DiagnosticDto Dto)> List(this DiagnosticsUri diagnosticsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        diagnosticsUri.ListNames(pipeline, cancellationToken)
+                      .SelectAwait(async name =>
+                      {
+                          var uri = new DiagnosticUri { Parent = diagnosticsUri, Name = name };
+                          var dto = await uri.GetDto(pipeline, cancellationToken);
+                          return (name, dto);
+                      });
+
+    public static async ValueTask<DiagnosticDto> GetDto(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
+        return content.ToObjectFromJson<DiagnosticDto>();
+    }
+
+    public static async ValueTask<Option<DiagnosticDto>> TryGetDto(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
+
+        return either.Map(content => content.ToObjectFromJson<DiagnosticDto>())
+                     .Match(Option<DiagnosticDto>.Some,
+                            response => response.Status == (int)HttpStatusCode.NotFound
+                                          ? Option<DiagnosticDto>.None
+                                          : throw response.ToHttpRequestException(uri.ToUri()));
+    }
+
+    public static async ValueTask Delete(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
+
+    public static async ValueTask PutDto(this DiagnosticUri uri, DiagnosticDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto);
+        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+    }
+
+    public static IEnumerable<DiagnosticDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory)
+    {
+        var diagnosticsDirectory = DiagnosticsDirectory.From(serviceDirectory);
+
+        return diagnosticsDirectory.ToDirectoryInfo()
+                                   .ListDirectories("*")
+                                   .Select(directoryInfo => DiagnosticName.From(directoryInfo.Name))
+                                   .Select(name => new DiagnosticDirectory { Parent = diagnosticsDirectory, Name = name });
+    }
+
+    public static IEnumerable<DiagnosticInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
+        ListDirectories(serviceDirectory)
+            .Select(directory => new DiagnosticInformationFile { Parent = directory })
+            .Where(informationFile => informationFile.ToFileInfo().Exists());
+
+    public static async ValueTask WriteDto(this DiagnosticInformationFile file, DiagnosticDto dto, CancellationToken cancellationToken)
+    {
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
+        await file.ToFileInfo().OverwriteWithBinaryData(content, cancellationToken);
+    }
+
+    public static async ValueTask<DiagnosticDto> ReadDto(this DiagnosticInformationFile file, CancellationToken cancellationToken)
+    {
+        var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
+        return content.ToObjectFromJson<DiagnosticDto>();
+    }
 }

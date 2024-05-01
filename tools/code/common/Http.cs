@@ -1,11 +1,17 @@
 ﻿using Azure;
 using Azure.Core;
 using Azure.Core.Pipeline;
+using LanguageExt;
+using LanguageExt.UnsafeValueAccess;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -16,6 +22,41 @@ namespace common;
 
 public static class HttpPipelineExtensions
 {
+    public static async ValueTask<BinaryData> GetContent(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryGetContent(uri, cancellationToken);
+
+        return either.IfLeft(response =>
+        {
+            using (response)
+            {
+                throw response.ToHttpRequestException(uri);
+            }
+        });
+    }
+
+    public static async ValueTask<Either<Response, BinaryData>> TryGetContent(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
+    {
+        using var request = pipeline.CreateRequest(uri, RequestMethod.Get);
+
+        var response = await pipeline.SendRequestAsync(request, cancellationToken);
+
+        if (response.IsError)
+        {
+            return response;
+        }
+        else
+        {
+            using (response)
+            {
+                return response.Content;
+            }
+        }
+    }
+
+    public static HttpRequestException ToHttpRequestException(this Response response, Uri requestUri) =>
+        new(message: $"HTTP request to URI {requestUri} failed with status code {response.Status}. Content is '{response.Content}'.", inner: null, statusCode: (HttpStatusCode)response.Status);
+
     public static async IAsyncEnumerable<JsonObject> ListJsonObjects(this HttpPipeline pipeline, Uri uri, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         Uri? nextLink = uri;
@@ -25,56 +66,166 @@ public static class HttpPipelineExtensions
             var responseJson = await pipeline.GetJsonObject(nextLink, cancellationToken);
 
             var values = responseJson.TryGetJsonArrayProperty("value")
-                                     .Map(jsonArray => jsonArray.Choose(node => node as JsonObject))
-                         ?? Enumerable.Empty<JsonObject>();
+                                     .IfLeft(() => new JsonArray())
+                                     .GetJsonObjects();
 
             foreach (var value in values)
             {
                 yield return value;
             }
 
-            nextLink = responseJson.TryGetStringProperty("nextLink")
-                                   .Map(x => new Uri(x));
+            nextLink = responseJson.TryGetAbsoluteUriProperty("nextLink")
+                                   .ValueUnsafe();
         }
     }
 
     public static async ValueTask<JsonObject> GetJsonObject(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
     {
-        var content = await pipeline.GetContent(uri, cancellationToken);
+        var either = await pipeline.TryGetJsonObject(uri, cancellationToken);
 
-        return content.ToObjectFromJson<JsonObject>();
+        return either.IfLeft(response =>
+        {
+            using (response)
+            {
+                throw response.ToHttpRequestException(uri);
+            }
+        });
     }
 
-    public static async ValueTask<BinaryData> GetContent(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
+    public static async ValueTask<Either<Response, JsonObject>> TryGetJsonObject(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
     {
-        var request = pipeline.CreateRequest(uri, RequestMethod.Get);
+        var either = await pipeline.TryGetContent(uri, cancellationToken);
 
+        return either.Map(content => content.ToObjectFromJson<JsonObject>());
+    }
+
+    public static async ValueTask DeleteResource(this HttpPipeline pipeline, Uri uri, bool waitForCompletion, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryDeleteResource(uri, waitForCompletion, cancellationToken);
+
+        either.IfLeft(response =>
+        {
+            using (response)
+            {
+                if (response.Status is not (int)HttpStatusCode.NotFound)
+                {
+                    throw response.ToHttpRequestException(uri);
+                }
+            }
+        });
+    }
+
+    public static async ValueTask<Either<Response, Unit>> TryDeleteResource(this HttpPipeline pipeline, Uri uri, bool waitForCompletion, CancellationToken cancellationToken)
+    {
+        using var request = pipeline.CreateRequest(uri, RequestMethod.Delete);
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
-        response.Validate(uri);
 
-        return response.Content;
+        if (response.IsError)
+        {
+            return response;
+        };
+
+        using (response)
+        {
+            if (waitForCompletion)
+            {
+                var operationResponse = await pipeline.WaitForLongRunningOperation(response, cancellationToken);
+                if (operationResponse.IsError)
+                {
+                    return operationResponse;
+                }
+                else
+                {
+                    using (operationResponse)
+                    {
+                        return Unit.Default;
+                    }
+                }
+            }
+            else
+            {
+                return Unit.Default;
+            }
+        }
     }
 
-    public static async ValueTask DeleteResource(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
+    public static async ValueTask PutContent(this HttpPipeline pipeline, Uri uri, BinaryData content, CancellationToken cancellationToken)
     {
-        var request = pipeline.CreateRequest(uri, RequestMethod.Delete);
-        var response = await pipeline.SendRequestAsync(request, cancellationToken);
-        response.Validate(uri);
+        var either = await pipeline.TryPutContent(uri, content, cancellationToken);
+
+#pragma warning disable CA1806 // Do not ignore method results
+        either.IfLeft(response => throw response.ToHttpRequestException(uri));
+#pragma warning restore CA1806 // Do not ignore method results
     }
 
-    public static async ValueTask PutResource(this HttpPipeline pipeline, Uri uri, JsonObject resource, CancellationToken cancellationToken)
+    public static async ValueTask<Either<Response, Unit>> TryPutContent(this HttpPipeline pipeline, Uri uri, BinaryData content, CancellationToken cancellationToken)
     {
-        var request = pipeline.CreateRequest(uri, RequestMethod.Put);
-        var resourceBytes = JsonSerializer.SerializeToUtf8Bytes(resource);
-        request.Content = RequestContent.Create(resourceBytes);
+        using var request = pipeline.CreateRequest(uri, RequestMethod.Put);
+        request.Content = RequestContent.Create(content);
         request.Headers.Add("Content-type", "application/json");
 
         var response = await pipeline.SendRequestAsync(request, cancellationToken);
-        response.Validate(uri);
-        await pipeline.WaitForLongRunningOperation(response, cancellationToken);
+        if (response.IsError)
+        {
+            return response;
+        };
+
+        using (response)
+        {
+            var operationResponse = await pipeline.WaitForLongRunningOperation(response, cancellationToken);
+            if (operationResponse.IsError)
+            {
+                return operationResponse;
+            }
+            else
+            {
+                using (operationResponse)
+                {
+                    return Unit.Default;
+                }
+            }
+        }
     }
 
-    private static Request CreateRequest(this HttpPipeline pipeline, Uri uri, RequestMethod requestMethod)
+    public static async ValueTask PatchContent(this HttpPipeline pipeline, Uri uri, BinaryData content, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryPatchContent(uri, content, cancellationToken);
+
+#pragma warning disable CA1806 // Do not ignore method results
+        either.IfLeft(response => throw response.ToHttpRequestException(uri));
+#pragma warning restore CA1806 // Do not ignore method results
+    }
+
+    public static async ValueTask<Either<Response, Unit>> TryPatchContent(this HttpPipeline pipeline, Uri uri, BinaryData content, CancellationToken cancellationToken)
+    {
+        using var request = pipeline.CreateRequest(uri, RequestMethod.Patch);
+        request.Content = RequestContent.Create(content);
+        request.Headers.Add("Content-type", "application/json");
+
+        var response = await pipeline.SendRequestAsync(request, cancellationToken);
+        if (response.IsError)
+        {
+            return response;
+        };
+
+        using (response)
+        {
+            var operationResponse = await pipeline.WaitForLongRunningOperation(response, cancellationToken);
+            if (operationResponse.IsError)
+            {
+                return operationResponse;
+            }
+            else
+            {
+                using (operationResponse)
+                {
+                    return Unit.Default;
+                }
+            }
+        }
+    }
+
+    public static Request CreateRequest(this HttpPipeline pipeline, Uri uri, RequestMethod requestMethod)
     {
         var request = pipeline.CreateRequest();
         request.Uri.Reset(uri);
@@ -83,14 +234,7 @@ public static class HttpPipelineExtensions
         return request;
     }
 
-    private static Response Validate(this Response response, Uri requestUri)
-    {
-        return response.IsError
-                ? throw new HttpRequestException(message: $"HTTP request to URI {requestUri} failed with status code {response.Status}. Content is '{response.Content}'.", inner: null, statusCode: (HttpStatusCode)response.Status)
-                : response;
-    }
-
-    private static async ValueTask WaitForLongRunningOperation(this HttpPipeline pipeline, Response response, CancellationToken cancellationToken)
+    private static async ValueTask<Response> WaitForLongRunningOperation(this HttpPipeline pipeline, Response response, CancellationToken cancellationToken)
     {
         var updatedResponse = response;
         while ((updatedResponse.Status == ((int)HttpStatusCode.Accepted))
@@ -108,9 +252,166 @@ public static class HttpPipelineExtensions
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
             }
 
-            var request = pipeline.CreateRequest(locationUri, RequestMethod.Get);
+            using var request = pipeline.CreateRequest(locationUri, RequestMethod.Get);
             updatedResponse = await pipeline.SendRequestAsync(request, cancellationToken);
-            updatedResponse.Validate(locationUri);
+            if (updatedResponse.IsError)
+            {
+                throw updatedResponse.ToHttpRequestException(locationUri);
+            }
         }
+
+        return updatedResponse;
+    }
+}
+
+public sealed class ILoggerHttpPipelinePolicy(ILogger logger) : HttpPipelinePolicy
+{
+    public override void Process(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
+    {
+        ProcessAsync(message, pipeline).AsTask().GetAwaiter().GetResult();
+    }
+
+    public override async ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
+    {
+        if (logger.IsEnabled(LogLevel.Trace))
+        {
+            logger.LogTrace("""
+                            Starting request
+                            Method: {HttpMethod}
+                            Uri: {Uri}
+                            Content: {RequestContent}
+                            """, message.Request.Method, message.Request.Uri, await GetRequestContent(message, message.CancellationToken));
+        }
+        else if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug("""
+                            Starting request
+                            Method: {HttpMethod}
+                            Uri: {Uri}
+                            """, message.Request.Method, message.Request.Uri);
+        }
+
+        var startTime = Stopwatch.GetTimestamp();
+        await ProcessNextAsync(message, pipeline);
+        var endTime = Stopwatch.GetTimestamp();
+        var duration = TimeSpan.FromSeconds((endTime - startTime) / (double)Stopwatch.Frequency);
+
+        if (logger.IsEnabled(LogLevel.Trace))
+        {
+            logger.LogTrace("""
+                            Received response
+                            Method: {HttpMethod}
+                            Uri: {Uri}
+                            Status code: {StatusCode}
+                            Duration (hh:mm:ss): {Duration}
+                            Content: {ResponseContent}
+                            """, message.Request.Method, message.Request.Uri, message.Response.Status, duration.ToString("c"), GetResponseContent(message));
+        }
+        else if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug("""
+                            Received response
+                            Method: {HttpMethod}
+                            Uri: {Uri}
+                            Status code: {StatusCode}
+                            Duration (hh:mm:ss): {Duration}
+                            """, message.Request.Method, message.Request.Uri, message.Response.Status, duration.ToString("c"));
+        }
+    }
+
+    private static async ValueTask<string> GetRequestContent(HttpMessage message, CancellationToken cancellationToken)
+    {
+        if (message.Request.Content is null)
+        {
+            return "<null>";
+        }
+        else if (HeaderIsJson(message.Request.Headers))
+        {
+            using var stream = new MemoryStream();
+            await message.Request.Content.WriteToAsync(stream, cancellationToken);
+            stream.Position = 0;
+            var data = await BinaryData.FromStreamAsync(stream, cancellationToken);
+
+            return data.ToString();
+        }
+        else
+        {
+            return "<non-json>";
+        }
+    }
+
+    private static bool HeaderIsJson(IEnumerable<HttpHeader> headers) =>
+        headers.Any(header => header.Name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)
+                                && header.Value.Contains("application/json", StringComparison.OrdinalIgnoreCase));
+
+    private static string GetResponseContent(HttpMessage message) =>
+        message.Response.Content is null
+        ? "<null>"
+        : HeaderIsJson(message.Response.Headers)
+            ? message.Response.Content.ToString()
+            : "<non-json>";
+}
+
+public class CommonRetryPolicy : RetryPolicy
+{
+    protected override bool ShouldRetry(HttpMessage message, Exception? exception) =>
+        base.ShouldRetry(message, exception) || ShouldRetryInner(message, exception);
+
+    protected override async ValueTask<bool> ShouldRetryAsync(HttpMessage message, Exception? exception) =>
+        await base.ShouldRetryAsync(message, exception) || ShouldRetryInner(message, exception);
+
+    private static bool ShouldRetryInner(HttpMessage message, Exception? exception)
+    {
+        try
+        {
+            return
+                (message, exception) switch
+                {
+                    ({ Response.Status: 422 or 409 }, _) when HasManagementApiRequestFailedError(message.Response) => true,
+                    ({ Response.Status: 412 }, _) => true,
+                    _ => false
+                };
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasManagementApiRequestFailedError(Response response) =>
+        TryGetErrorCode(response)
+            .Where(code => code.Equals("ManagementApiRequestFailed", StringComparison.OrdinalIgnoreCase))
+            .IsSome;
+
+    private static Option<string> TryGetErrorCode(Response response)
+    {
+        try
+        {
+            return response.Content
+                           .ToObjectFromJson<JsonObject>()
+                           .TryGetJsonObjectProperty("error")
+                           .Bind(error => error.TryGetStringProperty("code"))
+                           .ToOption();
+        }
+        catch (Exception exception) when (exception is ArgumentNullException or NotSupportedException or JsonException)
+        {
+            return Option<string>.None;
+        }
+    }
+}
+
+public class TelemetryPolicy(Version version) : HttpPipelinePolicy
+{
+    public override void Process(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
+    {
+        ProcessAsync(message, pipeline).AsTask().GetAwaiter().GetResult();
+    }
+
+    public override async ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
+    {
+        var header = new ProductHeaderValue("apimanagement-apiops", version.ToString());
+        message.Request.Headers.Add(HttpHeader.Names.UserAgent, header.ToString());
+
+        await ProcessNextAsync(message, pipeline);
     }
 }

@@ -1,158 +1,231 @@
-﻿using System;
+﻿using Azure.Core.Pipeline;
+using Flurl;
+using LanguageExt;
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using System.Reflection.Metadata.Ecma335;
-using System.Text;
-using System.Text.Json.Nodes;
+using System.Net;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace common
+namespace common;
+
+public sealed record SubscriptionName : ResourceName
 {
-    public sealed record SubscriptionsUri : IArtifactUri
-    {
-        public Uri Uri { get; }
+    private SubscriptionName(string value) : base(value) { }
 
-        public SubscriptionsUri(ServiceUri serviceUri)
+    public static SubscriptionName From(string value) => new(value);
+}
+
+public sealed record SubscriptionsUri : ResourceUri
+{
+    public required ManagementServiceUri ServiceUri { get; init; }
+
+    private static string PathSegment { get; } = "subscriptions";
+
+    protected override Uri Value => ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
+
+    public static SubscriptionsUri From(ManagementServiceUri serviceUri) =>
+        new() { ServiceUri = serviceUri };
+}
+
+public sealed record SubscriptionUri : ResourceUri
+{
+    public required SubscriptionsUri Parent { get; init; }
+    public required SubscriptionName Name { get; init; }
+
+    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+
+    public static SubscriptionUri From(SubscriptionName name, ManagementServiceUri serviceUri) =>
+        new()
         {
-            Uri = serviceUri.AppendPath("subscriptions");
-        }
-    }
-    public sealed record SubscriptionsDirectory : IArtifactDirectory
-    {
-        public static string Name { get; } = "subscriptions";
+            Parent = SubscriptionsUri.From(serviceUri),
+            Name = name
+        };
+}
 
-        public ArtifactPath Path { get; }
+public sealed record SubscriptionsDirectory : ResourceDirectory
+{
+    public required ManagementServiceDirectory ServiceDirectory { get; init; }
 
-        public ServiceDirectory ServiceDirectory { get; }
+    private static string Name { get; } = "subscriptions";
 
-        public SubscriptionsDirectory(ServiceDirectory serviceDirectory)
+    protected override DirectoryInfo Value =>
+        ServiceDirectory.ToDirectoryInfo().GetChildDirectory(Name);
+
+    public static SubscriptionsDirectory From(ManagementServiceDirectory serviceDirectory) =>
+        new() { ServiceDirectory = serviceDirectory };
+
+    public static Option<SubscriptionsDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        directory is not null &&
+        directory.Name == Name &&
+        directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
+            ? new SubscriptionsDirectory { ServiceDirectory = serviceDirectory }
+            : Option<SubscriptionsDirectory>.None;
+}
+
+public sealed record SubscriptionDirectory : ResourceDirectory
+{
+    public required SubscriptionsDirectory Parent { get; init; }
+
+    public required SubscriptionName Name { get; init; }
+
+    protected override DirectoryInfo Value =>
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+
+    public static SubscriptionDirectory From(SubscriptionName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
         {
-            Path = serviceDirectory.Path.Append(Name);
-            ServiceDirectory = serviceDirectory;
-        }
-    }
+            Parent = SubscriptionsDirectory.From(serviceDirectory),
+            Name = name
+        };
 
-    public sealed record SubscriptionName
-    {
-        private readonly string value;
-
-        public SubscriptionName(string value)
+    public static Option<SubscriptionDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
+        from parent in SubscriptionsDirectory.TryParse(directory?.Parent, serviceDirectory)
+        select new SubscriptionDirectory
         {
-            if (string.IsNullOrWhiteSpace(value))
+            Parent = parent,
+            Name = SubscriptionName.From(directory!.Name)
+        };
+}
+
+public sealed record SubscriptionInformationFile : ResourceFile
+{
+    public required SubscriptionDirectory Parent { get; init; }
+    private static string Name { get; } = "subscriptionInformation.json";
+
+    protected override FileInfo Value =>
+        Parent.ToDirectoryInfo().GetChildFile(Name);
+
+    public static SubscriptionInformationFile From(SubscriptionName name, ManagementServiceDirectory serviceDirectory) =>
+        new()
+        {
+            Parent = new SubscriptionDirectory
             {
-                throw new ArgumentException($"Subscription name cannot be null or whitespace.", nameof(value));
+                Parent = SubscriptionsDirectory.From(serviceDirectory),
+                Name = name
             }
+        };
 
-            this.value = value;
-        }
+    public static Option<SubscriptionInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
+        file is not null && file.Name == Name
+            ? from parent in SubscriptionDirectory.TryParse(file.Directory, serviceDirectory)
+              select new SubscriptionInformationFile { Parent = parent }
+            : Option<SubscriptionInformationFile>.None;
+}
 
-        public override string ToString() => value;
+public sealed record SubscriptionDto
+{
+    [JsonPropertyName("properties")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public required SubscriptionContract Properties { get; init; }
+
+    public sealed record SubscriptionContract
+    {
+        [JsonPropertyName("displayName")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? DisplayName { get; init; }
+
+        [JsonPropertyName("scope")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Scope { get; init; }
+
+        [JsonPropertyName("allowTracing")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? AllowTracing { get; init; }
+
+        [JsonPropertyName("ownerId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? OwnerId { get; init; }
+
+        [JsonPropertyName("primaryKey")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? PrimaryKey { get; init; }
+
+        [JsonPropertyName("secondaryKey")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? SecondaryKey { get; init; }
+
+        [JsonPropertyName("state")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? State { get; init; }
+    }
+}
+
+public static class SubscriptionModule
+{
+    public static async ValueTask DeleteAll(this SubscriptionsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await uri.ListNames(pipeline, cancellationToken)
+                 .IterParallel(async name => await SubscriptionUri.From(name, uri.ServiceUri)
+                                                                .Delete(pipeline, cancellationToken),
+                               cancellationToken);
+
+    public static IAsyncEnumerable<SubscriptionName> ListNames(this SubscriptionsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+                .Select(jsonObject => jsonObject.GetStringProperty("name"))
+                .Select(SubscriptionName.From);
+
+    public static IAsyncEnumerable<(SubscriptionName Name, SubscriptionDto Dto)> List(this SubscriptionsUri subscriptionsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        subscriptionsUri.ListNames(pipeline, cancellationToken)
+                        .SelectAwait(async name =>
+                        {
+                            var uri = new SubscriptionUri { Parent = subscriptionsUri, Name = name };
+                            var dto = await uri.GetDto(pipeline, cancellationToken);
+                            return (name, dto);
+                        });
+
+    public static async ValueTask<SubscriptionDto> GetDto(this SubscriptionUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
+        return content.ToObjectFromJson<SubscriptionDto>();
     }
 
-    public sealed record SubscriptionUri : IArtifactUri
+    public static async ValueTask<Option<SubscriptionDto>> TryGetDto(this SubscriptionUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        public Uri Uri { get; }
+        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
 
-        public SubscriptionUri(SubscriptionName subscriptionName, SubscriptionsUri subscriptionsUri)
-        {
-            Uri = subscriptionsUri.AppendPath(subscriptionName.ToString());
-        }
+        return either.Map(content => content.ToObjectFromJson<SubscriptionDto>())
+                     .Match(Option<SubscriptionDto>.Some,
+                            response => response.Status == (int)HttpStatusCode.NotFound
+                                          ? Option<SubscriptionDto>.None
+                                          : throw response.ToHttpRequestException(uri.ToUri()));
     }
 
-    public sealed record SubscriptionDirectory : IArtifactDirectory
+    public static async ValueTask Delete(this SubscriptionUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
+
+    public static async ValueTask PutDto(this SubscriptionUri uri, SubscriptionDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        public ArtifactPath Path { get; }
-
-        public SubscriptionsDirectory SubscriptionsDirectory { get; }
-
-        public SubscriptionDirectory(SubscriptionName subscriptionName, SubscriptionsDirectory subscriptionsDirectory)
-        {
-            Path = subscriptionsDirectory.Path.Append(subscriptionName.ToString());
-            SubscriptionsDirectory = subscriptionsDirectory;
-        }
+        var content = BinaryData.FromObjectAsJson(dto);
+        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
     }
 
-    public sealed record SubscriptionInformationFile : IArtifactFile
+    public static IEnumerable<SubscriptionDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory)
     {
-        public static string Name { get; } = "subscriptionInformation.json";
+        var subscriptionsDirectory = SubscriptionsDirectory.From(serviceDirectory);
 
-        public ArtifactPath Path { get; }
-
-        public SubscriptionDirectory SubscriptionDirectory { get; }
-
-        public SubscriptionInformationFile(SubscriptionDirectory subscriptionDirectory)
-        {
-            Path = subscriptionDirectory.Path.Append(Name);
-            SubscriptionDirectory = subscriptionDirectory;
-        }
+        return subscriptionsDirectory.ToDirectoryInfo()
+                                     .ListDirectories("*")
+                                     .Select(directoryInfo => SubscriptionName.From(directoryInfo.Name))
+                                     .Select(name => new SubscriptionDirectory { Parent = subscriptionsDirectory, Name = name });
     }
 
-    public sealed record SubscriptionModel
+    public static IEnumerable<SubscriptionInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
+        ListDirectories(serviceDirectory)
+            .Select(directory => new SubscriptionInformationFile { Parent = directory })
+            .Where(informationFile => informationFile.ToFileInfo().Exists());
+
+    public static async ValueTask WriteDto(this SubscriptionInformationFile file, SubscriptionDto dto, CancellationToken cancellationToken)
     {
-        public required string Name { get; init; }
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
+        await file.ToFileInfo().OverwriteWithBinaryData(content, cancellationToken);
+    }
 
-        public required SubscriptionContractProperties Properties { get; init; }
-
-        public sealed record SubscriptionContractProperties
-        {
-            public string? DisplayName { get; init; }
-            public bool? AllowTracing { get; init; }
-            public string? OwnerId { get; init; }
-            public string? PrimaryKey { get; init; }
-            public string? Scope { get; init; }
-            public string? SecondaryKey { get; init; }
-            public string? State { get; init; }
-
-            public JsonObject Serialize() =>
-                new JsonObject()
-                    .AddPropertyIfNotNull("displayName", DisplayName)
-                    .AddPropertyIfNotNull("allowTracing", AllowTracing)
-                    .AddPropertyIfNotNull("ownerId", OwnerId)
-                    .AddPropertyIfNotNull("primaryKey", PrimaryKey)
-                    .AddPropertyIfNotNull("scope", GetGenericSubscriptionScope(Scope))
-                    .AddPropertyIfNotNull("secondaryKey", SecondaryKey)
-                    .AddPropertyIfNotNull("state", State);
-
-            public static SubscriptionContractProperties Deserialize(JsonObject jsonObject) =>
-                new()
-                {
-                    DisplayName = jsonObject.TryGetStringProperty("displayName"),
-                    AllowTracing = jsonObject.TryGetBoolProperty("allowTracing"),
-                    OwnerId = jsonObject.TryGetStringProperty("ownerId"),
-                    PrimaryKey = jsonObject.TryGetStringProperty("primaryKey"),
-                    Scope = jsonObject.TryGetStringProperty("scope"),
-                    SecondaryKey = jsonObject.TryGetStringProperty("secondaryKey"),
-                    State = jsonObject.TryGetStringProperty("state")
-                };
-        }
-        public static string GetGenericSubscriptionScope(string? fullScope)
-        {
-            var splittedScope = fullScope is not null ? fullScope.Split('/').Select((uriPart, index) => new { uriPart, index }) : throw new ArgumentNullException("Api Scope cannot be null");
-            var splittedSubscriptionScope = splittedScope.Where(split => split.index >= splittedScope.Count() - 2).Select(split => split.uriPart).ToArray();
-            if (!splittedSubscriptionScope.First().Equals("apis")
-                && !splittedSubscriptionScope.First().Equals("products"))
-            {
-                if (splittedSubscriptionScope.Last().Equals("apis"))
-                {
-                    return "/apis";
-                }
-                throw new ArgumentException("Subscription scope should be one of '/apis', '/apis/{apiId}', '/products/{productId}'");
-            }
-            return string.Format("/{0}", string.Join('/', splittedSubscriptionScope));
-        }
-
-        public JsonObject Serialize() =>
-            new JsonObject()
-                .AddProperty("properties", Properties.Serialize());
-
-        public static SubscriptionModel Deserialize(SubscriptionName name, JsonObject jsonObject) =>
-            new()
-            {
-                Name = jsonObject.TryGetStringProperty("name") ?? name.ToString(),
-                Properties = jsonObject.GetJsonObjectProperty("properties")
-                                       .Map(SubscriptionContractProperties.Deserialize)!
-            };
-
+    public static async ValueTask<SubscriptionDto> ReadDto(this SubscriptionInformationFile file, CancellationToken cancellationToken)
+    {
+        var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
+        return content.ToObjectFromJson<SubscriptionDto>();
     }
 }

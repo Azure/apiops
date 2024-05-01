@@ -1,66 +1,122 @@
-﻿using common;
+﻿using Azure.Core.Pipeline;
+using common;
+using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal static class Gateway
+internal delegate ValueTask ExtractGateways(CancellationToken cancellationToken);
+
+file delegate IAsyncEnumerable<(GatewayName Name, GatewayDto Dto)> ListGateways(CancellationToken cancellationToken);
+
+file delegate bool ShouldExtractGateway(GatewayName name);
+
+file delegate ValueTask WriteGatewayArtifacts(GatewayName name, GatewayDto dto, CancellationToken cancellationToken);
+
+file delegate ValueTask WriteGatewayInformationFile(GatewayName name, GatewayDto dto, CancellationToken cancellationToken);
+
+file sealed class ExtractGatewaysHandler(ListGateways list,
+                                         ShouldExtractGateway shouldExtract,
+                                         WriteGatewayArtifacts writeArtifacts,
+                                         ExtractGatewayApis extractGatewayApis)
 {
-    public static async ValueTask ExportAll(ServiceDirectory serviceDirectory, ServiceUri serviceUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    public async ValueTask Handle(CancellationToken cancellationToken) =>
+        await list(cancellationToken)
+                .Where(gateway => shouldExtract(gateway.Name))
+                .IterParallel(async gateway => await ExtractGateway(gateway.Name, gateway.Dto, cancellationToken),
+                              cancellationToken);
+
+    private async ValueTask ExtractGateway(GatewayName name, GatewayDto dto, CancellationToken cancellationToken)
     {
-        try
-        {
-            await List(serviceUri, listRestResources, cancellationToken)
-                    .ForEachParallel(async gatewayName => await Export(serviceDirectory, serviceUri, gatewayName, apiNamesToExport, listRestResources, getRestResource, logger, cancellationToken),
-                                     cancellationToken);
-        }
-        catch (HttpRequestException exception) when (exception.StatusCode is HttpStatusCode.BadRequest && exception.Message.Contains("MethodNotAllowedInPricingTier", StringComparison.OrdinalIgnoreCase))
-        {
-            await ValueTask.CompletedTask;
-        }
+        await writeArtifacts(name, dto, cancellationToken);
+        await extractGatewayApis(name, cancellationToken);
+    }
+}
+
+file sealed class ListGatewaysHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    public IAsyncEnumerable<(GatewayName, GatewayDto)> Handle(CancellationToken cancellationToken) =>
+        GatewaysUri.From(serviceUri).List(pipeline, cancellationToken);
+}
+
+file sealed class ShouldExtractGatewayHandler(ShouldExtractFactory shouldExtractFactory)
+{
+    public bool Handle(GatewayName name)
+    {
+        var shouldExtract = shouldExtractFactory.Create<GatewayName>();
+        return shouldExtract(name);
+    }
+}
+
+file sealed class WriteGatewayArtifactsHandler(WriteGatewayInformationFile writeInformationFile)
+{
+    public async ValueTask Handle(GatewayName name, GatewayDto dto, CancellationToken cancellationToken)
+    {
+        await writeInformationFile(name, dto, cancellationToken);
+    }
+}
+
+file sealed class WriteGatewayInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(GatewayName name, GatewayDto dto, CancellationToken cancellationToken)
+    {
+        var informationFile = GatewayInformationFile.From(name, serviceDirectory);
+
+        logger.LogInformation("Writing gateway information file {InformationFile}", informationFile);
+        await informationFile.WriteDto(dto, cancellationToken);
+    }
+}
+
+internal static class GatewayServices
+{
+    public static void ConfigureExtractGateways(IServiceCollection services)
+    {
+        ConfigureListGateways(services);
+        ConfigureShouldExtractGateway(services);
+        ConfigureWriteGatewayArtifacts(services);
+        GatewayApiServices.ConfigureExtractGatewayApis(services);
+
+        services.TryAddSingleton<ExtractGatewaysHandler>();
+        services.TryAddSingleton<ExtractGateways>(provider => provider.GetRequiredService<ExtractGatewaysHandler>().Handle);
     }
 
-    private static IAsyncEnumerable<GatewayName> List(ServiceUri serviceUri, ListRestResources listRestResources, CancellationToken cancellationToken)
+    private static void ConfigureListGateways(IServiceCollection services)
     {
-        var gatewaysUri = new GatewaysUri(serviceUri);
-        var gatewayJsonObjects = listRestResources(gatewaysUri.Uri, cancellationToken);
-
-        return gatewayJsonObjects.Select(json => json.GetStringProperty("name"))
-                                 .Select(name => new GatewayName(name));
+        services.TryAddSingleton<ListGatewaysHandler>();
+        services.TryAddSingleton<ListGateways>(provider => provider.GetRequiredService<ListGatewaysHandler>().Handle);
     }
 
-    private static async ValueTask Export(ServiceDirectory serviceDirectory, ServiceUri serviceUri, GatewayName gatewayName, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureShouldExtractGateway(IServiceCollection services)
     {
-        var gatewaysDirectory = new GatewaysDirectory(serviceDirectory);
-        var gatewayDirectory = new GatewayDirectory(gatewayName, gatewaysDirectory);
-
-        var gatewaysUri = new GatewaysUri(serviceUri);
-        var gatewayUri = new GatewayUri(gatewayName, gatewaysUri);
-
-        await ExportInformationFile(gatewayDirectory, gatewayUri, gatewayName, getRestResource, logger, cancellationToken);
-        await ExportApis(gatewayDirectory, gatewayUri, apiNamesToExport, listRestResources, logger, cancellationToken);
+        services.TryAddSingleton<ShouldExtractGatewayHandler>();
+        services.TryAddSingleton<ShouldExtractGateway>(provider => provider.GetRequiredService<ShouldExtractGatewayHandler>().Handle);
     }
 
-    private static async ValueTask ExportInformationFile(GatewayDirectory gatewayDirectory, GatewayUri gatewayUri, GatewayName gatewayName, GetRestResource getRestResource, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureWriteGatewayArtifacts(IServiceCollection services)
     {
-        var gatewayInformationFile = new GatewayInformationFile(gatewayDirectory);
+        ConfigureWriteGatewayInformationFile(services);
 
-        var responseJson = await getRestResource(gatewayUri.Uri, cancellationToken);
-        var gatewayModel = GatewayModel.Deserialize(gatewayName, responseJson);
-        var contentJson = gatewayModel.Serialize();
-
-        logger.LogInformation("Writing gateway information file {filePath}...", gatewayInformationFile.Path);
-        await gatewayInformationFile.OverwriteWithJson(contentJson, cancellationToken);
+        services.TryAddSingleton<WriteGatewayArtifactsHandler>();
+        services.TryAddSingleton<WriteGatewayArtifacts>(provider => provider.GetRequiredService<WriteGatewayArtifactsHandler>().Handle);
     }
 
-    private static async ValueTask ExportApis(GatewayDirectory gatewayDirectory, GatewayUri gatewayUri, IEnumerable<string>? apiNamesToExport, ListRestResources listRestResources, ILogger logger, CancellationToken cancellationToken)
+    private static void ConfigureWriteGatewayInformationFile(IServiceCollection services)
     {
-        await GatewayApi.ExportAll(gatewayDirectory, gatewayUri, apiNamesToExport, listRestResources, logger, cancellationToken);
+        services.TryAddSingleton<WriteGatewayInformationFileHandler>();
+        services.TryAddSingleton<WriteGatewayInformationFile>(provider => provider.GetRequiredService<WriteGatewayInformationFileHandler>().Handle);
     }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
+        loggerFactory.CreateLogger("GatewayExtractor");
 }

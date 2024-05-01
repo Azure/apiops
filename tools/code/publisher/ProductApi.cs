@@ -1,189 +1,267 @@
+﻿using AsyncKeyedLock;
+using Azure.Core.Pipeline;
 using common;
+using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using MoreLinq;
-using MoreLinq.Extensions;
-using System.Collections.Generic;
+using System;
 using System.Collections.Immutable;
 using System.IO;
-using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using System;
-using System.Net.Http;
 
 namespace publisher;
 
-internal static class ProductApi
+internal delegate Option<PublisherAction> FindProductApiAction(FileInfo file);
+
+file delegate Option<(ApiName Name, ProductName ProductName)> TryParseApiName(FileInfo file);
+
+file delegate ValueTask ProcessProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
+
+file delegate bool IsApiNameInSourceControl(ApiName name, ProductName productName);
+
+file delegate ValueTask<Option<ProductApiDto>> FindProductApiDto(ApiName name, ProductName productName, CancellationToken cancellationToken);
+
+internal delegate ValueTask PutProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask PutProductApiInApim(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken);
+
+file delegate ValueTask DeleteProductApiFromApim(ApiName name, ProductName productName, CancellationToken cancellationToken);
+
+file sealed class FindProductApiActionHandler(TryParseApiName tryParseName, ProcessProductApi processProductApi)
 {
-    public static async ValueTask ProcessDeletedArtifacts(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await Put(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
-    }
+    public Option<PublisherAction> Handle(FileInfo file) =>
+        from names in tryParseName(file)
+        select GetAction(names.Name, names.ProductName);
 
-    private static async ValueTask Put(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        await GetArtifactProductApis(files, configurationJson, serviceDirectory)
-                .ForEachParallel(async product => await Put(product.ProductName, product.ApiNames, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken),
-                                 cancellationToken);
-    }
+    private PublisherAction GetAction(ApiName name, ProductName productName) =>
+        async cancellationToken => await processProductApi(name, productName, cancellationToken);
+}
 
-    private static IEnumerable<(ProductName ProductName, ImmutableList<ApiName> ApiNames)> GetArtifactProductApis(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory)
-    {
-        var configurationArtifacts = GetConfigurationProductApis(configurationJson);
+file sealed class TryParseApiNameHandler(ManagementServiceDirectory serviceDirectory)
+{
+    public Option<(ApiName, ProductName)> Handle(FileInfo file) =>
+        TryParseNameFromApiInformationFile(file);
 
-        return GetProductApisFiles(files, serviceDirectory)
-                .Where(file => File.Exists(file.Path.ToString()))
-                .Select(file =>
-                {
-                    var productName = GetProductName(file);
-                    var apiNames = file.ReadAsJsonArray()
-                                    .Choose(node => node as JsonObject)
-                                    .Choose(apiJsonObject => apiJsonObject.TryGetStringProperty("name"))
-                                    .Select(name => new ApiName(name))
-                                    .ToImmutableList();
-                    return (ProductName: productName, ApiNames: apiNames);
-                })
-                .LeftJoin(configurationArtifacts,
-                          keySelector: artifact => artifact.ProductName,
-                          bothSelector: (fileArtifact, configurationArtifact) => (fileArtifact.ProductName, configurationArtifact.ApiNames));
-    }
+    private Option<(ApiName, ProductName)> TryParseNameFromApiInformationFile(FileInfo file) =>
+        from informationFile in ProductApiInformationFile.TryParse(file, serviceDirectory)
+        select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
+}
 
-    private static IEnumerable<ProductApisFile> GetProductApisFiles(IReadOnlyCollection<FileInfo> files, ServiceDirectory serviceDirectory)
-    {
-        return files.Choose(file => TryGetApisFile(file, serviceDirectory));
-    }
+/// <summary>
+/// Limits the number of simultaneous operations.
+/// </summary>
+file sealed class ProductApiSemaphore : IDisposable
+{
+    private readonly AsyncKeyedLocker<(ApiName, ProductName)> locker = new();
+    private ImmutableHashSet<(ApiName, ProductName)> processedNames = [];
 
-    private static ProductApisFile? TryGetApisFile(FileInfo? file, ServiceDirectory serviceDirectory)
+    /// <summary>
+    /// Runs the provided action, ensuring that each name is processed only once.
+    /// </summary>
+    public async ValueTask Run(ApiName name, ProductName productName, Func<ApiName, ProductName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
-        if (file is null || file.Name.Equals(ProductApisFile.Name) is false)
+        // Do not process the same name simultaneously
+        using var _ = await locker.LockAsync((name, productName), cancellationToken);
+
+        // Only process each name once
+        if (processedNames.Contains((name, productName)))
         {
-            return null;
+            return;
         }
 
-        var productDirectory = Product.TryGetProductDirectory(file.Directory, serviceDirectory);
+        await action(name, productName, cancellationToken);
 
-        return productDirectory is null
-                ? null
-                : new ProductApisFile(productDirectory);
+        ImmutableInterlocked.Update(ref processedNames, set => set.Add((name, productName)));
     }
 
-    private static ProductName GetProductName(ProductApisFile file)
+    public void Dispose() => locker.Dispose();
+}
+
+file sealed class ProcessProductApiHandler(IsApiNameInSourceControl isNameInSourceControl, PutProductApi put, DeleteProductApi delete) : IDisposable
+{
+    private readonly ProductApiSemaphore semaphore = new();
+
+    public async ValueTask Handle(ApiName name, ProductName productName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, productName, HandleInner, cancellationToken);
+
+    private async ValueTask HandleInner(ApiName name, ProductName productName, CancellationToken cancellationToken)
     {
-        return new(file.ProductDirectory.GetName());
-    }
-
-    private static IEnumerable<(ProductName ProductName, ImmutableList<ApiName> ApiNames)> GetConfigurationProductApis(JsonObject configurationJson)
-    {
-        return configurationJson.TryGetJsonArrayProperty("products")
-                                .IfNullEmpty()
-                                .Choose(node => node as JsonObject)
-                                .Choose<JsonObject, (ProductName ProductName, ImmutableList<ApiName> ApiNames)>(productJsonObject =>
-                                {
-                                    var productNameString = productJsonObject.TryGetStringProperty("name");
-                                    if (productNameString is null)
-                                    {
-                                        return default;
-                                    }
-
-                                    var productName = new ProductName(productNameString);
-
-                                    var apisJsonArray = productJsonObject.TryGetJsonArrayProperty("apis");
-                                    if (apisJsonArray is null)
-                                    {
-                                        return default;
-                                    }
-
-                                    if (apisJsonArray.Any() is false)
-                                    {
-                                        return (productName, ImmutableList.Create<ApiName>());
-                                    }
-
-                                    // If APIs are defined in configuration but none have a 'name' property, skip this resource
-                                    var apiNames = apisJsonArray.Choose(node => node as JsonObject)
-                                                                .Choose(apiJsonObject => apiJsonObject.TryGetStringProperty("name"))
-                                                                .Select(name => new ApiName(name))
-                                                                .ToImmutableList();
-                                    return apiNames.Any() ? (productName, apiNames) : default;
-                                });
-    }
-
-    private static async ValueTask Put(ProductName productName, IReadOnlyCollection<ApiName> apiNames, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        var productUri = GetProductUri(productName, serviceUri);
-        var productApisUri = new ProductApisUri(productUri);
-        
-        var existingApiNames = await listRestResources(productApisUri.Uri, cancellationToken)
-                                        .Select(apiJsonObject => apiJsonObject.GetStringProperty("name"))
-                                        .Select(name => new ApiName(name))
-                                        .ToListAsync(cancellationToken);
-
-        var apiNamesToPut = apiNames.Except(existingApiNames);
-        var apiNamesToRemove = existingApiNames.Except(apiNames);
-
-
-        await apiNamesToRemove.ForEachParallel(async apiName =>
+        if (isNameInSourceControl(name, productName))
         {
-            logger.LogInformation("Removing API {apiName} in product {productName}...", apiName, productName);
-            await Delete(apiName, productUri, deleteRestResource, cancellationToken);
-        }, cancellationToken);
-
-        await apiNamesToPut.ForEachParallel(async apiName =>
+            await put(name, productName, cancellationToken);
+        }
+        else
         {
-            logger.LogInformation("Putting API {apiName} in product {productName}...", apiName, productName);
-            await Put(apiName, productUri, putRestResource,logger, cancellationToken);
-        }, cancellationToken);
-    }
-
-    private static ProductUri GetProductUri(ProductName productName, ServiceUri serviceUri)
-    {
-        var productsUri = new ProductsUri(serviceUri);
-        return new ProductUri(productName, productsUri);
-    }
-
-    private static async ValueTask Delete(ApiName apiName, ProductUri productUri, DeleteRestResource deleteRestResource, CancellationToken cancellationToken)
-    {
-        var productApisUri = new ProductApisUri(productUri);
-        var productApiUri = new ProductApiUri(apiName, productApisUri);
-
-        await deleteRestResource(productApiUri.Uri, cancellationToken);
-    }
-
-    private static async ValueTask Put(ApiName apiName, ProductUri productUri, PutRestResource putRestResource, ILogger logger, CancellationToken cancellationToken)
-    {
-        var productApisUri = new ProductApisUri(productUri);
-        var productApiUri = new ProductApiUri(apiName, productApisUri);
-
-        int retryCount = 0;
-        bool retry = true;
-        while (retry)
-        {
-            try
-            {
-                await putRestResource(productApiUri.Uri, new JsonObject(), cancellationToken);
-                retry = false; // No exception occurred, so no need to retry
-            }
-            catch (HttpRequestException httpRequestException) when (httpRequestException.Message.Contains("API cannot be added to more than one open products"))
-            {
-                retryCount++;
-                if (retryCount <= 3)
-                {
-                    // Log the retry attempt
-                    logger.LogWarning("Retrying API put operation for {apiName}. Retry attempt: {retryCount}", apiName, retryCount);
-                    // Wait for a certain duration before retrying
-                    await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryCount)), cancellationToken);
-                }
-                else
-                {
-                    // Retry limit reached, throw the exception
-                    throw;
-                }
-            }
+            await delete(name, productName, cancellationToken);
         }
     }
 
-    public static async ValueTask ProcessArtifactsToPut(IReadOnlyCollection<FileInfo> files, JsonObject configurationJson, ServiceDirectory serviceDirectory, ServiceUri serviceUri, ListRestResources listRestResources, PutRestResource putRestResource, DeleteRestResource deleteRestResource, ILogger logger, CancellationToken cancellationToken)
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class IsApiNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
+{
+    public bool Handle(ApiName name, ProductName productName) =>
+        DoesApiInformationFileExist(name, productName);
+
+    private bool DoesApiInformationFileExist(ApiName name, ProductName productName)
     {
-        await Put(files, configurationJson, serviceDirectory, serviceUri, listRestResources, putRestResource, deleteRestResource, logger, cancellationToken);
+        var artifactFiles = getArtifactFiles();
+        var informationFile = ProductApiInformationFile.From(name, productName, serviceDirectory);
+
+        return artifactFiles.Contains(informationFile.ToFileInfo());
     }
+}
+
+file sealed class PutProductApiHandler(FindProductApiDto findDto, PutProduct putProduct, PutApi putApi, PutProductApiInApim putInApim) : IDisposable
+{
+    private readonly ProductApiSemaphore semaphore = new();
+
+    public async ValueTask Handle(ApiName name, ProductName productName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, productName, Put, cancellationToken);
+
+    private async ValueTask Put(ApiName name, ProductName productName, CancellationToken cancellationToken)
+    {
+        var dtoOption = await findDto(name, productName, cancellationToken);
+        await dtoOption.IterTask(async dto => await Put(name, dto, productName, cancellationToken));
+    }
+
+    private async ValueTask Put(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken)
+    {
+        await putProduct(productName, cancellationToken);
+        await putApi(name, cancellationToken);
+        await putInApim(name, dto, productName, cancellationToken);
+    }
+
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class FindProductApiDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents)
+{
+    public async ValueTask<Option<ProductApiDto>> Handle(ApiName name, ProductName productName, CancellationToken cancellationToken)
+    {
+        var informationFile = ProductApiInformationFile.From(name, productName, serviceDirectory);
+        var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
+
+        return from contents in contentsOption
+               select contents.ToObjectFromJson<ProductApiDto>();
+    }
+}
+
+file sealed class PutProductApiInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Adding api {ApiName} to product {ProductName}...", name, productName);
+        await ProductApiUri.From(name, productName, serviceUri).PutDto(dto, pipeline, cancellationToken);
+    }
+}
+
+file sealed class DeleteProductApiHandler(DeleteProductApiFromApim deleteFromApim) : IDisposable
+{
+    private readonly ProductApiSemaphore semaphore = new();
+
+    public async ValueTask Handle(ApiName name, ProductName productName, CancellationToken cancellationToken) =>
+        await semaphore.Run(name, productName, Delete, cancellationToken);
+
+    private async ValueTask Delete(ApiName name, ProductName productName, CancellationToken cancellationToken)
+    {
+        await deleteFromApim(name, productName, cancellationToken);
+    }
+
+    public void Dispose() => semaphore.Dispose();
+}
+
+file sealed class DeleteProductApiFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+{
+    private readonly ILogger logger = Common.GetLogger(loggerFactory);
+
+    public async ValueTask Handle(ApiName name, ProductName productName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Deleting api {ApiName} from product {ProductName}...", name, productName);
+        await ProductApiUri.From(name, productName, serviceUri).Delete(pipeline, cancellationToken);
+    }
+}
+
+internal static class ProductApiServices
+{
+    public static void ConfigureFindProductApiAction(IServiceCollection services)
+    {
+        ConfigureTryParseApiName(services);
+        ConfigureProcessProductApi(services);
+
+        services.TryAddSingleton<FindProductApiActionHandler>();
+        services.TryAddSingleton<FindProductApiAction>(provider => provider.GetRequiredService<FindProductApiActionHandler>().Handle);
+    }
+
+    private static void ConfigureTryParseApiName(IServiceCollection services)
+    {
+        services.TryAddSingleton<TryParseApiNameHandler>();
+        services.TryAddSingleton<TryParseApiName>(provider => provider.GetRequiredService<TryParseApiNameHandler>().Handle);
+    }
+
+    private static void ConfigureProcessProductApi(IServiceCollection services)
+    {
+        ConfigureIsApiNameInSourceControl(services);
+        ConfigurePutProductApi(services);
+        ConfigureDeleteProductApi(services);
+
+        services.TryAddSingleton<ProcessProductApiHandler>();
+        services.TryAddSingleton<ProcessProductApi>(provider => provider.GetRequiredService<ProcessProductApiHandler>().Handle);
+    }
+
+    private static void ConfigureIsApiNameInSourceControl(IServiceCollection services)
+    {
+        services.TryAddSingleton<IsApiNameInSourceControlHandler>();
+        services.TryAddSingleton<IsApiNameInSourceControl>(provider => provider.GetRequiredService<IsApiNameInSourceControlHandler>().Handle);
+    }
+
+    public static void ConfigurePutProductApi(IServiceCollection services)
+    {
+        ConfigureFindProductApiDto(services);
+        ConfigurePutProductApiInApim(services);
+        ProductServices.ConfigurePutProduct(services);
+        ApiServices.ConfigurePutApi(services);
+
+        services.TryAddSingleton<PutProductApiHandler>();
+        services.TryAddSingleton<PutProductApi>(provider => provider.GetRequiredService<PutProductApiHandler>().Handle);
+    }
+
+    private static void ConfigureFindProductApiDto(IServiceCollection services)
+    {
+        services.TryAddSingleton<FindProductApiDtoHandler>();
+        services.TryAddSingleton<FindProductApiDto>(provider => provider.GetRequiredService<FindProductApiDtoHandler>().Handle);
+    }
+
+    private static void ConfigurePutProductApiInApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<PutProductApiInApimHandler>();
+        services.TryAddSingleton<PutProductApiInApim>(provider => provider.GetRequiredService<PutProductApiInApimHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteProductApi(IServiceCollection services)
+    {
+        ConfigureDeleteProductApiFromApim(services);
+
+        services.TryAddSingleton<DeleteProductApiHandler>();
+        services.TryAddSingleton<DeleteProductApi>(provider => provider.GetRequiredService<DeleteProductApiHandler>().Handle);
+    }
+
+    private static void ConfigureDeleteProductApiFromApim(IServiceCollection services)
+    {
+        services.TryAddSingleton<DeleteProductApiFromApimHandler>();
+        services.TryAddSingleton<DeleteProductApiFromApim>(provider => provider.GetRequiredService<DeleteProductApiFromApimHandler>().Handle);
+    }
+}
+
+file static class Common
+{
+    public static ILogger GetLogger(ILoggerFactory factory) =>
+        factory.CreateLogger("ProductApiPublisher");
 }
