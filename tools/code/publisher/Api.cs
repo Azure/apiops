@@ -80,7 +80,7 @@ file sealed class TryParseApiNameHandler(ManagementServiceDirectory serviceDirec
 /// </summary>
 file sealed class ApiSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<ApiName> locker = new();
+    private readonly AsyncKeyedLocker<ApiName> locker = new(LockOptions.Default);
     private ImmutableHashSet<ApiName> processedNames = [];
 
     /// <summary>
@@ -89,7 +89,7 @@ file sealed class ApiSemaphore : IDisposable
     public async ValueTask Run(ApiName name, Func<ApiName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))

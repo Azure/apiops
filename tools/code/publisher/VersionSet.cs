@@ -59,7 +59,7 @@ file sealed class TryParseVersionSetNameHandler(ManagementServiceDirectory servi
 /// </summary>
 file sealed class VersionSetSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<VersionSetName> locker = new();
+    private readonly AsyncKeyedLocker<VersionSetName> locker = new(LockOptions.Default);
     private ImmutableHashSet<VersionSetName> processedNames = [];
 
     /// <summary>
@@ -68,7 +68,7 @@ file sealed class VersionSetSemaphore : IDisposable
     public async ValueTask Run(VersionSetName name, Func<VersionSetName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))
