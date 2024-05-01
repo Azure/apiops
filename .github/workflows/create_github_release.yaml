@@ -9,8 +9,57 @@ on:
         type: string
 
 jobs:
-  generate_extractor_artifacts:
-    name: Generate extractor artifacts
+#   generate_extractor_artifacts:
+#     name: Generate extractor artifacts
+#     strategy:
+#       matrix:
+#         dotnet-runtime: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, win-x64, osx-arm64, osx-x64]
+#     # Dynamically set the runner OS based on the .NET runtime
+#     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu:latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v3
+
+#       - name: Setup .NET
+#         uses: actions/setup-dotnet@v3
+#         with:
+#           dotnet-version: 8.x
+
+#       - name: Generate executable
+#         run: |
+#           Set-StrictMode -Version Latest
+#           $ErrorActionPreference = "Stop"
+#           $VerbosePreference = "Continue"
+#           $InformationPreference = "Continue"
+
+#           Write-Information "Creating output directory..."
+#           $outputFolderPath = Join-Path "${{ runner.temp }}" "extractor-output"
+#           New-Item -Path "$outputFolderPath" -ItemType "Directory"
+
+#           Write-Information "Publishing application..."
+#           $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
+#           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
+#           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
+#           ## DELETE
+#           Get-ChildItem -Path $outputFolderPath -Recurse
+
+#           Write-Information "Zipping application..."
+#           $sourceFolderPath = Join-Path "$outputFolderPath" "*"
+#           $extractorFileNameWithoutExtension = "${{ format('extractor.{0}', matrix.dotnet-runtime) }}"
+#           $destinationFilePath = Join-Path "$outputFolderPath" "$($extractorFileNameWithoutExtension).zip"
+#           Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath
+#           "{ZIP_FILE_PATH}=$destinationFilePath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+#           Write-Information "Execution complete."
+#         shell: pwsh
+
+#       - name: Upload artifact
+#         uses: actions/upload-artifact@v3
+#         with:
+#           path: ${{ format('{0}/{1}', runner.temp, env.ZIP_FILE_PATH) }}
+
+  generate_publisher_artifacts:
+    name: Generate publisher artifacts
     strategy:
       matrix:
         dotnet-runtime: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, win-x64, osx-arm64, osx-x64]
@@ -33,21 +82,21 @@ jobs:
           $InformationPreference = "Continue"
 
           Write-Information "Creating output directory..."
-          $outputFolderPath = Join-Path "${{ runner.temp }}" "extractor-output"
+          $outputFolderPath = Join-Path "${{ runner.temp }}" "publisher-output"
           New-Item -Path "$outputFolderPath" -ItemType "Directory"
 
           Write-Information "Publishing application..."
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
+          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
-          if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
+          if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
           ## DELETE
           Get-ChildItem -Path $outputFolderPath -Recurse
 
           Write-Information "Zipping application..."
           $sourceFolderPath = Join-Path "$outputFolderPath" "*"
-          $extractorFileNameWithoutExtension = "${{ format('extractor.{0}', matrix.dotnet-runtime) }}"
-          $destinationFilePath = Join-Path "$outputFolderPath" "$($extractorFileNameWithoutExtension).zip"
-          Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath
+          $publisherFileNameWithoutExtension = "${{ format('publisher.{0}', matrix.dotnet-runtime) }}"
+          $destinationFilePath = Join-Path "$outputFolderPath" "$($publisherFileNameWithoutExtension).zip"
+          Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath -CompressionLevel Optimal
           "{ZIP_FILE_PATH}=$destinationFilePath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
           Write-Information "Execution complete."
@@ -57,52 +106,6 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           path: ${{ format('{0}/{1}', runner.temp, env.ZIP_FILE_PATH) }}
-
-  # generate_publisher_artifacts:
-  #   name: Generate publisher artifacts
-  #   strategy:
-  #     matrix:
-  #       dotnet-runtime: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, win-x64, osx-arm64, osx-x64]
-  #   # Dynamically set the runner OS based on the .NET runtime
-  #   runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu:latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v3
-
-  #     - name: Setup .NET
-  #       uses: actions/setup-dotnet@v3
-  #       with:
-  #         dotnet-version: 8.x
-
-  #     - name: Generate executable
-  #       run: |
-  #         Set-StrictMode -Version Latest
-  #         $ErrorActionPreference = "Stop"
-  #         $VerbosePreference = "Continue"
-  #         $InformationPreference = "Continue"
-
-  #         Write-Information "Generating publisher..."
-  #         $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
-  #         $outputFolderPath = "${{ runner.temp }}"
-
-  #         & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
-  #         if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
-
-  #         $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
-  #         $exeFolderPath = Join-Path "$outputFolderPath" "publisher$exeFileExt"
-  #         $exeFileNameFinal = "${{ format('publisher.{0}', matrix.dotnet-runtime) }}$exeFileExt"
-  #         Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
-  #         echo "PUBLISHER_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
-
-  #         Write-Information "Execution complete."
-  #       shell: pwsh
-  #       env:
-  #         PUBLISHER_FILENAME: 
-
-  #     - name: Upload artifact
-  #       uses: actions/upload-artifact@v3
-  #       with:
-  #         path: ${{ format('{0}/{1}', runner.temp, env.PUBLISHER_FILENAME) }}
 
   # generate_github_pipeline_artifacts:
   #   name: Generate GitHub artifacts
