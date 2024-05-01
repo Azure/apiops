@@ -32,122 +32,23 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
-          Write-Information "Generating extractor..."
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
-          $outputFolderPath = "${{ runner.temp }}"
+          Write-Information "Creating output directory..."
+          $outputFolderPath = Join-Path "${{ runner.temp }}" "extractor-output"
+          New-Item -Path "$outputFolderPath" -ItemType "Directory"
 
+          Write-Information "Publishing application..."
+          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
+          ## DELETE
+          Get-ChildItem -Path $outputFolderPath -Recurse
 
-          $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
-          $exeFolderPath = Join-Path "$outputFolderPath" "extractor$exeFileExt"
-          $exeFileNameFinal = "${{ format('extractor.{0}', matrix.dotnet-runtime) }}$exeFileExt"
-          Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
-          echo "EXTRACTOR_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
-
-          Write-Information "Execution complete."
-        shell: pwsh
-        env:
-          EXTRACTOR_FILENAME: 
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          path: ${{ format('{0}/{1}', runner.temp, env.EXTRACTOR_FILENAME) }}
-
-  generate_publisher_artifacts:
-    name: Generate publisher artifacts
-    strategy:
-      matrix:
-        dotnet-runtime: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, win-x64, osx-arm64, osx-x64]
-    # Dynamically set the runner OS based on the .NET runtime
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu:latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v3
-        with:
-          dotnet-version: 8.x
-
-      - name: Generate executable
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $VerbosePreference = "Continue"
-          $InformationPreference = "Continue"
-
-          Write-Information "Generating publisher..."
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
-          $outputFolderPath = "${{ runner.temp }}"
-
-          & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
-          if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
-
-          $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
-          $exeFolderPath = Join-Path "$outputFolderPath" "publisher$exeFileExt"
-          $exeFileNameFinal = "${{ format('publisher.{0}', matrix.dotnet-runtime) }}$exeFileExt"
-          Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
-          echo "PUBLISHER_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
-
-          Write-Information "Execution complete."
-        shell: pwsh
-        env:
-          PUBLISHER_FILENAME: 
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          path: ${{ format('{0}/{1}', runner.temp, env.PUBLISHER_FILENAME) }}
-
-  generate_github_pipeline_artifacts:
-    name: Generate GitHub artifacts
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Update versions in YAML
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $VerbosePreference = "Continue"
-          $InformationPreference = "Continue"
-
-          $runExtractorPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "run-extractor.yaml"
-          (Get-Content -Path "$runExtractorPath") |
-            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
-              Set-Content -Path "$runExtractorPath"
-
-          $runPublisherWithEnvPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "run-publisher-with-env.yaml"
-          (Get-Content -Path "$runPublisherWithEnvPath") |
-            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
-              Set-Content -Path "$runPublisherWithEnvPath"
-
-          Write-Information "Execution complete."
-        shell: pwsh
-
-      - name: Setup artifact contents
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $VerbosePreference = "Continue"
-          $InformationPreference = "Continue"
-
-          $artifactsFolderPath = Join-Path "${{ runner.temp }}" "github_artifacts"
-
-          Write-Information "Copying GitHub workflows..."
-          $sourceFolderPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "*"
-          $destinationFolderPath = Join-Path "$artifactsFolderPath" ".github" "workflows"
-          New-Item -Path "$destinationFolderPath" -ItemType "Directory"
-          Copy-Item -Path "$sourceFolderPath" -Destination "$destinationFolderPath" -Recurse
-
-          Write-Information "Zipping artifacts..."
-          $destinationFilePath = Join-Path "${{ runner.temp }}" "Github.zip"
-
-          # We use System.IO.Compression.ZipFile instead of Compress-Archive because of this issue: https://github.com/PowerShell/Microsoft.PowerShell.Archive/issues/66
-          [System.IO.Compression.ZipFile]::CreateFromDirectory("$artifactsFolderPath", "$destinationFilePath")
+          Write-Information "Zipping application..."
+          $sourceFolderPath = Join-Path "$outputFolderPath" "*"
+          $extractorFileNameWithoutExtension = "${{ format('extractor.{0}', matrix.dotnet-runtime) }}"
+          $destinationFilePath = Join-Path "$outputFolderPath" "$($extractorFileNameWithoutExtension).zip"
+          Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath
+          "{ZIP_FILE_PATH}=$destinationFilePath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
           Write-Information "Execution complete."
         shell: pwsh
@@ -155,99 +56,201 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          path: ${{ runner.temp }}/Github.zip
+          path: ${{ format('{0}/{1}', runner.temp, env.ZIP_FILE_PATH) }}
 
-  generate_ado_pipeline_artifacts:
-    name: Generate Azure DevOps artifacts
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+  # generate_publisher_artifacts:
+  #   name: Generate publisher artifacts
+  #   strategy:
+  #     matrix:
+  #       dotnet-runtime: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, win-x64, osx-arm64, osx-x64]
+  #   # Dynamically set the runner OS based on the .NET runtime
+  #   runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu:latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v3
 
-      - name: Update versions in YAML
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $VerbosePreference = "Continue"
-          $InformationPreference = "Continue"
+  #     - name: Setup .NET
+  #       uses: actions/setup-dotnet@v3
+  #       with:
+  #         dotnet-version: 8.x
 
-          $runExtractorPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "run-extractor.yaml"
-          (Get-Content -Path "$runExtractorPath") |
-            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
-              Set-Content -Path "$runExtractorPath"
+  #     - name: Generate executable
+  #       run: |
+  #         Set-StrictMode -Version Latest
+  #         $ErrorActionPreference = "Stop"
+  #         $VerbosePreference = "Continue"
+  #         $InformationPreference = "Continue"
 
-          $runPublisherWithEnvPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "run-publisher-with-env.yaml"
-          (Get-Content -Path "$runPublisherWithEnvPath") |
-            ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
-              Set-Content -Path "$runPublisherWithEnvPath"
+  #         Write-Information "Generating publisher..."
+  #         $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
+  #         $outputFolderPath = "${{ runner.temp }}"
 
-          Write-Information "Execution complete."
-        shell: pwsh
+  #         & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
+  #         if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-      - name: Setup artifact contents
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $VerbosePreference = "Continue"
-          $InformationPreference = "Continue"
+  #         $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
+  #         $exeFolderPath = Join-Path "$outputFolderPath" "publisher$exeFileExt"
+  #         $exeFileNameFinal = "${{ format('publisher.{0}', matrix.dotnet-runtime) }}$exeFileExt"
+  #         Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
+  #         echo "PUBLISHER_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
 
-          $artifactsFolderPath = Join-Path "${{ runner.temp }}" "azdo_artifacts"
+  #         Write-Information "Execution complete."
+  #       shell: pwsh
+  #       env:
+  #         PUBLISHER_FILENAME: 
 
-          Write-Information "Copying Azure DevOps pipelines..."
-          $sourceFolderPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "*"
-          $destinationFolderPath = Join-Path "$artifactsFolderPath" "tools" "pipelines"
-          New-Item -Path "$destinationFolderPath" -ItemType "Directory"
-          Copy-Item -Path "$sourceFolderPath" -Destination "$destinationFolderPath" -Recurse
+  #     - name: Upload artifact
+  #       uses: actions/upload-artifact@v3
+  #       with:
+  #         path: ${{ format('{0}/{1}', runner.temp, env.PUBLISHER_FILENAME) }}
 
-          Write-Information "Zipping artifacts..."
-          $destinationFilePath = Join-Path "${{ runner.temp }}" "Azure_DevOps.zip"
+  # generate_github_pipeline_artifacts:
+  #   name: Generate GitHub artifacts
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v3
 
-          # We use System.IO.Compression.ZipFile instead of Compress-Archive because of this issue: https://github.com/PowerShell/Microsoft.PowerShell.Archive/issues/66
-          [System.IO.Compression.ZipFile]::CreateFromDirectory("$artifactsFolderPath", "$destinationFilePath")
+  #     - name: Update versions in YAML
+  #       run: |
+  #         Set-StrictMode -Version Latest
+  #         $ErrorActionPreference = "Stop"
+  #         $VerbosePreference = "Continue"
+  #         $InformationPreference = "Continue"
 
-          Write-Information "Execution complete."
-        shell: pwsh
+  #         $runExtractorPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "run-extractor.yaml"
+  #         (Get-Content -Path "$runExtractorPath") |
+  #           ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+  #             Set-Content -Path "$runExtractorPath"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          path: ${{ runner.temp }}/Azure_DevOps.zip
+  #         $runPublisherWithEnvPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "run-publisher-with-env.yaml"
+  #         (Get-Content -Path "$runPublisherWithEnvPath") |
+  #           ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+  #             Set-Content -Path "$runPublisherWithEnvPath"
 
-  generate_release:
-    name: Generate release
-    needs:
-      [
-        generate_extractor_artifacts,
-        generate_publisher_artifacts,
-        generate_github_pipeline_artifacts,
-        generate_ado_pipeline_artifacts,
-      ]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
-      - name: Create release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            ${{github.workspace}}/artifact/extractor.win-x64.exe
-            ${{github.workspace}}/artifact/extractor.linux-x64
-            ${{github.workspace}}/artifact/extractor.linux-arm64
-            ${{github.workspace}}/artifact/extractor.linux-musl-x64
-            ${{github.workspace}}/artifact/extractor.linux-musl-arm64
-            ${{github.workspace}}/artifact/extractor.osx-arm64
-            ${{github.workspace}}/artifact/extractor.osx-x64
-            ${{github.workspace}}/artifact/publisher.win-x64.exe
-            ${{github.workspace}}/artifact/publisher.linux-x64
-            ${{github.workspace}}/artifact/publisher.linux-arm64
-            ${{github.workspace}}/artifact/publisher.linux-musl-x64
-            ${{github.workspace}}/artifact/publisher.linux-musl-arm64
-            ${{github.workspace}}/artifact/publisher.osx-arm64
-            ${{github.workspace}}/artifact/publisher.osx-x64
-            ${{github.workspace}}/artifact/Github.zip
-            ${{github.workspace}}/artifact/Azure_DevOps.zip
-          name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
-          tag_name: ${{ github.event.inputs.Release_Version }}
-          generate_release_notes: true
+  #         Write-Information "Execution complete."
+  #       shell: pwsh
+
+  #     - name: Setup artifact contents
+  #       run: |
+  #         Set-StrictMode -Version Latest
+  #         $ErrorActionPreference = "Stop"
+  #         $VerbosePreference = "Continue"
+  #         $InformationPreference = "Continue"
+
+  #         $artifactsFolderPath = Join-Path "${{ runner.temp }}" "github_artifacts"
+
+  #         Write-Information "Copying GitHub workflows..."
+  #         $sourceFolderPath = Join-Path "${{ github.workspace }}" "tools" "github_workflows" "*"
+  #         $destinationFolderPath = Join-Path "$artifactsFolderPath" ".github" "workflows"
+  #         New-Item -Path "$destinationFolderPath" -ItemType "Directory"
+  #         Copy-Item -Path "$sourceFolderPath" -Destination "$destinationFolderPath" -Recurse
+
+  #         Write-Information "Zipping artifacts..."
+  #         $destinationFilePath = Join-Path "${{ runner.temp }}" "Github.zip"
+
+  #         # We use System.IO.Compression.ZipFile instead of Compress-Archive because of this issue: https://github.com/PowerShell/Microsoft.PowerShell.Archive/issues/66
+  #         [System.IO.Compression.ZipFile]::CreateFromDirectory("$artifactsFolderPath", "$destinationFilePath")
+
+  #         Write-Information "Execution complete."
+  #       shell: pwsh
+
+  #     - name: Upload artifact
+  #       uses: actions/upload-artifact@v3
+  #       with:
+  #         path: ${{ runner.temp }}/Github.zip
+
+  # generate_ado_pipeline_artifacts:
+  #   name: Generate Azure DevOps artifacts
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v3
+
+  #     - name: Update versions in YAML
+  #       run: |
+  #         Set-StrictMode -Version Latest
+  #         $ErrorActionPreference = "Stop"
+  #         $VerbosePreference = "Continue"
+  #         $InformationPreference = "Continue"
+
+  #         $runExtractorPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "run-extractor.yaml"
+  #         (Get-Content -Path "$runExtractorPath") |
+  #           ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+  #             Set-Content -Path "$runExtractorPath"
+
+  #         $runPublisherWithEnvPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "run-publisher-with-env.yaml"
+  #         (Get-Content -Path "$runPublisherWithEnvPath") |
+  #           ForEach-Object {$_ -Replace 'desired-version-goes-here', '${{ github.event.inputs.Release_Version }}'} |
+  #             Set-Content -Path "$runPublisherWithEnvPath"
+
+  #         Write-Information "Execution complete."
+  #       shell: pwsh
+
+  #     - name: Setup artifact contents
+  #       run: |
+  #         Set-StrictMode -Version Latest
+  #         $ErrorActionPreference = "Stop"
+  #         $VerbosePreference = "Continue"
+  #         $InformationPreference = "Continue"
+
+  #         $artifactsFolderPath = Join-Path "${{ runner.temp }}" "azdo_artifacts"
+
+  #         Write-Information "Copying Azure DevOps pipelines..."
+  #         $sourceFolderPath = Join-Path "${{ github.workspace }}" "tools" "azdo_pipelines" "*"
+  #         $destinationFolderPath = Join-Path "$artifactsFolderPath" "tools" "pipelines"
+  #         New-Item -Path "$destinationFolderPath" -ItemType "Directory"
+  #         Copy-Item -Path "$sourceFolderPath" -Destination "$destinationFolderPath" -Recurse
+
+  #         Write-Information "Zipping artifacts..."
+  #         $destinationFilePath = Join-Path "${{ runner.temp }}" "Azure_DevOps.zip"
+
+  #         # We use System.IO.Compression.ZipFile instead of Compress-Archive because of this issue: https://github.com/PowerShell/Microsoft.PowerShell.Archive/issues/66
+  #         [System.IO.Compression.ZipFile]::CreateFromDirectory("$artifactsFolderPath", "$destinationFilePath")
+
+  #         Write-Information "Execution complete."
+  #       shell: pwsh
+
+  #     - name: Upload artifact
+  #       uses: actions/upload-artifact@v3
+  #       with:
+  #         path: ${{ runner.temp }}/Azure_DevOps.zip
+
+  # generate_release:
+  #   name: Generate release
+  #   needs:
+  #     [
+  #       generate_extractor_artifacts,
+  #       generate_publisher_artifacts,
+  #       generate_github_pipeline_artifacts,
+  #       generate_ado_pipeline_artifacts,
+  #     ]
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: write
+  #   steps:
+  #     - name: Download artifacts
+  #       uses: actions/download-artifact@v3
+  #     - name: Create release
+  #       uses: softprops/action-gh-release@v1
+  #       with:
+  #         files: |
+  #           ${{github.workspace}}/artifact/extractor.win-x64.exe
+  #           ${{github.workspace}}/artifact/extractor.linux-x64
+  #           ${{github.workspace}}/artifact/extractor.linux-arm64
+  #           ${{github.workspace}}/artifact/extractor.linux-musl-x64
+  #           ${{github.workspace}}/artifact/extractor.linux-musl-arm64
+  #           ${{github.workspace}}/artifact/extractor.osx-arm64
+  #           ${{github.workspace}}/artifact/extractor.osx-x64
+  #           ${{github.workspace}}/artifact/publisher.win-x64.exe
+  #           ${{github.workspace}}/artifact/publisher.linux-x64
+  #           ${{github.workspace}}/artifact/publisher.linux-arm64
+  #           ${{github.workspace}}/artifact/publisher.linux-musl-x64
+  #           ${{github.workspace}}/artifact/publisher.linux-musl-arm64
+  #           ${{github.workspace}}/artifact/publisher.osx-arm64
+  #           ${{github.workspace}}/artifact/publisher.osx-x64
+  #           ${{github.workspace}}/artifact/Github.zip
+  #           ${{github.workspace}}/artifact/Azure_DevOps.zip
+  #         name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
+  #         tag_name: ${{ github.event.inputs.Release_Version }}
+  #         generate_release_notes: true
