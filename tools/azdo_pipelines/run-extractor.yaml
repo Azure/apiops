@@ -108,11 +108,11 @@ stages:
 
                 Write-Information "Downloading release..."
                 $uri = "https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/$releaseFileName"
-                $downloadFilePath = Join-Path ""$(Agent.TempDirectory)" $releaseFileName
+                $downloadFilePath = Join-Path "$(Agent.TempDirectory)" $releaseFileName
                 Invoke-WebRequest -Uri "$uri" -OutFile "$downloadFilePath"
 
                 Write-Information "Extracting release..."
-                $executableFolderPath = Join-Path ""$(Agent.TempDirectory)" "extractor"
+                $executableFolderPath = Join-Path "$(Agent.TempDirectory)" "extractor"
                 Expand-Archive -Path "$downloadFilePath" -DestinationPath "$executableFolderPath"
                 $executableFilePath = Join-Path "$executableFolderPath" $executableFileName
 
