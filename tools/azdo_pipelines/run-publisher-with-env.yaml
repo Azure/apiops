@@ -103,17 +103,17 @@ steps:
         }
 
         Write-Information "Downloading release..."
-        $uri = "https://github.com/Azure/apiops/releases/download/${{ env.apiops_release_version }}/$releaseFileName"
-        $downloadFilePath = Join-Path "${{ runner.temp }}" $releaseFileName
+        $uri = "https://github.com/Azure/apiops/releases/download/$(apiops_release_version)/$releaseFileName"
+        $downloadFilePath = Join-Path "$(Agent.TempDirectory)" $releaseFileName
         Invoke-WebRequest -Uri "$uri" -OutFile "$downloadFilePath"
 
         Write-Information "Extracting release..."
-        $executableFolderPath = Join-Path "${{ runner.temp }}" "publisher"
+        $executableFolderPath = Join-Path "$(Agent.TempDirectory)" "publisher"
         Expand-Archive -Path "$downloadFilePath" -DestinationPath "$executableFolderPath"
         $executableFilePath = Join-Path "$executableFolderPath" $executableFileName
 
         Write-Information "Setting file permissions..."
-        if ("${{ runner.os }}" -like "*linux*")
+        if ("$(Agent.OS)" -like "*linux*")
         {
           & chmod +x "$executableFilePath"
           if ($LASTEXITCODE -ne 0) { throw "Setting file permissions failed."}
