@@ -246,10 +246,10 @@ jobs:
             ${{github.workspace}}/extractor-win-x64/extractor-win-x64.zip
             ${{github.workspace}}/publisher-linux-arm64/publisher-linux-arm64.zip
             ${{github.workspace}}/publisher-linux-musl-arm64/publisher-linux-musl-arm64.zip
-            ${{github.workspace}}/publisher-linux-musl-x64./publisher-linux-musl-x64.zip
+            ${{github.workspace}}/publisher-linux-musl-x64/publisher-linux-musl-x64.zip
             ${{github.workspace}}/publisher-linux-x64/publisher-linux-x64.zip
             ${{github.workspace}}/publisher-osx-arm64/publisher-osx-arm64.zip
-            ${{github.workspace}}/publisher-osx-x64./publisher-osx-x64.zip
+            ${{github.workspace}}/publisher-osx-x64/publisher-osx-x64.zip
             ${{github.workspace}}/publisher.osx-x64/publisher.osx-x64.zip
             ${{github.workspace}}/publisher-win-x64/publisher-win-x64.zip
             ${{github.workspace}}/github/Github.zip
