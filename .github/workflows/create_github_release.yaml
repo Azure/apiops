@@ -157,6 +157,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
+          name: github
           path: ${{ runner.temp }}/Github.zip
 
   generate_ado_pipeline_artifacts:
@@ -213,6 +214,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
+          name: ado
           path: ${{ runner.temp }}/Azure_DevOps.zip
 
   generate_release:
@@ -234,24 +236,24 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ${{github.workspace}}/artifact/extractor-linux-arm64.zip
-            ${{github.workspace}}/artifact/extractor-linux-musl-arm64.zip
-            ${{github.workspace}}/artifact/extractor-linux-musl-x64.zip
-            ${{github.workspace}}/artifact/extractor-linux-x64.zip
-            ${{github.workspace}}/artifact/extractor-osx-arm64.zip
-            ${{github.workspace}}/artifact/extractor-osx-x64.zip
-            ${{github.workspace}}/artifact/extractor.osx-x64.zip
-            ${{github.workspace}}/artifact/extractor-win-x64.zip
-            ${{github.workspace}}/artifact/publisher-linux-arm64.zip
-            ${{github.workspace}}/artifact/publisher-linux-musl-arm64.zip
-            ${{github.workspace}}/artifact/publisher-linux-musl-x64.zip
-            ${{github.workspace}}/artifact/publisher-linux-x64.zip
-            ${{github.workspace}}/artifact/publisher-osx-arm64.zip
-            ${{github.workspace}}/artifact/publisher-osx-x64.zip
-            ${{github.workspace}}/artifact/publisher.osx-x64.zip
-            ${{github.workspace}}/artifact/publisher-win-x64.zip
-            ${{github.workspace}}/artifact/Github.zip
-            ${{github.workspace}}/artifact/Azure_DevOps.zip
+            ${{github.workspace}}/extractor-linux-arm64/extractor-linux-arm64.zip
+            ${{github.workspace}}/extractor-linux-musl-arm64/extractor-linux-musl-arm64.zip
+            ${{github.workspace}}/extractor-linux-musl-x64/extractor-linux-musl-x64.zip
+            ${{github.workspace}}/extractor-linux-x64/extractor-linux-x64.zip
+            ${{github.workspace}}/extractor-osx-arm64/extractor-osx-arm64.zip
+            ${{github.workspace}}/extractor-osx-x64/extractor-osx-x64.zip
+            ${{github.workspace}}/extractor.osx-x64/extractor.osx-x64.zip
+            ${{github.workspace}}/extractor-win-x64/extractor-win-x64.zip
+            ${{github.workspace}}/publisher-linux-arm64/publisher-linux-arm64.zip
+            ${{github.workspace}}/publisher-linux-musl-arm64/publisher-linux-musl-arm64.zip
+            ${{github.workspace}}/publisher-linux-musl-x64./publisher-linux-musl-x64.zip
+            ${{github.workspace}}/publisher-linux-x64/publisher-linux-x64.zip
+            ${{github.workspace}}/publisher-osx-arm64/publisher-osx-arm64.zip
+            ${{github.workspace}}/publisher-osx-x64./publisher-osx-x64.zip
+            ${{github.workspace}}/publisher.osx-x64/publisher.osx-x64.zip
+            ${{github.workspace}}/publisher-win-x64/publisher-win-x64.zip
+            ${{github.workspace}}/github/Github.zip
+            ${{github.workspace}}/ado/Azure_DevOps.zip
           name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
           tag_name: ${{ github.event.inputs.Release_Version }}
           generate_release_notes: true
