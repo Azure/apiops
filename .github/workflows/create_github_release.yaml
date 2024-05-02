@@ -51,9 +51,10 @@ jobs:
         shell: pwsh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          path: ${{ format('{0}/{1}', runner.temp, env.ZIP_FILE_PATH) }}
+          name: extractor-${{ matrix.dotnet-runtime }}
+          path: ${{ env.ZIP_FILE_PATH }}
 
   generate_publisher_artifacts:
     name: Generate publisher artifacts
