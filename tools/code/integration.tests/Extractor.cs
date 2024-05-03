@@ -27,7 +27,7 @@ internal static class Extractor
             ["AZURE_SUBSCRIPTION_ID"] = subscriptionId,
             ["AZURE_RESOURCE_GROUP_NAME"] = resourceGroupName,
             ["AZURE_BEARER_TOKEN"] = bearerToken,
-            ["Logging:LogLevel:Default"] = "Information"
+            ["Logging:LogLevel:Default"] = "Trace"
         };
 
         var optionsJson = options.ToJsonObject();

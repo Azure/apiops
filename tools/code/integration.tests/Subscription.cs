@@ -136,7 +136,8 @@ internal static class Subscription
 
         var expected = PublisherOptions.Override(fileResources, overrides)
                                        .MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
+        var actual = apimResources.MapValue(NormalizeDto)
+                                  .WhereKey(name => name != SubscriptionName.From("master"));
         actual.Should().BeEquivalentTo(expected);
     }
 

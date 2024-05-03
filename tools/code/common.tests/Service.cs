@@ -9,7 +9,6 @@ namespace common.tests;
 
 public record ServiceModel
 {
-    public required ManagementServiceName Name { get; init; }
     public required FrozenSet<NamedValueModel> NamedValues { get; init; }
     public required FrozenSet<TagModel> Tags { get; init; }
     public required FrozenSet<GatewayModel> Gateways { get; init; }
@@ -24,7 +23,7 @@ public record ServiceModel
     public required FrozenSet<SubscriptionModel> Subscriptions { get; init; }
     public required FrozenSet<ApiModel> Apis { get; init; }
 
-    public static Gen<ServiceModel> Generate(ManagementServiceName name) =>
+    public static Gen<ServiceModel> Generate() =>
         from namedValues in NamedValueModel.GenerateSet()
         from tags in TagModel.GenerateSet()
         from versionSets in VersionSetModel.GenerateSet()
@@ -50,7 +49,6 @@ public record ServiceModel
                               select updatedSubscriptions
         select new ServiceModel
         {
-            Name = name,
             NamedValues = namedValues,
             Tags = tags,
             Gateways = gateways,

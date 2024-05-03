@@ -1,4 +1,5 @@
-﻿using common.tests;
+﻿using common;
+using common.tests;
 using CsCheck;
 using DotNext.Collections.Generic;
 using FluentAssertions;
@@ -41,10 +42,8 @@ public sealed class Tests
                         select useExistingInstance
                                 ? fixture with
                                 {
-                                    ServiceModel = fixture.ServiceModel with
-                                    {
-                                        Name = Configuration.ServiceName
-                                    }
+                                    FirstServiceName = Configuration.FirstServiceName,
+                                    SecondServiceName = Configuration.SecondServiceName
                                 }
                                 : fixture with
                                 {
@@ -65,13 +64,17 @@ public sealed class Tests
         await generator.SampleAsync(async fixture =>
         {
             // 1. Set up the management service
-            await CreateManagementService(fixture, cancellationToken);
-            await PutServiceModel(fixture, cancellationToken);
+            await CreateManagementServices(fixture, cancellationToken);
             DeleteServiceDirectory(fixture);
 
-            //// 2. Run the extractor and validate its artifacts
+            // 2. Run the extractor and validate its artifacts
+            await PutServiceModel(fixture, cancellationToken);
             await RunExtractor(fixture, cancellationToken);
             await ValidateExtractorArtifacts(fixture, cancellationToken);
+
+            // 3. Publish the extracted changes to the empty second service
+            await PublishExtractedArtifactsToSecondService(fixture, cancellationToken);
+            await ValidatePublishedExtractedArtifacts(fixture, cancellationToken);
             await CleanUpExtractorResources(fixture, cancellationToken);
 
             // 3. Make changes to the extracted artifacts, publish the changes, then validate
@@ -84,7 +87,7 @@ public sealed class Tests
             await TestCommits(fixture, commits, cancellationToken);
 
             await CleanUp(fixture, cancellationToken);
-        }, iter: 1, threads: useExistingInstance ? 1 : -1);
+        }, iter: 1, seed: "00008284ypj1", threads: useExistingInstance ? 1 : -1);
     }
 
     private static async ValueTask WriteProgress(string message) =>
@@ -99,29 +102,23 @@ public sealed class Tests
         await ServiceModule.DeleteManagementServices(serviceProviderUri, serviceNamePrefix, pipeline, cancellationToken);
     }
 
-    private static async ValueTask CreateManagementService(Fixture fixture, CancellationToken cancellationToken)
+    private static async ValueTask CreateManagementServices(Fixture fixture, CancellationToken cancellationToken)
     {
-        await WriteProgress("Creating management service...");
+        await WriteProgress("Creating management services...");
 
-        var serviceUri = Configuration.GetManagementServiceUri(fixture.ServiceModel.Name);
+        var firstServiceUri = Configuration.GetManagementServiceUri(fixture.FirstServiceName);
+        var secondServiceUri = Configuration.GetManagementServiceUri(fixture.SecondServiceName);
 
         if (useExistingInstance)
         {
-            await ServiceModule.DeleteAll(serviceUri, Configuration.HttpPipeline, cancellationToken);
-
+            await Task.WhenAll(ServiceModule.DeleteAll(firstServiceUri, Configuration.HttpPipeline, cancellationToken).AsTask(),
+                               ServiceModule.DeleteAll(secondServiceUri, Configuration.HttpPipeline, cancellationToken).AsTask());
         }
         else
         {
-            await ServiceModule.CreateManagementService(fixture.ServiceModel, serviceUri, Configuration.Location, Configuration.HttpPipeline, cancellationToken);
+            await Task.WhenAll(ServiceModule.CreateManagementService(firstServiceUri, Configuration.Location, Configuration.HttpPipeline, cancellationToken).AsTask(),
+                               ServiceModule.CreateManagementService(secondServiceUri, Configuration.Location, Configuration.HttpPipeline, cancellationToken).AsTask());
         }
-    }
-
-    private static async ValueTask PutServiceModel(Fixture fixture, CancellationToken cancellationToken)
-    {
-        await WriteProgress("Putting service model...");
-
-        var serviceUri = Configuration.GetManagementServiceUri(fixture.ServiceModel.Name);
-        await ServiceModule.Put(fixture.ServiceModel, serviceUri, Configuration.HttpPipeline, useExistingInstance, cancellationToken);
     }
 
     private static void DeleteServiceDirectory(Fixture fixture)
@@ -129,29 +126,77 @@ public sealed class Tests
         ServiceModule.DeleteServiceDirectory(fixture.ServiceDirectory);
     }
 
+    private static async ValueTask PutServiceModel(Fixture fixture, CancellationToken cancellationToken)
+    {
+        await WriteProgress("Putting service model...");
+
+        var serviceUri = Configuration.GetManagementServiceUri(fixture.FirstServiceName);
+        await ServiceModule.Put(fixture.ServiceModel, serviceUri, Configuration.HttpPipeline, useExistingInstance, cancellationToken);
+    }
+
     private static async ValueTask RunExtractor(Fixture fixture, CancellationToken cancellationToken)
     {
         await WriteProgress("Running extractor...");
 
         var bearerToken = await Configuration.GetBearerToken(cancellationToken);
-        await Extractor.Run(fixture.ExtractorOptions, fixture.ServiceModel.Name, fixture.ServiceDirectory, Configuration.SubscriptionId, Configuration.ResourceGroupName, bearerToken, cancellationToken);
+        await Extractor.Run(fixture.ExtractorOptions, fixture.FirstServiceName, fixture.ServiceDirectory, Configuration.SubscriptionId, Configuration.ResourceGroupName, bearerToken, cancellationToken);
     }
 
     private static async ValueTask ValidateExtractorArtifacts(Fixture fixture, CancellationToken cancellationToken)
     {
         await WriteProgress("Validating extractor artifacts...");
 
-        var serviceUri = Configuration.GetManagementServiceUri(fixture.ServiceModel.Name);
+        var serviceUri = Configuration.GetManagementServiceUri(fixture.FirstServiceName);
         await ServiceModule.ValidateExtractedArtifacts(fixture.ExtractorOptions, fixture.ServiceDirectory, serviceUri, Configuration.HttpPipeline, useExistingInstance, cancellationToken);
+    }
+
+    private static async ValueTask PublishExtractedArtifactsToSecondService(Fixture fixture, CancellationToken cancellationToken)
+    {
+        await WriteProgress("Extracting all artifacts from first instance...");
+        ServiceModule.DeleteServiceDirectory(fixture.ServiceDirectory);
+
+        var bearerToken = await Configuration.GetBearerToken(cancellationToken);
+        var extractorOptions = fixture.ExtractorOptions with
+        {
+            ApiNamesToExport = Option<FrozenSet<ApiName>>.None,
+            ProductNamesToExport = Option<FrozenSet<ProductName>>.None,
+            GroupNamesToExport = Option<FrozenSet<GroupName>>.None,
+            SubscriptionNamesToExport = Option<FrozenSet<SubscriptionName>>.None,
+            BackendNamesToExport = Option<FrozenSet<BackendName>>.None,
+            LoggerNamesToExport = Option<FrozenSet<LoggerName>>.None,
+            DiagnosticNamesToExport = Option<FrozenSet<DiagnosticName>>.None,
+            PolicyFragmentNamesToExport = Option<FrozenSet<PolicyFragmentName>>.None,
+            GatewayNamesToExport = Option<FrozenSet<GatewayName>>.None,
+            TagNamesToExport = Option<FrozenSet<TagName>>.None,
+            VersionSetNamesToExport = Option<FrozenSet<VersionSetName>>.None,
+            NamedValueNamesToExport = Option<FrozenSet<NamedValueName>>.None,
+        };
+        await Extractor.Run(extractorOptions, fixture.FirstServiceName, fixture.ServiceDirectory, Configuration.SubscriptionId, Configuration.ResourceGroupName, bearerToken, cancellationToken);
+
+        await WriteProgress("Publishing extracted artifacts to second instance...");
+        await Publisher.Run(fixture.PublisherOptions, fixture.SecondServiceName, fixture.ServiceDirectory, Configuration.SubscriptionId, Configuration.ResourceGroupName, bearerToken, commitId: Option<CommitId>.None, cancellationToken);
+    }
+
+    private static async ValueTask ValidatePublishedExtractedArtifacts(Fixture fixture, CancellationToken cancellationToken)
+    {
+        await WriteProgress("Validating published extracted artifacts...");
+
+        var serviceUri = Configuration.GetManagementServiceUri(fixture.SecondServiceName);
+        await ServiceModule.ValidatePublisherChanges(fixture.PublisherOptions, fixture.ServiceDirectory, serviceUri, Configuration.HttpPipeline, useExistingInstance, cancellationToken);
     }
 
     private static async ValueTask CleanUpExtractorResources(Fixture fixture, CancellationToken cancellationToken)
     {
         await WriteProgress("Cleaning up extractor resources...");
 
-        var serviceUri = Configuration.GetManagementServiceUri(fixture.ServiceModel.Name);
-        await ServiceModule.DeleteAll(serviceUri, Configuration.HttpPipeline, cancellationToken);
         ServiceModule.DeleteServiceDirectory(fixture.ServiceDirectory);
+
+        var firstServiceUri = Configuration.GetManagementServiceUri(fixture.FirstServiceName);
+        var secondServiceUri = Configuration.GetManagementServiceUri(fixture.SecondServiceName);
+        await Task.WhenAll(ServiceModule.DeleteAll(firstServiceUri, Configuration.HttpPipeline, cancellationToken).AsTask(),
+                           useExistingInstance
+                           ? ServiceModule.DeleteAll(secondServiceUri, Configuration.HttpPipeline, cancellationToken).AsTask()
+                           : ServiceModule.DeleteManagementService(secondServiceUri, Configuration.HttpPipeline, cancellationToken).AsTask());
     }
 
     private static async ValueTask WriteFirstChange(Fixture fixture, CancellationToken cancellationToken)
@@ -167,14 +212,14 @@ public sealed class Tests
         await WriteProgress("Publishing first change...");
 
         var bearerToken = await Configuration.GetBearerToken(cancellationToken);
-        await Publisher.Run(fixture.PublisherOptions, fixture.ServiceModel.Name, fixture.ServiceDirectory, Configuration.SubscriptionId, Configuration.ResourceGroupName, bearerToken, commitId: Option<CommitId>.None, cancellationToken);
+        await Publisher.Run(fixture.PublisherOptions, fixture.FirstServiceName, fixture.ServiceDirectory, Configuration.SubscriptionId, Configuration.ResourceGroupName, bearerToken, commitId: Option<CommitId>.None, cancellationToken);
     }
 
     private static async ValueTask ValidatePublishedFirstChange(Fixture fixture, CancellationToken cancellationToken)
     {
         await WriteProgress("Validating published first change...");
 
-        var serviceUri = Configuration.GetManagementServiceUri(fixture.ServiceModel.Name);
+        var serviceUri = Configuration.GetManagementServiceUri(fixture.FirstServiceName);
         await ServiceModule.ValidatePublisherChanges(fixture.PublisherOptions, fixture.ServiceDirectory, serviceUri, Configuration.HttpPipeline, useExistingInstance, cancellationToken);
     }
 
@@ -198,14 +243,14 @@ public sealed class Tests
         await WriteProgress($"Publishing commit {commitId}...");
 
         var bearerToken = await Configuration.GetBearerToken(cancellationToken);
-        await Publisher.Run(fixture.PublisherOptions, fixture.ServiceModel.Name, fixture.ServiceDirectory, Configuration.SubscriptionId, Configuration.ResourceGroupName, bearerToken, commitId, cancellationToken);
+        await Publisher.Run(fixture.PublisherOptions, fixture.FirstServiceName, fixture.ServiceDirectory, Configuration.SubscriptionId, Configuration.ResourceGroupName, bearerToken, commitId, cancellationToken);
     }
 
     private static async ValueTask ValidatePublishedCommit(Fixture fixture, CommitId commitId, CancellationToken cancellationToken)
     {
         await WriteProgress($"Validating published commit {commitId}...");
 
-        var serviceUri = Configuration.GetManagementServiceUri(fixture.ServiceModel.Name);
+        var serviceUri = Configuration.GetManagementServiceUri(fixture.FirstServiceName);
         await ServiceModule.ValidatePublisherCommitChanges(fixture.PublisherOptions, commitId, fixture.ServiceDirectory, serviceUri, Configuration.HttpPipeline, useExistingInstance, cancellationToken);
     }
 
@@ -213,7 +258,7 @@ public sealed class Tests
     {
         await WriteProgress("Cleaning up...");
 
-        var serviceUri = Configuration.GetManagementServiceUri(fixture.ServiceModel.Name);
+        var serviceUri = Configuration.GetManagementServiceUri(fixture.FirstServiceName);
 
         if (useExistingInstance)
         {

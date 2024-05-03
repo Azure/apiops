@@ -8,7 +8,6 @@ using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.JsonWebTokens;
 using System;
 using System.Threading;
@@ -45,11 +44,17 @@ internal static class Configuration
     private static readonly Lazy<HttpPipeline> httpPipeline = new(() => GetHttpPipeline(TokenCredential, AzureEnvironment));
     public static HttpPipeline HttpPipeline => httpPipeline.Value;
 
-    private static readonly Lazy<ManagementServiceName> serviceName = new(() => GetManagementServiceName(Default));
-    public static ManagementServiceName ServiceName => serviceName.Value;
+    private static readonly Lazy<ManagementServiceName> firstManagementServiceName = new(() => GetFirstManagementServiceName(Default));
+    public static ManagementServiceName FirstServiceName => firstManagementServiceName.Value;
 
-    private static readonly Lazy<ManagementServiceUri> serviceUri = new(() => GetManagementServiceUri(ServiceName));
-    public static ManagementServiceUri ServiceUri => serviceUri.Value;
+    private static readonly Lazy<ManagementServiceUri> firstServiceUri = new(() => GetManagementServiceUri(FirstServiceName));
+    public static ManagementServiceUri FirstServiceUri => firstServiceUri.Value;
+
+    private static readonly Lazy<ManagementServiceName> secondManagementServiceName = new(() => GetSecondManagementServiceName(Default));
+    public static ManagementServiceName SecondServiceName => secondManagementServiceName.Value;
+
+    private static readonly Lazy<ManagementServiceUri> secondServiceUri = new(() => GetManagementServiceUri(SecondServiceName));
+    public static ManagementServiceUri SecondServiceUri => secondServiceUri.Value;
 
     private static IConfiguration CreateDefault() =>
         new ConfigurationBuilder().AddEnvironmentVariables()
@@ -156,6 +161,9 @@ internal static class Configuration
         return token.Token;
     }
 
-    private static ManagementServiceName GetManagementServiceName(IConfiguration configuration) =>
-        ManagementServiceName.From(configuration.GetValue("TEST_API_MANAGEMENT_SERVICE_NAME"));
+    private static ManagementServiceName GetFirstManagementServiceName(IConfiguration configuration) =>
+        ManagementServiceName.From(configuration.GetValue("FIRST_API_MANAGEMENT_SERVICE_NAME"));
+
+    private static ManagementServiceName GetSecondManagementServiceName(IConfiguration configuration) =>
+        ManagementServiceName.From(configuration.GetValue("SECOND_API_MANAGEMENT_SERVICE_NAME"));
 }
