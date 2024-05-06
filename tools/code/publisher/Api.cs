@@ -181,14 +181,27 @@ file sealed class PutApiHandler(FindApiDto findDto,
     {
         // Put prerequisites
         await PutVersionSet(dto, cancellationToken);
+        await PutCurrentRevision(name, dto, cancellationToken);
 
-        await correctApimRevisionNumber(name, dto, cancellationToken);
         await putInApim(name, dto, cancellationToken);
     }
 
     private async ValueTask PutVersionSet(ApiDto dto, CancellationToken cancellationToken) =>
         await Common.TryGetVersionSetName(dto)
                     .IterTask(putVersionSet.Invoke, cancellationToken);
+
+    private async ValueTask PutCurrentRevision(ApiName name, ApiDto dto, CancellationToken cancellationToken)
+    {
+        if (ApiName.IsRevisioned(name))
+        {
+            var rootName = ApiName.GetRootName(name);
+            await Handle(rootName, cancellationToken);
+        }
+        else
+        {
+            await correctApimRevisionNumber(name, dto, cancellationToken);
+        }
+    }
 
     public void Dispose() => semaphore.Dispose();
 }
@@ -501,9 +514,9 @@ file sealed class MakeApiRevisionCurrentHandler(PutApiReleaseInApim putRelease, 
 }
 
 file sealed class DeleteApiHandler(IEnumerable<OnDeletingApi> onDeletingHandlers,
-                                          ILoggerFactory loggerFactory,
-                                          FindApiDto findDto,
-                                          DeleteApiFromApim deleteFromApim) : IDisposable
+                                   ILoggerFactory loggerFactory,
+                                   FindApiDto findDto,
+                                   DeleteApiFromApim deleteFromApim) : IDisposable
 {
     private readonly ILogger logger = Common.GetLogger(loggerFactory);
     private readonly ApiSemaphore semaphore = new();

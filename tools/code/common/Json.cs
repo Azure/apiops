@@ -338,8 +338,8 @@ public static class JsonValueExtensions
         jsonValue is not null && jsonValue.TryGetValue<Guid>(out var guid)
             ? guid
             : jsonValue.TryAsString()
-                       .Bind(x => Guid.TryParse(x, out var guidString)
-                                    ? guidString
+                       .Bind(x => Guid.TryParse(x, out var guidFromString)
+                                    ? guidFromString
                                     : Option<Guid>.None);
 
     public static Option<Uri> TryAsAbsoluteUri(this JsonValue? jsonValue) =>
