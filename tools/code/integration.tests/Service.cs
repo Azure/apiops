@@ -35,7 +35,7 @@ internal static class ServiceModule
     }
 
     public static async ValueTask DeleteManagementService(ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        await pipeline.DeleteResource(serviceUri.ToUri(), waitForCompletion: true, cancellationToken);
+        await pipeline.DeleteResource(serviceUri.ToUri(), waitForCompletion: false, cancellationToken);
 
     public static async ValueTask CreateManagementService(ManagementServiceUri serviceUri, string location, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

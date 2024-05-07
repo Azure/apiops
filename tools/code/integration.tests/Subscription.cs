@@ -22,19 +22,16 @@ internal static class Subscription
         from allowTracing in Gen.Bool.OptionOf()
         select original with
         {
-            DisplayName = displayName,
-            AllowTracing = allowTracing
+            DisplayName = displayName
         };
 
     public static Gen<SubscriptionDto> GenerateOverride(SubscriptionDto original) =>
         from displayName in SubscriptionModel.GenerateDisplayName()
-        from allowTracing in Gen.Bool.OptionOf()
         select new SubscriptionDto
         {
             Properties = new SubscriptionDto.SubscriptionContract
             {
-                DisplayName = displayName,
-                AllowTracing = allowTracing.ValueUnsafe()
+                DisplayName = displayName
             }
         };
 
@@ -52,8 +49,7 @@ internal static class Subscription
                     SubscriptionScope.Product product => $"/products/{product.Name}",
                     SubscriptionScope.Api api => $"/apis/{api.Name}",
                     _ => throw new InvalidOperationException($"Scope {model.Scope} not supported.")
-                },
-                AllowTracing = model.AllowTracing.ValueUnsafe()
+                }
             }
         };
 
@@ -120,8 +116,7 @@ internal static class Subscription
         new
         {
             DisplayName = dto.Properties.DisplayName ?? string.Empty,
-            Scope = string.Join('/', dto.Properties.Scope?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
-            AllowTracing = dto.Properties.AllowTracing ?? false
+            Scope = string.Join('/', dto.Properties.Scope?.Split('/')?.TakeLast(2)?.ToArray() ?? [])
         }.ToString()!;
 
     public static async ValueTask ValidatePublisherChanges(ManagementServiceDirectory serviceDirectory, IDictionary<SubscriptionName, SubscriptionDto> overrides, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)

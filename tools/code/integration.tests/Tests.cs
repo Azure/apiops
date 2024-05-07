@@ -87,7 +87,7 @@ public sealed class Tests
             await TestCommits(fixture, commits, cancellationToken);
 
             await CleanUp(fixture, cancellationToken);
-        }, iter: 1, threads: useExistingInstance ? 1 : -1);
+        }, iter: 1, seed: "0000KOIPe036", threads: useExistingInstance ? 1 : -1);
     }
 
     private static async ValueTask WriteProgress(string message) =>
