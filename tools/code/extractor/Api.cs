@@ -17,7 +17,9 @@ internal delegate ValueTask ExtractApis(CancellationToken cancellationToken);
 
 file delegate IAsyncEnumerable<(ApiName Name, ApiDto Dto, Option<(ApiSpecification Specification, BinaryData Contents)> SpecificationOption)> ListApis(CancellationToken cancellationToken);
 
-file delegate bool ShouldExtractApi(ApiName name);
+internal delegate bool ShouldExtractApiName(ApiName name);
+
+file delegate bool ShouldExtractApiDto(ApiDto dto);
 
 file delegate ValueTask WriteApiArtifacts(ApiName name, ApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, CancellationToken cancellationToken);
 
@@ -26,7 +28,8 @@ file delegate ValueTask WriteApiInformationFile(ApiName name, ApiDto dto, Cancel
 file delegate ValueTask WriteApiSpecificationFile(ApiName name, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken);
 
 file sealed class ExtractApisHandler(ListApis list,
-                                     ShouldExtractApi shouldExtract,
+                                     ShouldExtractApiName shouldExtractName,
+                                     ShouldExtractApiDto shouldExtractDto,
                                      WriteApiArtifacts writeArtifacts,
                                      ExtractApiPolicies extractApiPolicies,
                                      ExtractApiTags extractApiTags,
@@ -34,7 +37,8 @@ file sealed class ExtractApisHandler(ListApis list,
 {
     public async ValueTask Handle(CancellationToken cancellationToken) =>
         await list(cancellationToken)
-                .Where(api => shouldExtract(api.Name))
+                .Where(api => shouldExtractName(api.Name))
+                .Where(api => shouldExtractDto(api.Dto))
                 // Group APIs by version set (https://github.com/Azure/apiops/issues/316).
                 // We'll process each group in parallel, but each API within a group sequentially.
                 .GroupBy(api => api.Dto.Properties.ApiVersionSetId ?? Guid.NewGuid().ToString())
@@ -136,13 +140,22 @@ file sealed class ListApisHandler(ManagementServiceUri serviceUri, HttpPipeline 
         };
 }
 
-file sealed class ShouldExtractApiHandler(ShouldExtractFactory shouldExtractFactory)
+file sealed class ShouldExtractApiNameHandler(ShouldExtractFactory shouldExtractFactory)
 {
     public bool Handle(ApiName name)
     {
         var shouldExtract = shouldExtractFactory.Create<ApiName>();
         return shouldExtract(name);
     }
+}
+
+file sealed class ShouldExtractApiDtoHandler(ShouldExtractVersionSet shouldExtractVersionSet)
+{
+    public bool Handle(ApiDto dto) =>
+        // Don't extract if its version set should not be extracted
+        ApiModule.TryGetVersionSetName(dto)
+                 .Map(shouldExtractVersionSet.Invoke)
+                 .IfNone(true);
 }
 
 file sealed class WriteApiArtifactsHandler(WriteApiInformationFile writeInformationFile,
@@ -191,7 +204,8 @@ internal static class ApiServices
     public static void ConfigureExtractApis(IServiceCollection services)
     {
         ConfigureListApis(services);
-        ConfigureShouldExtractApi(services);
+        ConfigureShouldExtractApiName(services);
+        ConfigureShouldExtractApiDto(services);
         ConfigureWriteApiArtifacts(services);
         ApiPolicyServices.ConfigureExtractApiPolicies(services);
         ApiTagServices.ConfigureExtractApiTags(services);
@@ -200,16 +214,25 @@ internal static class ApiServices
         services.TryAddSingleton<ExtractApisHandler>();
         services.TryAddSingleton<ExtractApis>(provider => provider.GetRequiredService<ExtractApisHandler>().Handle);
     }
+
     private static void ConfigureListApis(IServiceCollection services)
     {
         services.TryAddSingleton<ListApisHandler>();
         services.TryAddSingleton<ListApis>(provider => provider.GetRequiredService<ListApisHandler>().Handle);
     }
 
-    private static void ConfigureShouldExtractApi(IServiceCollection services)
+    public static void ConfigureShouldExtractApiName(IServiceCollection services)
     {
-        services.TryAddSingleton<ShouldExtractApiHandler>();
-        services.TryAddSingleton<ShouldExtractApi>(provider => provider.GetRequiredService<ShouldExtractApiHandler>().Handle);
+        services.TryAddSingleton<ShouldExtractApiNameHandler>();
+        services.TryAddSingleton<ShouldExtractApiName>(provider => provider.GetRequiredService<ShouldExtractApiNameHandler>().Handle);
+    }
+
+    public static void ConfigureShouldExtractApiDto(IServiceCollection services)
+    {
+        VersionSetServices.ConfigureShouldExtractVersionSet(services);
+
+        services.TryAddSingleton<ShouldExtractApiDtoHandler>();
+        services.TryAddSingleton<ShouldExtractApiDto>(provider => provider.GetRequiredService<ShouldExtractApiDtoHandler>().Handle);
     }
 
     private static void ConfigureWriteApiArtifacts(IServiceCollection services)

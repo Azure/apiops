@@ -15,7 +15,7 @@ internal delegate ValueTask ExtractDiagnostics(CancellationToken cancellationTok
 
 file delegate IAsyncEnumerable<(DiagnosticName Name, DiagnosticDto Dto)> ListDiagnostics(CancellationToken cancellationToken);
 
-file delegate bool ShouldExtractDiagnostic(DiagnosticName name);
+file delegate bool ShouldExtractDiagnostic(DiagnosticName name, DiagnosticDto dto);
 
 file delegate ValueTask WriteDiagnosticArtifacts(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken);
 
@@ -25,7 +25,7 @@ file sealed class ExtractDiagnosticsHandler(ListDiagnostics list, ShouldExtractD
 {
     public async ValueTask Handle(CancellationToken cancellationToken) =>
         await list(cancellationToken)
-                .Where(diagnostic => shouldExtract(diagnostic.Name))
+                .Where(diagnostic => shouldExtract(diagnostic.Name, diagnostic.Dto))
                 .IterParallel(async diagnostic => await writeArtifacts(diagnostic.Name, diagnostic.Dto, cancellationToken),
                               cancellationToken);
 }
@@ -36,13 +36,15 @@ file sealed class ListDiagnosticsHandler(ManagementServiceUri serviceUri, HttpPi
         DiagnosticsUri.From(serviceUri).List(pipeline, cancellationToken);
 }
 
-file sealed class ShouldExtractDiagnosticHandler(ShouldExtractFactory shouldExtractFactory)
+file sealed class ShouldExtractDiagnosticHandler(ShouldExtractFactory shouldExtractFactory, ShouldExtractLogger shouldExtractLogger)
 {
-    public bool Handle(DiagnosticName name)
-    {
-        var shouldExtract = shouldExtractFactory.Create<DiagnosticName>();
-        return shouldExtract(name);
-    }
+    public bool Handle(DiagnosticName name, DiagnosticDto dto) =>
+        // Check name from configuration override
+        shouldExtractFactory.Create<DiagnosticName>().Invoke(name)
+        // Don't extract diagnostic if its logger should not be extracted
+        && DiagnosticModule.TryGetLoggerName(dto)
+                           .Map(shouldExtractLogger.Invoke)
+                           .IfNone(true);
 }
 
 file sealed class WriteDiagnosticArtifactsHandler(WriteDiagnosticInformationFile writeInformationFile)
@@ -86,6 +88,8 @@ internal static class DiagnosticServices
 
     private static void ConfigureShouldExtractDiagnostic(IServiceCollection services)
     {
+        LoggerServices.ConfigureShouldExtractLogger(services);
+
         services.TryAddSingleton<ShouldExtractDiagnosticHandler>();
         services.TryAddSingleton<ShouldExtractDiagnostic>(provider => provider.GetRequiredService<ShouldExtractDiagnosticHandler>().Handle);
     }

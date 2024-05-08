@@ -187,8 +187,8 @@ file sealed class PutApiHandler(FindApiDto findDto,
     }
 
     private async ValueTask PutVersionSet(ApiDto dto, CancellationToken cancellationToken) =>
-        await Common.TryGetVersionSetName(dto)
-                    .IterTask(putVersionSet.Invoke, cancellationToken);
+        await ApiModule.TryGetVersionSetName(dto)
+                       .IterTask(putVersionSet.Invoke, cancellationToken);
 
     private async ValueTask PutCurrentRevision(ApiName name, ApiDto dto, CancellationToken cancellationToken)
     {
@@ -593,7 +593,7 @@ file sealed class OnDeletingVersionSetHandler(GetApiDtosInPreviousCommit getDtos
                     var dtoOption = await kvp.Value(cancellationToken);
 
                     return from dto in dtoOption
-                           from versionSetName in Common.TryGetVersionSetName(dto)
+                           from versionSetName in ApiModule.TryGetVersionSetName(dto)
                            select (VersionSetName: versionSetName, ApiName: kvp.Key);
                 })
                 .GroupBy(x => x.VersionSetName, x => x.ApiName)
@@ -739,11 +739,6 @@ file static class Common
             JsonOpenApiSpecificationFile.Name,
             YamlOpenApiSpecificationFile.Name
         }.ToFrozenSet();
-
-    public static Option<VersionSetName> TryGetVersionSetName(ApiDto dto) =>
-        from versionSetId in Prelude.Optional(dto.Properties.ApiVersionSetId)
-        from versionSetNameString in versionSetId.Split('/').LastOrNone()
-        select VersionSetName.From(versionSetNameString);
 
     public static ApiRevisionNumber GetRevisionNumber(ApiDto dto) =>
         ApiRevisionNumber.TryFrom(dto.Properties.ApiRevision)

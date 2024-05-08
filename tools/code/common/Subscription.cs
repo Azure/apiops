@@ -228,4 +228,16 @@ public static class SubscriptionModule
         var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
         return content.ToObjectFromJson<SubscriptionDto>();
     }
+
+    public static Option<ApiName> TryGetApiName(SubscriptionDto dto) =>
+        from scope in Prelude.Optional(dto.Properties.Scope)
+        where scope.Contains("/apis/", StringComparison.OrdinalIgnoreCase)
+        from apiNameString in scope.Split('/').LastOrNone()
+        select ApiName.From(apiNameString);
+
+    public static Option<ProductName> TryGetProductName(SubscriptionDto dto) =>
+        from scope in Prelude.Optional(dto.Properties.Scope)
+        where scope.Contains("/products/", StringComparison.OrdinalIgnoreCase)
+        from productNameString in scope.Split('/').LastOrNone()
+        select ProductName.From(productNameString);
 }

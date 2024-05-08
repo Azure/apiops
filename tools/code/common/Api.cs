@@ -762,4 +762,9 @@ public static class ApiModule
 
     public static async ValueTask<BinaryData> ReadContents(this ApiSpecificationFile file, CancellationToken cancellationToken) =>
         await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
+
+    public static Option<VersionSetName> TryGetVersionSetName(ApiDto dto) =>
+        from versionSetId in Prelude.Optional(dto.Properties.ApiVersionSetId)
+        from versionSetNameString in versionSetId.Split('/').LastOrNone()
+        select VersionSetName.From(versionSetNameString);
 }

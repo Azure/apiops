@@ -15,7 +15,7 @@ internal delegate ValueTask ExtractVersionSets(CancellationToken cancellationTok
 
 file delegate IAsyncEnumerable<(VersionSetName Name, VersionSetDto Dto)> ListVersionSets(CancellationToken cancellationToken);
 
-file delegate bool ShouldExtractVersionSet(VersionSetName name);
+internal delegate bool ShouldExtractVersionSet(VersionSetName name);
 
 file delegate ValueTask WriteVersionSetArtifacts(VersionSetName name, VersionSetDto dto, CancellationToken cancellationToken);
 
@@ -84,7 +84,7 @@ internal static class VersionSetServices
         services.TryAddSingleton<ListVersionSets>(provider => provider.GetRequiredService<ListVersionSetsHandler>().Handle);
     }
 
-    private static void ConfigureShouldExtractVersionSet(IServiceCollection services)
+    public static void ConfigureShouldExtractVersionSet(IServiceCollection services)
     {
         services.TryAddSingleton<ShouldExtractVersionSetHandler>();
         services.TryAddSingleton<ShouldExtractVersionSet>(provider => provider.GetRequiredService<ShouldExtractVersionSetHandler>().Handle);

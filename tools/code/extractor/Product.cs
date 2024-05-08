@@ -15,7 +15,7 @@ internal delegate ValueTask ExtractProducts(CancellationToken cancellationToken)
 
 file delegate IAsyncEnumerable<(ProductName Name, ProductDto Dto)> ListProducts(CancellationToken cancellationToken);
 
-file delegate bool ShouldExtractProduct(ProductName name);
+internal delegate bool ShouldExtractProduct(ProductName name);
 
 file delegate ValueTask WriteProductArtifacts(ProductName name, ProductDto dto, CancellationToken cancellationToken);
 
@@ -103,7 +103,7 @@ internal static class ProductServices
         services.TryAddSingleton<ListProducts>(provider => provider.GetRequiredService<ListProductsHandler>().Handle);
     }
 
-    private static void ConfigureShouldExtractProduct(IServiceCollection services)
+    public static void ConfigureShouldExtractProduct(IServiceCollection services)
     {
         services.TryAddSingleton<ShouldExtractProductHandler>();
         services.TryAddSingleton<ShouldExtractProduct>(provider => provider.GetRequiredService<ShouldExtractProductHandler>().Handle);

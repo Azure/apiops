@@ -144,8 +144,8 @@ file sealed class PutDiagnosticHandler(FindDiagnosticDto findDto, PutLogger putL
     }
 
     private async ValueTask PutLogger(DiagnosticDto dto, CancellationToken cancellationToken) =>
-        await Common.TryGetLoggerName(dto)
-                    .IterTask(putLogger.Invoke, cancellationToken);
+        await DiagnosticModule.TryGetLoggerName(dto)
+                              .IterTask(putLogger.Invoke, cancellationToken);
 
     public void Dispose() => semaphore.Dispose();
 }
@@ -225,7 +225,7 @@ file sealed class OnDeletingLoggerHandler(GetDiagnosticDtosInPreviousCommit getD
                     var dtoOption = await kvp.Value(cancellationToken);
 
                     return from dto in dtoOption
-                           from loggerName in Common.TryGetLoggerName(dto)
+                           from loggerName in DiagnosticModule.TryGetLoggerName(dto)
                            select (LoggerName: loggerName, DiagnosticName: kvp.Key);
                 })
                 .GroupBy(x => x.LoggerName, x => x.DiagnosticName)
@@ -360,9 +360,4 @@ file static class Common
 {
     public static ILogger GetLogger(ILoggerFactory factory) =>
         factory.CreateLogger("DiagnosticPublisher");
-
-    public static Option<LoggerName> TryGetLoggerName(DiagnosticDto dto) =>
-        from loggerId in Prelude.Optional(dto.Properties.LoggerId)
-        from loggerNameString in loggerId.Split('/').LastOrNone()
-        select LoggerName.From(loggerNameString);
 }
