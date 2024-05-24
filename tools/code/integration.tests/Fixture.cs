@@ -1,4 +1,4 @@
-using common;
+﻿using common;
 using common.tests;
 using CsCheck;
 using LanguageExt;
