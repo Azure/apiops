@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.JsonWebTokens;
 using System;
 using System.Collections.Frozen;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Threading;
@@ -150,6 +151,7 @@ internal static class CommonServices
 {
     public static void Configure(IServiceCollection services)
     {
+        services.AddSingleton(GetActivitySource);
         services.TryAddSingleton(GetAzureEnvironment);
         services.TryAddSingleton(GetTokenCredential);
         services.TryAddSingleton(GetConfigurationJson);
@@ -165,7 +167,11 @@ internal static class CommonServices
         ConfigureGetArtifactsInPreviousCommit(services);
 
         services.ConfigureApimHttpClient();
+        OpenTelemetryServices.Configure(services);
     }
+
+    private static ActivitySource GetActivitySource(IServiceProvider provider) =>
+        new("ApiOps.Publisher");
 
     private static AzureEnvironment GetAzureEnvironment(IServiceProvider provider)
     {

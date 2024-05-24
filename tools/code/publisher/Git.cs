@@ -36,7 +36,8 @@ public static class Git
 
     private static TreeChanges GetChanges(DirectoryInfo repositoryDirectory, CommitId commitId)
     {
-        using var repository = new Repository(repositoryDirectory.FullName);
+        var gitRootDirectory = repositoryDirectory.Parent!.FullName;
+        using var repository = new Repository(gitRootDirectory);
 
         var commit = GetCommit(repository, commitId);
 
@@ -53,7 +54,8 @@ public static class Git
 
     public static Option<CommitId> TryGetPreviousCommitId(DirectoryInfo repositoryDirectory, CommitId commitId)
     {
-        using var repository = new Repository(repositoryDirectory.FullName);
+        var gitRootDirectory = repositoryDirectory.Parent!.FullName;
+        using var repository = new Repository(gitRootDirectory);
 
         var commit = GetCommit(repository, commitId);
 
@@ -66,7 +68,8 @@ public static class Git
 
     public static Option<Stream> TryGetFileContentsInCommit(DirectoryInfo repositoryDirectory, FileInfo file, CommitId commitId)
     {
-        using var repository = new Repository(repositoryDirectory.FullName);
+        var gitRootDirectory = repositoryDirectory.Parent!.FullName;
+        using var repository = new Repository(gitRootDirectory);
         var relativePath = Path.GetRelativePath(repositoryDirectory.FullName, file.FullName);
         var relativePathString = Path.DirectorySeparatorChar == '\\'
                                     ? relativePath.Replace('\\', '/')
@@ -81,7 +84,8 @@ public static class Git
 
     public static FrozenSet<FileInfo> GetExistingFilesInCommit(DirectoryInfo repositoryDirectory, CommitId commitId)
     {
-        using var repository = new Repository(repositoryDirectory.FullName);
+        var gitRootDirectory = repositoryDirectory.Parent!.FullName;
+        using var repository = new Repository(gitRootDirectory);
 
         var commit = GetCommit(repository, commitId);
 
