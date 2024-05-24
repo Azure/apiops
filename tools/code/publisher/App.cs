@@ -23,12 +23,10 @@ file sealed class RunPublisherHandler(ProcessNamedValuesToPut processNamedValues
 
     public async ValueTask Handle(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Putting named values...");
         await processNamedValuesToPut(cancellationToken);
 
         await ProcessPublisherFiles(cancellationToken);
 
-        logger.LogInformation("Deleting named values...");
         await processDeletedNamedValues(cancellationToken);
 
         logger.LogInformation("Publisher completed.");
