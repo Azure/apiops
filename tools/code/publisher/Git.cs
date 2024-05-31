@@ -22,23 +22,25 @@ public sealed record CommitId
 
 public static class Git
 {
-    public static FrozenSet<FileInfo> GetChangedFilesInCommit(DirectoryInfo repositoryDirectory, CommitId commitId) =>
-        GetChanges(repositoryDirectory, commitId)
-            .SelectMany(change => (change.Path, change.OldPath) switch
-            {
-                (null, not null) => [change.OldPath],
-                (not null, null) => [change.Path],
-                (null, null) => [],
-                (var path, var oldPath) => new[] { path, oldPath }.Distinct()
-            })
-            .Select(path => new FileInfo(Path.Combine(repositoryDirectory.FullName, path)))
-            .ToFrozenSet(x => x.FullName);
-
-    private static TreeChanges GetChanges(DirectoryInfo directory, CommitId commitId)
+    public static FrozenSet<FileInfo> GetChangedFilesInCommit(DirectoryInfo directory, CommitId commitId)
     {
         var repositoryDirectory = GetRepositoryDirectory(directory);
         using var repository = new Repository(repositoryDirectory.FullName);
 
+        return GetChanges(repository, commitId)
+                .SelectMany(change => (change.Path, change.OldPath) switch
+                {
+                    (null, not null) => [change.OldPath],
+                    (not null, null) => [change.Path],
+                    (null, null) => [],
+                    (var path, var oldPath) => new[] { path, oldPath }.Distinct()
+                })
+                .Select(path => new FileInfo(Path.Combine(repositoryDirectory.FullName, path)))
+                .ToFrozenSet(x => x.FullName);
+    }
+
+    private static TreeChanges GetChanges(Repository repository, CommitId commitId)
+    {
         var commit = GetCommit(repository, commitId);
 
         var parentCommit = commit.Parents.FirstOrDefault();

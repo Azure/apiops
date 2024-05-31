@@ -101,13 +101,36 @@ file sealed class CreateApimServiceHandler(ILogger<CreateApimService> logger,
                                           ManagementServiceProviderUri serviceProviderUri,
                                           AzureLocation location)
 {
-    private static readonly ResiliencePipeline<string> resiliencePipeline =
+    private static readonly ResiliencePipeline httpResiliencePipeline =
+        new ResiliencePipelineBuilder()
+            .AddRetry(new()
+            {
+                ShouldHandle = async arguments =>
+                {
+                    await ValueTask.CompletedTask;
+
+                    return arguments.Outcome.Exception?.Message?.Contains("is transitioning at this time", StringComparison.OrdinalIgnoreCase) ?? false;
+                },
+                Delay = TimeSpan.FromSeconds(5),
+                BackoffType = DelayBackoffType.Linear,
+                MaxRetryAttempts = 100
+            })
+            .AddTimeout(TimeSpan.FromMinutes(3))
+            .Build();
+
+    private static readonly ResiliencePipeline<string> statusResiliencePipeline =
         new ResiliencePipelineBuilder<string>()
             .AddRetry(new()
             {
                 ShouldHandle = async arguments =>
                 {
                     await ValueTask.CompletedTask;
+
+                    if (arguments.Outcome.Exception?.Message?.Contains("is transitioning at this time", StringComparison.OrdinalIgnoreCase) ?? false)
+                    {
+                        return true;
+                    }
+
                     var result = arguments.Outcome.Result;
                     var succeeded = "Succeeded".Equals(result, StringComparison.OrdinalIgnoreCase);
                     return succeeded is false;
@@ -145,10 +168,10 @@ file sealed class CreateApimServiceHandler(ILogger<CreateApimService> logger,
             }
         });
 
-        await pipeline.PutContent(uri, body, cancellationToken);
+        await httpResiliencePipeline.ExecuteAsync(async cancellationToken => await pipeline.PutContent(uri, body, cancellationToken), cancellationToken);
 
         // Wait until the service is successfully provisioned
-        await resiliencePipeline.ExecuteAsync(async cancellationToken =>
+        await statusResiliencePipeline.ExecuteAsync(async cancellationToken =>
         {
             var content = await pipeline.GetJsonObject(uri, cancellationToken);
 
@@ -299,8 +322,8 @@ file sealed class WriteServiceModelCommitsHandler(ILogger<WriteServiceModelCommi
 
         var authorName = "apiops";
         var authorEmail = "apiops@apiops.com";
-        var serviceDirectoryInfo = serviceDirectory.ToDirectoryInfo();
-        Git.InitializeRepository(serviceDirectoryInfo, commitMessage: "Initial commit", authorName, authorEmail, DateTimeOffset.UtcNow);
+        var repositoryDirectory = serviceDirectory.ToDirectoryInfo().Parent!;
+        Git.InitializeRepository(repositoryDirectory, commitMessage: "Initial commit", authorName, authorEmail, DateTimeOffset.UtcNow);
 
         var commitIds = ImmutableArray<CommitId>.Empty;
         await models.Map((index, model) => (index, model))
@@ -309,7 +332,7 @@ file sealed class WriteServiceModelCommitsHandler(ILogger<WriteServiceModelCommi
                         var (index, model) = x;
                         DeleteNonGitDirectories(serviceDirectory);
                         await writeServiceModelArtifacts(model, serviceDirectory, cancellationToken);
-                        var commit = Git.CommitChanges(serviceDirectoryInfo, commitMessage: $"Commit {index}", authorName, authorEmail, DateTimeOffset.UtcNow);
+                        var commit = Git.CommitChanges(repositoryDirectory, commitMessage: $"Commit {index}", authorName, authorEmail, DateTimeOffset.UtcNow);
                         var commitId = new CommitId(commit.Sha);
                         ImmutableInterlocked.Update(ref commitIds, commitIds => commitIds.Add(commitId));
                     }, cancellationToken);
@@ -383,7 +406,7 @@ internal static class ManagementServices
             var locationName = configuration.TryGetValue("AZURE_LOCATION")
                                             .IfNone("westus");
 
-            return new AzureLocation(locationName);
+            return new AzureLocation("westus");
         });
     }
 

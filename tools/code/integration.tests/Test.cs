@@ -500,7 +500,7 @@ file sealed class Common
                               .ToArray()
         from suffixCharacters in Gen.Shuffle(characters, 8)
         let name = $"apiops-{new string(suffixCharacters)}"
-        let path = Path.Combine(Path.GetTempPath(), name)
+        let path = Path.Combine(Path.GetTempPath(), name, "artifacts")
         let directoryInfo = new DirectoryInfo(path)
         select ManagementServiceDirectory.From(directoryInfo);
 }
