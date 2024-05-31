@@ -463,7 +463,10 @@ file sealed class PutApiInApimHandler(ILoggerFactory loggerFactory, ManagementSe
 
         var revisionNumber = Common.GetRevisionNumber(dto);
         var uri = GetRevisionedUri(name, revisionNumber);
-        await uri.PutDto(dto, pipeline, cancellationToken);
+
+        // APIM sometimes fails revisions if isCurrent is set to true.
+        var dtoWithoutIsCurrent = dto with { Properties = dto.Properties with { IsCurrent = null } };
+        await uri.PutDto(dtoWithoutIsCurrent, pipeline, cancellationToken);
     }
 
     private ApiUri GetRevisionedUri(ApiName name, ApiRevisionNumber revisionNumber)
