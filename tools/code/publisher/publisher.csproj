@@ -14,7 +14,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="AsyncKeyedLock" Version="6.4.2" />
-		<PackageReference Include="DotNext.Threading" Version="5.4.1" />
+		<PackageReference Include="DotNext.Threading" Version="5.5.0" />
 		<PackageReference Include="LanguageExt.Transformers" Version="4.4.8" />
 		<PackageReference Include="LibGit2Sharp" Version="0.30.0" />
 		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />

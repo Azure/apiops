@@ -1,51 +1,13 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
 internal delegate ValueTask RunExtractor(CancellationToken cancellationToken);
-
-file sealed class RunExtractorHandler(ILoggerFactory loggerFactory,
-                                      ExtractNamedValues extractNamedValues,
-                                      ExtractTags extractTags,
-                                      ExtractGateways extractGateways,
-                                      ExtractVersionSets extractVersionSets,
-                                      ExtractBackends extractBackends,
-                                      ExtractLoggers extractLoggers,
-                                      ExtractDiagnostics extractDiagnostics,
-                                      ExtractPolicyFragments extractPolicyFragments,
-                                      ExtractServicePolicies extractServicePolicies,
-                                      ExtractProducts extractProducts,
-                                      ExtractGroups extractGroups,
-                                      ExtractSubscriptions extractSubscriptions,
-                                      ExtractApis extractApis)
-{
-    private readonly ILogger logger = loggerFactory.CreateLogger("RunExtractor");
-
-    public async ValueTask Handle(CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Running extractor...");
-
-        await extractNamedValues(cancellationToken);
-        await extractTags(cancellationToken);
-        await extractGateways(cancellationToken);
-        await extractVersionSets(cancellationToken);
-        await extractBackends(cancellationToken);
-        await extractLoggers(cancellationToken);
-        await extractDiagnostics(cancellationToken);
-        await extractPolicyFragments(cancellationToken);
-        await extractServicePolicies(cancellationToken);
-        await extractProducts(cancellationToken);
-        await extractGroups(cancellationToken);
-        await extractSubscriptions(cancellationToken);
-        await extractApis(cancellationToken);
-
-        logger.LogInformation("Extractor completed.");
-    }
-}
 
 internal static class AppServices
 {
@@ -65,7 +27,47 @@ internal static class AppServices
         SubscriptionServices.ConfigureExtractSubscriptions(services);
         ApiServices.ConfigureExtractApis(services);
 
-        services.TryAddSingleton<RunExtractorHandler>();
-        services.TryAddSingleton<RunExtractor>(provider => provider.GetRequiredService<RunExtractorHandler>().Handle);
+        services.TryAddSingleton(RunExtractor);
+    }
+
+    private static RunExtractor RunExtractor(IServiceProvider provider)
+    {
+        var extractNamedValues = provider.GetRequiredService<ExtractNamedValues>();
+        var extractTags = provider.GetRequiredService<ExtractTags>();
+        var extractGateways = provider.GetRequiredService<ExtractGateways>();
+        var extractVersionSets = provider.GetRequiredService<ExtractVersionSets>();
+        var extractBackends = provider.GetRequiredService<ExtractBackends>();
+        var extractLoggers = provider.GetRequiredService<ExtractLoggers>();
+        var extractDiagnostics = provider.GetRequiredService<ExtractDiagnostics>();
+        var extractPolicyFragments = provider.GetRequiredService<ExtractPolicyFragments>();
+        var extractServicePolicies = provider.GetRequiredService<ExtractServicePolicies>();
+        var extractProducts = provider.GetRequiredService<ExtractProducts>();
+        var extractGroups = provider.GetRequiredService<ExtractGroups>();
+        var extractSubscriptions = provider.GetRequiredService<ExtractSubscriptions>();
+        var extractApis = provider.GetRequiredService<ExtractApis>();
+        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+
+        var logger = loggerFactory.CreateLogger("Extractor");
+
+        return async cancellationToken =>
+        {
+            logger.LogInformation("Running extractor...");
+
+            await extractNamedValues(cancellationToken);
+            await extractTags(cancellationToken);
+            await extractGateways(cancellationToken);
+            await extractVersionSets(cancellationToken);
+            await extractBackends(cancellationToken);
+            await extractLoggers(cancellationToken);
+            await extractDiagnostics(cancellationToken);
+            await extractPolicyFragments(cancellationToken);
+            await extractServicePolicies(cancellationToken);
+            await extractProducts(cancellationToken);
+            await extractGroups(cancellationToken);
+            await extractSubscriptions(cancellationToken);
+            await extractApis(cancellationToken);
+
+            logger.LogInformation("Extractor completed.");
+        };
     }
 }
