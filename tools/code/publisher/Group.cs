@@ -59,7 +59,7 @@ file sealed class TryParseGroupNameHandler(ManagementServiceDirectory serviceDir
 /// </summary>
 file sealed class GroupSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<GroupName> locker = new();
+    private readonly AsyncKeyedLocker<GroupName> locker = new(LockOptions.Default);
     private ImmutableHashSet<GroupName> processedNames = [];
 
     /// <summary>
@@ -68,7 +68,7 @@ file sealed class GroupSemaphore : IDisposable
     public async ValueTask Run(GroupName name, Func<GroupName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))

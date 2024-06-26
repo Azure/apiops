@@ -104,7 +104,7 @@ file sealed class PutNamedValueHandler(FindNamedValueDto findDto, PutNamedValueI
 /// </summary>
 file sealed class NamedValueSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<NamedValueName> locker = new();
+    private readonly AsyncKeyedLocker<NamedValueName> locker = new(LockOptions.Default);
     private ImmutableHashSet<NamedValueName> processedNames = [];
 
     /// <summary>
@@ -113,7 +113,7 @@ file sealed class NamedValueSemaphore : IDisposable
     public async ValueTask Run(NamedValueName name, Func<NamedValueName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))

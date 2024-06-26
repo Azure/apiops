@@ -56,7 +56,7 @@ file sealed class TryParseTagNameHandler(ManagementServiceDirectory serviceDirec
 /// </summary>
 file sealed class ProductTagSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<(TagName, ProductName)> locker = new();
+    private readonly AsyncKeyedLocker<(TagName, ProductName)> locker = new(LockOptions.Default);
     private ImmutableHashSet<(TagName, ProductName)> processedNames = [];
 
     /// <summary>
@@ -65,7 +65,7 @@ file sealed class ProductTagSemaphore : IDisposable
     public async ValueTask Run(TagName name, ProductName productName, Func<TagName, ProductName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync((name, productName), cancellationToken);
+        using var _ = await locker.LockAsync((name, productName), cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains((name, productName)))

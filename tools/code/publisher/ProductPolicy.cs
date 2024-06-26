@@ -56,7 +56,7 @@ file sealed class TryParseProductPolicyNameHandler(ManagementServiceDirectory se
 /// </summary>
 file sealed class ProductPolicySemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<(ProductPolicyName, ProductName)> locker = new();
+    private readonly AsyncKeyedLocker<(ProductPolicyName, ProductName)> locker = new(LockOptions.Default);
     private ImmutableHashSet<(ProductPolicyName, ProductName)> processedNames = [];
 
     /// <summary>
@@ -65,7 +65,7 @@ file sealed class ProductPolicySemaphore : IDisposable
     public async ValueTask Run(ProductPolicyName name, ProductName productName, Func<ProductPolicyName, ProductName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync((name, productName), cancellationToken);
+        using var _ = await locker.LockAsync((name, productName), cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains((name, productName)))

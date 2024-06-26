@@ -56,7 +56,7 @@ file sealed class TryParseTagNameHandler(ManagementServiceDirectory serviceDirec
 /// </summary>
 file sealed class ApiTagSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<(TagName, ApiName)> locker = new();
+    private readonly AsyncKeyedLocker<(TagName, ApiName)> locker = new(LockOptions.Default);
     private ImmutableHashSet<(TagName, ApiName)> processedNames = [];
 
     /// <summary>
@@ -65,7 +65,7 @@ file sealed class ApiTagSemaphore : IDisposable
     public async ValueTask Run(TagName name, ApiName apiName, Func<TagName, ApiName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync((name, apiName), cancellationToken);
+        using var _ = await locker.LockAsync((name, apiName), cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains((name, apiName)))

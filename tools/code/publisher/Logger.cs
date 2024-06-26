@@ -59,7 +59,7 @@ file sealed class TryParseLoggerNameHandler(ManagementServiceDirectory serviceDi
 /// </summary>
 file sealed class LoggerSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<LoggerName> locker = new();
+    private readonly AsyncKeyedLocker<LoggerName> locker = new(LockOptions.Default);
     private ImmutableHashSet<LoggerName> processedNames = [];
 
     /// <summary>
@@ -68,7 +68,7 @@ file sealed class LoggerSemaphore : IDisposable
     public async ValueTask Run(LoggerName name, Func<LoggerName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))
