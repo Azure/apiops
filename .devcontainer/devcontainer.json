@@ -1,24 +1,31 @@
 {
-	"name": "API Ops",
-	"image": "mcr.microsoft.com/devcontainers/dotnet:0-7.0",
+	"name": "C# (.NET)",
+	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
 	"features": {
-		"ghcr.io/devcontainers/features/azure-cli:1": {}
+		"ghcr.io/devcontainers/features/dotnet:2": {
+			"version": "8.0",
+			"additionalVersions": "9.0",
+			"workloads": "aspire"
+		},
+		"ghcr.io/devcontainers/features/azure-cli:1": {
+			"version": "latest",
+			"installBicep": true
+		},
+		"ghcr.io/devcontainers/features/powershell:1": {
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers/features/git:1": {}
 	},
-
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [5000, 5001],
-	// "portsAttributes": {
-	//		"5001": {
-	//			"protocol": "https"
-	//		}
-	// }
-
-	"postCreateCommand": "dotnet restore /workspaces/apiops/tools/code/code.sln",
-
+	"postCreateCommand": "./.devcontainer/postCreateCommand.sh",
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"ms-dotnettools.csharp"
+				"ms-azuretools.vscode-bicep",
+				"ms-azure-devops.azure-pipelines",
+				"ms-dotnettools.csdevkit",
+				"github.copilot",
+				"github.copilot-chat",
+				"timonwong.shellcheck"
 			]
 		}
 	}
