@@ -5,41 +5,69 @@ using CsCheck;
 using FluentAssertions;
 using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using publisher;
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal static class NamedValue
+internal delegate ValueTask DeleteAllNamedValues(ManagementServiceName serviceName, CancellationToken cancellationToken);
+
+internal delegate ValueTask PutNamedValueModels(IEnumerable<NamedValueModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
+
+internal delegate ValueTask ValidateExtractedNamedValues(Option<FrozenSet<NamedValueName>> namesFilterOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+
+file delegate ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> GetApimNamedValues(ManagementServiceName serviceName, CancellationToken cancellationToken);
+
+file delegate ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> GetFileNamedValues(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
+
+internal delegate ValueTask WriteNamedValueModels(IEnumerable<NamedValueModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+
+internal delegate ValueTask ValidatePublishedNamedValues(IDictionary<NamedValueName, NamedValueDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+
+file sealed class DeleteAllNamedValuesHandler(ILogger<DeleteAllNamedValues> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
 {
-    public static Gen<NamedValueModel> GenerateUpdate(NamedValueModel original) =>
-        from tags in NamedValueModel.GenerateTags()
-        select original with
+    public async ValueTask Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    {
+        using var _ = activitySource.StartActivity(nameof(DeleteAllNamedValues));
+
+        logger.LogInformation("Deleting all named values in {ServiceName}...", serviceName);
+        var serviceUri = getServiceUri(serviceName);
+        await NamedValuesUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+    }
+}
+
+file sealed class PutNamedValueModelsHandler(ILogger<PutNamedValueModels> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+{
+    public async ValueTask Handle(IEnumerable<NamedValueModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken)
+    {
+        using var _ = activitySource.StartActivity(nameof(PutNamedValueModels));
+
+        logger.LogInformation("Putting named value models in {ServiceName}...", serviceName);
+        await models.IterParallel(async model =>
         {
-            Tags = tags
-        };
+            await Put(model, serviceName, cancellationToken);
+        }, cancellationToken);
+    }
 
-    public static Gen<NamedValueDto> GenerateOverride(NamedValueDto original) =>
-        from value in Generator.AlphaNumericStringBetween(1, 100)
-        from tags in NamedValueModel.GenerateTags()
-        select new NamedValueDto
-        {
-            Properties = new NamedValueDto.NamedValueContract
-            {
-                Value = value,
-                Tags = tags
-            }
-        };
+    private async ValueTask Put(NamedValueModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
+    {
+        var serviceUri = getServiceUri(serviceName);
+        var uri = NamedValueUri.From(model.Name, serviceUri);
+        var dto = GetDto(model);
 
-    public static FrozenDictionary<NamedValueName, NamedValueDto> GetDtoDictionary(IEnumerable<NamedValueModel> models) =>
-        models.ToFrozenDictionary(model => model.Name, GetPublisherDto);
+        await uri.PutDto(dto, pipeline, cancellationToken);
+    }
 
-    private static NamedValueDto GetPublisherDto(NamedValueModel model) =>
+    private static NamedValueDto GetDto(NamedValueModel model) =>
         new()
         {
             Properties = new NamedValueDto.NamedValueContract
@@ -64,39 +92,122 @@ internal static class NamedValue
                 }
             }
         };
+}
 
-    public static async ValueTask Put(IEnumerable<NamedValueModel> models, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        await models.IterParallel(async model =>
-        {
-            await Put(model, serviceUri, pipeline, cancellationToken);
-        }, cancellationToken);
-
-    private static async ValueTask Put(NamedValueModel model, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+file sealed class ValidateExtractedNamedValuesHandler(ILogger<ValidateExtractedNamedValues> logger, GetApimNamedValues getApimResources, GetFileNamedValues getFileResources, ActivitySource activitySource)
+{
+    public async ValueTask Handle(Option<FrozenSet<NamedValueName>> namesFilterOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
     {
-        var uri = NamedValueUri.From(model.Name, serviceUri);
-        var dto = GetPublisherDto(model);
+        using var _ = activitySource.StartActivity(nameof(ValidateExtractedNamedValues));
 
-        await uri.PutDto(dto, pipeline, cancellationToken);
+        logger.LogInformation("Validating extracted named values in {ServiceName}...", serviceName);
+        var apimResources = await getApimResources(serviceName, cancellationToken);
+        var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
+
+        var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, namesFilterOption))
+                                    .MapValue(NormalizeDto);
+        var actual = fileResources.MapValue(NormalizeDto);
+
+        actual.Should().BeEquivalentTo(expected);
     }
 
-    public static async ValueTask DeleteAll(ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        await NamedValuesUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+    private static string NormalizeDto(NamedValueDto dto) =>
+        new
+        {
+            DisplayName = dto.Properties.DisplayName ?? string.Empty,
+            Tags = string.Join(',', (dto.Properties.Tags ?? []).Order()),
+            Value = dto.Properties.Secret is true ? string.Empty : dto.Properties.Value ?? string.Empty,
+            Secret = dto.Properties.Secret
+        }.ToString()!;
+}
 
-    public static async ValueTask WriteArtifacts(IEnumerable<NamedValueModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+file sealed class GetApimNamedValuesHandler(ILogger<GetApimNamedValues> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+{
+    public async ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    {
+        using var _ = activitySource.StartActivity(nameof(GetApimNamedValues));
+
+        logger.LogInformation("Getting named values from {ServiceName}...", serviceName);
+
+        var serviceUri = getServiceUri(serviceName);
+        var uri = NamedValuesUri.From(serviceUri);
+
+        return await uri.List(pipeline, cancellationToken)
+                        .ToFrozenDictionary(cancellationToken);
+    }
+}
+
+file sealed class GetFileNamedValuesHandler(ILogger<GetFileNamedValues> logger, ActivitySource activitySource)
+{
+    public async ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> Handle(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken) =>
+        await commitIdOption.Map(commitId => GetWithCommit(serviceDirectory, commitId, cancellationToken))
+                           .IfNone(() => GetWithoutCommit(serviceDirectory, cancellationToken));
+
+    private async ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> GetWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
+    {
+        using var _ = activitySource.StartActivity(nameof(GetFileNamedValues));
+
+        logger.LogInformation("Getting named values from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
+
+        return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
+                        .ToAsyncEnumerable()
+                        .Choose(file => NamedValueInformationFile.TryParse(file, serviceDirectory))
+                        .Choose(async file => await TryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
+                        .ToFrozenDictionary(cancellationToken);
+    }
+
+    private static async ValueTask<Option<(NamedValueName name, NamedValueDto dto)>> TryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, NamedValueInformationFile file, CancellationToken cancellationToken)
+    {
+        var name = file.Parent.Name;
+        var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
+
+        return await contentsOption.MapTask(async contents =>
+        {
+            using (contents)
+            {
+                var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
+                var dto = data.ToObjectFromJson<NamedValueDto>();
+                return (name, dto);
+            }
+        });
+    }
+
+    private async ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> GetWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    {
+        using var _ = activitySource.StartActivity(nameof(GetFileNamedValues));
+
+        logger.LogInformation("Getting named values from {ServiceDirectory}...", serviceDirectory);
+
+        return await NamedValueModule.ListInformationFiles(serviceDirectory)
+                                     .ToAsyncEnumerable()
+                                     .SelectAwait(async file => (file.Parent.Name,
+                                                                 await file.ReadDto(cancellationToken)))
+                                     .ToFrozenDictionary(cancellationToken);
+    }
+}
+
+file sealed class WriteNamedValueModelsHandler(ILogger<WriteNamedValueModels> logger, ActivitySource activitySource)
+{
+    public async ValueTask Handle(IEnumerable<NamedValueModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    {
+        using var _ = activitySource.StartActivity(nameof(WriteNamedValueModels));
+
+        logger.LogInformation("Writing named value models to {ServiceDirectory}...", serviceDirectory);
         await models.IterParallel(async model =>
         {
             await WriteInformationFile(model, serviceDirectory, cancellationToken);
         }, cancellationToken);
+    }
 
     private static async ValueTask WriteInformationFile(NamedValueModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
     {
         var informationFile = NamedValueInformationFile.From(model.Name, serviceDirectory);
-        var dto = GetExtractorDto(model);
+        var dto = GetDto(model);
 
         await informationFile.WriteDto(dto, cancellationToken);
     }
 
-    private static NamedValueDto GetExtractorDto(NamedValueModel model) =>
+    private static NamedValueDto GetDto(NamedValueModel model) =>
         new()
         {
             Properties = new NamedValueDto.NamedValueContract
@@ -116,33 +227,28 @@ internal static class NamedValue
                 Value = model.Type is NamedValueType.Default @default ? @default.Value : null
             }
         };
+}
 
-    public static async ValueTask ValidateExtractedArtifacts(Option<FrozenSet<NamedValueName>> namesToExtract, ManagementServiceDirectory serviceDirectory, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+file sealed class ValidatePublishedNamedValuesHandler(ILogger<ValidatePublishedNamedValues> logger, GetFileNamedValues getFileResources, GetApimNamedValues getApimResources, ActivitySource activitySource)
+{
+    public async ValueTask Handle(IDictionary<NamedValueName, NamedValueDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
     {
-        var apimResources = await GetApimResources(serviceUri, pipeline, cancellationToken);
-        var fileResources = await GetFileResources(serviceDirectory, cancellationToken);
+        using var _ = activitySource.StartActivity(nameof(ValidatePublishedNamedValues));
 
-        var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, namesToExtract))
-                                    .MapValue(NormalizeDto);
-        var actual = fileResources.MapValue(NormalizeDto);
+        logger.LogInformation("Validating published named values in {ServiceDirectory}...", serviceDirectory);
+
+        var apimResources = await getApimResources(serviceName, cancellationToken);
+        var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
+
+        var expected = PublisherOptions.Override(fileResources, overrides)
+                                       .WhereValue(dto => (dto.Properties.Secret is true
+                                                            && dto.Properties.Value is null
+                                                            && dto.Properties.KeyVault?.SecretIdentifier is null) is false)
+                                       .MapValue(NormalizeDto);
+        var actual = apimResources.MapValue(NormalizeDto);
 
         actual.Should().BeEquivalentTo(expected);
     }
-
-    private static async ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> GetApimResources(ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var uri = NamedValuesUri.From(serviceUri);
-
-        return await uri.List(pipeline, cancellationToken)
-                        .ToFrozenDictionary(cancellationToken);
-    }
-
-    private static async ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> GetFileResources(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await NamedValueModule.ListInformationFiles(serviceDirectory)
-                              .ToAsyncEnumerable()
-                              .SelectAwait(async file => (file.Parent.Name,
-                                                          await file.ReadDto(cancellationToken)))
-                              .ToFrozenDictionary(cancellationToken);
 
     private static string NormalizeDto(NamedValueDto dto) =>
         new
@@ -152,52 +258,112 @@ internal static class NamedValue
             Value = dto.Properties.Secret is true ? string.Empty : dto.Properties.Value ?? string.Empty,
             Secret = dto.Properties.Secret
         }.ToString()!;
+}
 
-    public static async ValueTask ValidatePublisherChanges(ManagementServiceDirectory serviceDirectory, IDictionary<NamedValueName, NamedValueDto> overrides, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+internal static class NamedValueServices
+{
+    public static void ConfigureDeleteAllNamedValues(IServiceCollection services)
     {
-        var fileResources = await GetFileResources(serviceDirectory, cancellationToken);
-        await ValidatePublisherChanges(fileResources, overrides, serviceUri, pipeline, cancellationToken);
+        ManagementServices.ConfigureGetManagementServiceUri(services);
+
+        services.TryAddSingleton<DeleteAllNamedValuesHandler>();
+        services.TryAddSingleton<DeleteAllNamedValues>(provider => provider.GetRequiredService<DeleteAllNamedValuesHandler>().Handle);
     }
 
-    private static async ValueTask ValidatePublisherChanges(IDictionary<NamedValueName, NamedValueDto> fileResources, IDictionary<NamedValueName, NamedValueDto> overrides, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    public static void ConfigurePutNamedValueModels(IServiceCollection services)
     {
-        var apimResources = await GetApimResources(serviceUri, pipeline, cancellationToken);
+        ManagementServices.ConfigureGetManagementServiceUri(services);
 
-        var expected = PublisherOptions.Override(fileResources, overrides)
-                                       .WhereValue(dto => (dto.Properties.Secret is true
-                                                            && dto.Properties.Value is null
-                                                            && dto.Properties.KeyVault?.SecretIdentifier is null) is false)
-                                       .MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
-        actual.Should().BeEquivalentTo(expected);
+        services.TryAddSingleton<PutNamedValueModelsHandler>();
+        services.TryAddSingleton<PutNamedValueModels>(provider => provider.GetRequiredService<PutNamedValueModelsHandler>().Handle);
     }
 
-    public static async ValueTask ValidatePublisherCommitChanges(CommitId commitId, ManagementServiceDirectory serviceDirectory, IDictionary<NamedValueName, NamedValueDto> overrides, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    public static void ConfigureValidateExtractedNamedValues(IServiceCollection services)
     {
-        var fileResources = await GetFileResources(commitId, serviceDirectory, cancellationToken);
-        await ValidatePublisherChanges(fileResources, overrides, serviceUri, pipeline, cancellationToken);
+        ConfigureGetApimNamedValues(services);
+        ConfigureGetFileNamedValues(services);
+
+        services.TryAddSingleton<ValidateExtractedNamedValuesHandler>();
+        services.TryAddSingleton<ValidateExtractedNamedValues>(provider => provider.GetRequiredService<ValidateExtractedNamedValuesHandler>().Handle);
     }
 
-    private static async ValueTask<FrozenDictionary<NamedValueName, NamedValueDto>> GetFileResources(CommitId commitId, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
-                 .ToAsyncEnumerable()
-                 .Choose(file => NamedValueInformationFile.TryParse(file, serviceDirectory))
-                 .Choose(async file => await TryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
-                 .ToFrozenDictionary(cancellationToken);
-
-    private static async ValueTask<Option<(NamedValueName name, NamedValueDto dto)>> TryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, NamedValueInformationFile file, CancellationToken cancellationToken)
+    private static void ConfigureGetApimNamedValues(IServiceCollection services)
     {
-        var name = file.Parent.Name;
-        var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
+        ManagementServices.ConfigureGetManagementServiceUri(services);
 
-        return await contentsOption.MapTask(async contents =>
+        services.TryAddSingleton<GetApimNamedValuesHandler>();
+        services.TryAddSingleton<GetApimNamedValues>(provider => provider.GetRequiredService<GetApimNamedValuesHandler>().Handle);
+    }
+
+    private static void ConfigureGetFileNamedValues(IServiceCollection services)
+    {
+        services.TryAddSingleton<GetFileNamedValuesHandler>();
+        services.TryAddSingleton<GetFileNamedValues>(provider => provider.GetRequiredService<GetFileNamedValuesHandler>().Handle);
+    }
+
+    public static void ConfigureWriteNamedValueModels(IServiceCollection services)
+    {
+        services.TryAddSingleton<WriteNamedValueModelsHandler>();
+        services.TryAddSingleton<WriteNamedValueModels>(provider => provider.GetRequiredService<WriteNamedValueModelsHandler>().Handle);
+    }
+
+    public static void ConfigureValidatePublishedNamedValues(IServiceCollection services)
+    {
+        ConfigureGetFileNamedValues(services);
+        ConfigureGetApimNamedValues(services);
+
+        services.TryAddSingleton<ValidatePublishedNamedValuesHandler>();
+        services.TryAddSingleton<ValidatePublishedNamedValues>(provider => provider.GetRequiredService<ValidatePublishedNamedValuesHandler>().Handle);
+    }
+}
+
+internal static class NamedValue
+{
+    public static Gen<NamedValueModel> GenerateUpdate(NamedValueModel original) =>
+        from tags in NamedValueModel.GenerateTags()
+        select original with
         {
-            using (contents)
+            Tags = tags
+        };
+
+    public static Gen<NamedValueDto> GenerateOverride(NamedValueDto original) =>
+        from value in Generator.AlphaNumericStringBetween(1, 100)
+        from tags in NamedValueModel.GenerateTags()
+        select new NamedValueDto
+        {
+            Properties = new NamedValueDto.NamedValueContract
             {
-                var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
-                var dto = data.ToObjectFromJson<NamedValueDto>();
-                return (name, dto);
+                Value = value,
+                Tags = tags
             }
-        });
-    }
+        };
+
+    public static FrozenDictionary<NamedValueName, NamedValueDto> GetDtoDictionary(IEnumerable<NamedValueModel> models) =>
+        models.ToFrozenDictionary(model => model.Name, GetDto);
+
+    private static NamedValueDto GetDto(NamedValueModel model) =>
+        new()
+        {
+            Properties = new NamedValueDto.NamedValueContract
+            {
+                DisplayName = model.Name.ToString(),
+                Tags = model.Tags,
+                KeyVault = model.Type switch
+                {
+                    NamedValueType.KeyVault keyVault => new NamedValueDto.KeyVaultContract
+                    {
+                        SecretIdentifier = keyVault.SecretIdentifier,
+                        IdentityClientId = keyVault.IdentityClientId.ValueUnsafe()
+                    },
+                    _ => null
+                },
+                Secret = model.Type is NamedValueType.Secret or NamedValueType.KeyVault,
+                Value = model.Type switch
+                {
+                    NamedValueType.Secret secret => secret.Value,
+                    NamedValueType.Default @default => @default.Value,
+                    _ => null
+                }
+            }
+        };
 }

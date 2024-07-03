@@ -7,7 +7,6 @@ using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -308,4 +307,9 @@ public static class DiagnosticModule
         var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
         return content.ToObjectFromJson<DiagnosticDto>();
     }
+
+    public static Option<LoggerName> TryGetLoggerName(DiagnosticDto dto) =>
+        from loggerId in Prelude.Optional(dto.Properties.LoggerId)
+        from loggerNameString in loggerId.Split('/').LastOrNone()
+        select LoggerName.From(loggerNameString);
 }

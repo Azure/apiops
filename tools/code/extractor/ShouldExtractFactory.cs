@@ -12,21 +12,12 @@ public delegate bool ShouldExtract<TName>(TName name) where TName : ResourceName
 
 public sealed class ShouldExtractFactory(ConfigurationJson configurationJson, ILoggerFactory loggerFactory)
 {
-    private readonly FrozenDictionary<string, FrozenSet<string>> configurationNames = GetConfigurationNames(configurationJson);
-    private static readonly FrozenDictionary<Type, string> configurationSectionNames = GetConfigurationSectionNames();
+    private static readonly FrozenDictionary<Type, string> typeSectionNames = GetTypeSectionNames();
+    private static readonly FrozenDictionary<string, Type> sectionNameTypes = GetSectionNameTypes(typeSectionNames);
+    private readonly FrozenDictionary<Type, FrozenSet<string>> resourcesToExtract = GetResourcesToExtract(configurationJson, sectionNameTypes);
     private readonly ILogger logger = loggerFactory.CreateLogger<ShouldExtractFactory>();
 
-    private static FrozenDictionary<string, FrozenSet<string>> GetConfigurationNames(ConfigurationJson configurationJson) =>
-        configurationJson.Value
-                         // Get configuration sections that are JSON arrays
-                         .ChooseValue(node => node.TryAsJsonArray())
-                         // Map each JSON array to a set of strings
-                         .MapValue(jsonArray => jsonArray.Choose(node => node.TryAsString())
-                                                         .Where(value => string.IsNullOrWhiteSpace(value) is false)
-                                                         .ToFrozenSet(StringComparer.OrdinalIgnoreCase))
-                         .ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
-
-    private static FrozenDictionary<Type, string> GetConfigurationSectionNames() =>
+    private static FrozenDictionary<Type, string> GetTypeSectionNames() =>
         new Dictionary<Type, string>
         {
             [typeof(NamedValueName)] = "namedValueNames",
@@ -44,16 +35,31 @@ public sealed class ShouldExtractFactory(ConfigurationJson configurationJson, IL
         }
         .ToFrozenDictionary();
 
+    private static FrozenDictionary<string, Type> GetSectionNameTypes(FrozenDictionary<Type, string> typeSectionNames) =>
+        typeSectionNames.ToFrozenDictionary(kvp => kvp.Value, kvp => kvp.Key, StringComparer.OrdinalIgnoreCase);
+
+    private static FrozenDictionary<Type, FrozenSet<string>> GetResourcesToExtract(ConfigurationJson configurationJson, FrozenDictionary<string, Type> sectionNameTypes) =>
+        configurationJson.Value
+                         // Get configuration sections that are JSON arrays
+                         .ChooseValue(node => node.TryAsJsonArray())
+                         // Map each JSON array to a set of strings
+                         .MapValue(jsonArray => jsonArray.Choose(node => node.TryAsString())
+                                                         .Where(value => string.IsNullOrWhiteSpace(value) is false)
+                                                         .ToFrozenSet(StringComparer.OrdinalIgnoreCase))
+                         // Map each configuration section to a resource name type
+                         .ChooseKey(sectionNameTypes.Find)
+                         .ToFrozenDictionary();
+
     public static string GetConfigurationSectionName<T>() =>
-        configurationSectionNames.Find(typeof(T))
-                                 .IfNone(() => throw new InvalidOperationException($"Resource type {typeof(T).Name} is not supported."));
+        typeSectionNames.Find(typeof(T))
+                        .IfNone(() => throw new InvalidOperationException($"Resource type {typeof(T).Name} is not supported."));
 
     public static string GetNameToFind<T>(T name) where T : ResourceName =>
-        configurationSectionNames.ContainsKey(typeof(T))
+        typeSectionNames.ContainsKey(typeof(T))
             ? name switch
             {
-                ApiName apiName => ApiName.GetRootName(apiName).ToString(),
-                _ => name.ToString()!
+                ApiName apiName => ApiName.GetRootName(apiName).Value,
+                _ => name.Value
             }
             : throw new InvalidOperationException($"Resource type {typeof(T).Name} is not supported.");
 
@@ -61,10 +67,9 @@ public sealed class ShouldExtractFactory(ConfigurationJson configurationJson, IL
 
     private bool ShouldExtract<TName>(TName name) where TName : ResourceName
     {
-        var sectionName = GetConfigurationSectionName<TName>();
         var nameToFind = GetNameToFind(name);
 
-        var shouldExtract = configurationNames.Find(sectionName)
+        var shouldExtract = resourcesToExtract.Find(typeof(TName))
                                               .Map(set => set.Contains(nameToFind))
                                               .IfNone(true);
 

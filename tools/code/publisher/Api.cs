@@ -181,14 +181,27 @@ file sealed class PutApiHandler(FindApiDto findDto,
     {
         // Put prerequisites
         await PutVersionSet(dto, cancellationToken);
+        await PutCurrentRevision(name, dto, cancellationToken);
 
-        await correctApimRevisionNumber(name, dto, cancellationToken);
         await putInApim(name, dto, cancellationToken);
     }
 
     private async ValueTask PutVersionSet(ApiDto dto, CancellationToken cancellationToken) =>
-        await Common.TryGetVersionSetName(dto)
-                    .IterTask(putVersionSet.Invoke, cancellationToken);
+        await ApiModule.TryGetVersionSetName(dto)
+                       .IterTask(putVersionSet.Invoke, cancellationToken);
+
+    private async ValueTask PutCurrentRevision(ApiName name, ApiDto dto, CancellationToken cancellationToken)
+    {
+        if (ApiName.IsRevisioned(name))
+        {
+            var rootName = ApiName.GetRootName(name);
+            await Handle(rootName, cancellationToken);
+        }
+        else
+        {
+            await correctApimRevisionNumber(name, dto, cancellationToken);
+        }
+    }
 
     public void Dispose() => semaphore.Dispose();
 }
@@ -450,7 +463,10 @@ file sealed class PutApiInApimHandler(ILoggerFactory loggerFactory, ManagementSe
 
         var revisionNumber = Common.GetRevisionNumber(dto);
         var uri = GetRevisionedUri(name, revisionNumber);
-        await uri.PutDto(dto, pipeline, cancellationToken);
+
+        // APIM sometimes fails revisions if isCurrent is set to true.
+        var dtoWithoutIsCurrent = dto with { Properties = dto.Properties with { IsCurrent = null } };
+        await uri.PutDto(dtoWithoutIsCurrent, pipeline, cancellationToken);
     }
 
     private ApiUri GetRevisionedUri(ApiName name, ApiRevisionNumber revisionNumber)
@@ -501,9 +517,9 @@ file sealed class MakeApiRevisionCurrentHandler(PutApiReleaseInApim putRelease, 
 }
 
 file sealed class DeleteApiHandler(IEnumerable<OnDeletingApi> onDeletingHandlers,
-                                          ILoggerFactory loggerFactory,
-                                          FindApiDto findDto,
-                                          DeleteApiFromApim deleteFromApim) : IDisposable
+                                   ILoggerFactory loggerFactory,
+                                   FindApiDto findDto,
+                                   DeleteApiFromApim deleteFromApim) : IDisposable
 {
     private readonly ILogger logger = Common.GetLogger(loggerFactory);
     private readonly ApiSemaphore semaphore = new();
@@ -580,7 +596,7 @@ file sealed class OnDeletingVersionSetHandler(GetApiDtosInPreviousCommit getDtos
                     var dtoOption = await kvp.Value(cancellationToken);
 
                     return from dto in dtoOption
-                           from versionSetName in Common.TryGetVersionSetName(dto)
+                           from versionSetName in ApiModule.TryGetVersionSetName(dto)
                            select (VersionSetName: versionSetName, ApiName: kvp.Key);
                 })
                 .GroupBy(x => x.VersionSetName, x => x.ApiName)
@@ -726,11 +742,6 @@ file static class Common
             JsonOpenApiSpecificationFile.Name,
             YamlOpenApiSpecificationFile.Name
         }.ToFrozenSet();
-
-    public static Option<VersionSetName> TryGetVersionSetName(ApiDto dto) =>
-        from versionSetId in Prelude.Optional(dto.Properties.ApiVersionSetId)
-        from versionSetNameString in versionSetId.Split('/').LastOrNone()
-        select VersionSetName.From(versionSetNameString);
 
     public static ApiRevisionNumber GetRevisionNumber(ApiDto dto) =>
         ApiRevisionNumber.TryFrom(dto.Properties.ApiRevision)

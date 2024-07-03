@@ -9,12 +9,14 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindBackendAction(FileInfo file);
+internal delegate ValueTask ProcessBackendsToPut(CancellationToken cancellationToken);
+internal delegate ValueTask ProcessDeletedBackends(CancellationToken cancellationToken);
 
 file delegate Option<BackendName> TryParseBackendName(FileInfo file);
 
@@ -31,6 +33,30 @@ file delegate ValueTask DeleteBackend(BackendName name, CancellationToken cancel
 file delegate ValueTask PutBackendInApim(BackendName name, BackendDto dto, CancellationToken cancellationToken);
 
 file delegate ValueTask DeleteBackendFromApim(BackendName name, CancellationToken cancellationToken);
+
+file sealed class ProcessBackendsToPutHandler(GetPublisherFiles getPublisherFiles,
+                                              TryParseBackendName tryParseBackendName,
+                                              IsBackendNameInSourceControl isNameInSourceControl,
+                                              PutBackend putBackend)
+{
+    public async ValueTask Handle(CancellationToken cancellationToken) =>
+        await getPublisherFiles()
+                .Choose(tryParseBackendName.Invoke)
+                .Where(isNameInSourceControl.Invoke)
+                .IterParallel(putBackend.Invoke, cancellationToken);
+}
+
+file sealed class ProcessDeletedBackendsHandler(GetPublisherFiles getPublisherFiles,
+                                                TryParseBackendName tryParseBackendName,
+                                                IsBackendNameInSourceControl isNameInSourceControl,
+                                                DeleteBackend deleteBackend)
+{
+    public async ValueTask Handle(CancellationToken cancellationToken) =>
+        await getPublisherFiles()
+                .Choose(tryParseBackendName.Invoke)
+                .Where(name => isNameInSourceControl(name) is false)
+                .IterParallel(deleteBackend.Invoke, cancellationToken);
+}
 
 file sealed class FindBackendActionHandler(TryParseBackendName tryParseName, ProcessBackend processBackend)
 {
@@ -189,13 +215,14 @@ file sealed class DeleteBackendFromApimHandler(ILoggerFactory loggerFactory, Man
 
 internal static class BackendServices
 {
-    public static void ConfigureFindBackendAction(IServiceCollection services)
+    public static void ConfigureProcessBackendsToPut(IServiceCollection services)
     {
         ConfigureTryParseBackendName(services);
-        ConfigureProcessBackend(services);
+        ConfigureIsBackendNameInSourceControl(services);
+        ConfigurePutBackend(services);
 
-        services.TryAddSingleton<FindBackendActionHandler>();
-        services.TryAddSingleton<FindBackendAction>(provider => provider.GetRequiredService<FindBackendActionHandler>().Handle);
+        services.TryAddSingleton<ProcessBackendsToPutHandler>();
+        services.TryAddSingleton<ProcessBackendsToPut>(provider => provider.GetRequiredService<ProcessBackendsToPutHandler>().Handle);
     }
 
     private static void ConfigureTryParseBackendName(IServiceCollection services)
@@ -239,6 +266,16 @@ internal static class BackendServices
     {
         services.TryAddSingleton<PutBackendInApimHandler>();
         services.TryAddSingleton<PutBackendInApim>(provider => provider.GetRequiredService<PutBackendInApimHandler>().Handle);
+    }
+
+    public static void ConfigureProcessDeletedBackends(IServiceCollection services)
+    {
+        ConfigureTryParseBackendName(services);
+        ConfigureIsBackendNameInSourceControl(services);
+        ConfigureDeleteBackend(services);
+
+        services.TryAddSingleton<ProcessDeletedBackendsHandler>();
+        services.TryAddSingleton<ProcessDeletedBackends>(provider => provider.GetRequiredService<ProcessDeletedBackendsHandler>().Handle);
     }
 
     private static void ConfigureDeleteBackend(IServiceCollection services)

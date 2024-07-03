@@ -4,7 +4,6 @@ using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -16,19 +15,17 @@ internal delegate ValueTask ExtractSubscriptions(CancellationToken cancellationT
 
 file delegate IAsyncEnumerable<(SubscriptionName Name, SubscriptionDto Dto)> ListSubscriptions(CancellationToken cancellationToken);
 
-file delegate bool ShouldExtractSubscription(SubscriptionName name);
+file delegate bool ShouldExtractSubscription(SubscriptionName name, SubscriptionDto dto);
 
 file delegate ValueTask WriteSubscriptionArtifacts(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken);
 
 file delegate ValueTask WriteSubscriptionInformationFile(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken);
 
-file sealed class ExtractSubscriptionsHandler(ListSubscriptions list, ShouldExtractSubscription shouldExtract, WriteSubscriptionArtifacts writeArtifacts)
+file sealed class ExtractSubscriptionsHandler(ListSubscriptions list, ShouldExtractSubscription shouldExtractSubscription, WriteSubscriptionArtifacts writeArtifacts)
 {
     public async ValueTask Handle(CancellationToken cancellationToken) =>
         await list(cancellationToken)
-                // Skip master subscription
-                .Where(subscription => subscription.Name != SubscriptionName.From("master"))
-                .Where(subscription => shouldExtract(subscription.Name))
+                .Where(subscription => shouldExtractSubscription(subscription.Name, subscription.Dto))
                 .IterParallel(async subscription => await writeArtifacts(subscription.Name, subscription.Dto, cancellationToken),
                               cancellationToken);
 }
@@ -39,13 +36,22 @@ file sealed class ListSubscriptionsHandler(ManagementServiceUri serviceUri, Http
         SubscriptionsUri.From(serviceUri).List(pipeline, cancellationToken);
 }
 
-file sealed class ShouldExtractSubscriptionHandler(ShouldExtractFactory shouldExtractFactory)
+file sealed class ShouldExtractSubscriptionHandler(ShouldExtractFactory shouldExtractFactory, ShouldExtractApiName shouldExtractApi, ShouldExtractProduct shouldExtractProduct)
 {
-    public bool Handle(SubscriptionName name)
-    {
-        var shouldExtract = shouldExtractFactory.Create<SubscriptionName>();
-        return shouldExtract(name);
-    }
+    public bool Handle(SubscriptionName name, SubscriptionDto dto) =>
+        // Don't extract the master subscription
+        name != SubscriptionName.From("master")
+        // Check name from configuration override
+        && shouldExtractFactory.Create<SubscriptionName>().Invoke(name)
+        // Don't extract subscription if its API should not be extracted
+        && SubscriptionModule.TryGetApiName(dto)
+                             .Map(shouldExtractApi.Invoke)
+                             .IfNone(true)
+        // Don't extract subscription if its product should not be extracted
+        && SubscriptionModule.TryGetProductName(dto)
+                             .Map(shouldExtractProduct.Invoke)
+                             .IfNone(true);
+
 }
 
 file sealed class WriteSubscriptionArtifactsHandler(WriteSubscriptionInformationFile writeInformationFile)
@@ -89,6 +95,9 @@ internal static class SubscriptionServices
 
     private static void ConfigureShouldExtractSubscription(IServiceCollection services)
     {
+        ApiServices.ConfigureShouldExtractApiName(services);
+        ProductServices.ConfigureShouldExtractProduct(services);
+
         services.TryAddSingleton<ShouldExtractSubscriptionHandler>();
         services.TryAddSingleton<ShouldExtractSubscription>(provider => provider.GetRequiredService<ShouldExtractSubscriptionHandler>().Handle);
     }

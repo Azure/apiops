@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,10 +18,11 @@ file delegate ValueTask WriteProductApiArtifacts(ApiName name, ProductApiDto dto
 
 file delegate ValueTask WriteProductApiInformationFile(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken);
 
-file sealed class ExtractProductApisHandler(ListProductApis list, WriteProductApiArtifacts writeArtifacts)
+file sealed class ExtractProductApisHandler(ListProductApis list, ShouldExtractApiName shouldExtractApi, WriteProductApiArtifacts writeArtifacts)
 {
     public async ValueTask Handle(ProductName productName, CancellationToken cancellationToken) =>
         await list(productName, cancellationToken)
+                .Where(api => shouldExtractApi(api.Name))
                 .IterParallel(async productapi => await writeArtifacts(productapi.Name, productapi.Dto, productName, cancellationToken),
                               cancellationToken);
 }
@@ -58,6 +60,7 @@ internal static class ProductApiServices
     {
         ConfigureListProductApis(services);
         ConfigureWriteProductApiArtifacts(services);
+        ApiServices.ConfigureShouldExtractApiName(services);
 
         services.TryAddSingleton<ExtractProductApisHandler>();
         services.TryAddSingleton<ExtractProductApis>(provider => provider.GetRequiredService<ExtractProductApisHandler>().Handle);

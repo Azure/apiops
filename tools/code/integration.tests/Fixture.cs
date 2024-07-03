@@ -1,4 +1,4 @@
-using common;
+﻿using common;
 using common.tests;
 using CsCheck;
 using LanguageExt;
@@ -12,6 +12,8 @@ namespace integration.tests;
 
 internal sealed record Fixture
 {
+    public required ManagementServiceName FirstServiceName { get; init; }
+    public required ManagementServiceName SecondServiceName { get; init; }
     public required ServiceModel ServiceModel { get; init; }
     public required ServiceModel PublishAllChangesModel { get; init; }
     public required ImmutableArray<ServiceModel> CommitModels { get; init; }
@@ -20,15 +22,18 @@ internal sealed record Fixture
     public required PublisherOptions PublisherOptions { get; init; }
 
     public static Gen<Fixture> Generate(string managementServiceNamePrefix) =>
-        from serviceName in GenerateManagementServiceName(managementServiceNamePrefix)
-        from serviceModel in ServiceModel.Generate(serviceName)
+        from firstServiceName in GenerateManagementServiceName(managementServiceNamePrefix)
+        from secondServiceName in GenerateManagementServiceName(managementServiceNamePrefix)
+        from serviceModel in ServiceModel.Generate()
         from publishAllChangesModel in GeneratePublishAllChangesModel(serviceModel)
         from commitModels in GenerateCommitModels(serviceModel)
-        let serviceDirectory = GetManagementServiceDirectory(serviceModel.Name)
+        from serviceDirectory in GetManagementServiceDirectory()
         from extractorOptions in ExtractorOptions.Generate(serviceModel)
         from publisherOptions in PublisherOptions.Generate(serviceModel)
         select new Fixture
         {
+            FirstServiceName = firstServiceName,
+            SecondServiceName = secondServiceName,
             ServiceModel = serviceModel,
             PublishAllChangesModel = publishAllChangesModel,
             CommitModels = commitModels,
@@ -39,7 +44,7 @@ internal sealed record Fixture
 
     // We want the name to change between tests, even if the seed is the same.
     // This avoids soft-delete issues with APIM
-    private static Gen<ManagementServiceName> GenerateManagementServiceName(string prefix) =>
+    public static Gen<ManagementServiceName> GenerateManagementServiceName(string prefix) =>
         from lorem in Generator.Lorem
         let characters = lorem.Paragraphs(3)
                               .Where(char.IsLetterOrDigit)
@@ -49,12 +54,17 @@ internal sealed record Fixture
         let name = $"{prefix}{new string(suffixCharacters)}"
         select ManagementServiceName.From(name);
 
-    private static ManagementServiceDirectory GetManagementServiceDirectory(ManagementServiceName serviceName)
-    {
-        var path = Path.Combine(Path.GetTempPath(), serviceName.ToString());
-        var directoryInfo = new DirectoryInfo(path);
-        return ManagementServiceDirectory.From(directoryInfo);
-    }
+    private static Gen<ManagementServiceDirectory> GetManagementServiceDirectory() =>
+        from lorem in Generator.Lorem
+        let characters = lorem.Paragraphs(3)
+                              .Where(char.IsLetterOrDigit)
+                              .Select(char.ToLowerInvariant)
+                              .ToArray()
+        from suffixCharacters in Gen.Shuffle(characters, 8)
+        let name = $"apiops-{new string(suffixCharacters)}"
+        let path = Path.Combine(Path.GetTempPath(), name)
+        let directoryInfo = new DirectoryInfo(path)
+        select ManagementServiceDirectory.From(directoryInfo);
 
     private static Gen<ServiceModel> GeneratePublishAllChangesModel(ServiceModel originalModel)
     {

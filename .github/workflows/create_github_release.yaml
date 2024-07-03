@@ -32,28 +32,29 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
-          Write-Information "Generating extractor..."
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
-          $outputFolderPath = "${{ runner.temp }}"
+          Write-Information "Creating output directory..."
+          $outputFolderPath = Join-Path "${{ runner.temp }}" "extractor-output"
+          New-Item -Path "$outputFolderPath" -ItemType "Directory"
 
+          Write-Information "Publishing application..."
+          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
-          $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
-          $exeFolderPath = Join-Path "$outputFolderPath" "extractor$exeFileExt"
-          $exeFileNameFinal = "${{ format('extractor.{0}', matrix.dotnet-runtime) }}$exeFileExt"
-          Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
-          echo "EXTRACTOR_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
+          Write-Information "Zipping application..."
+          $sourceFolderPath = Join-Path "$outputFolderPath" "*"
+          $destinationFilePath = Join-Path "$outputFolderPath" "extractor-${{ matrix.dotnet-runtime }}.zip"
+          Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath -CompressionLevel Optimal
+          "ZIP_FILE_PATH=$destinationFilePath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
           Write-Information "Execution complete."
         shell: pwsh
-        env:
-          EXTRACTOR_FILENAME: 
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          path: ${{ format('{0}/{1}', runner.temp, env.EXTRACTOR_FILENAME) }}
+          name: extractor-${{ matrix.dotnet-runtime }}
+          path: ${{ env.ZIP_FILE_PATH }}
 
   generate_publisher_artifacts:
     name: Generate publisher artifacts
@@ -78,28 +79,29 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
-          Write-Information "Generating publisher..."
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
-          $outputFolderPath = "${{ runner.temp }}"
+          Write-Information "Creating output directory..."
+          $outputFolderPath = Join-Path "${{ runner.temp }}" "publisher-output"
+          New-Item -Path "$outputFolderPath" -ItemType "Directory"
 
+          Write-Information "Publishing application..."
+          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
-          $exeFileExt = "${{ matrix.dotnet-runtime }}".Contains("win") ? ".exe" : ""
-          $exeFolderPath = Join-Path "$outputFolderPath" "publisher$exeFileExt"
-          $exeFileNameFinal = "${{ format('publisher.{0}', matrix.dotnet-runtime) }}$exeFileExt"
-          Rename-Item -Path "$exeFolderPath" -NewName  $exeFileNameFinal
-          echo "PUBLISHER_FILENAME=$exeFileNameFinal" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append  
+          Write-Information "Zipping application..."
+          $sourceFolderPath = Join-Path "$outputFolderPath" "*"
+          $destinationFilePath = Join-Path "$outputFolderPath" "publisher-${{ matrix.dotnet-runtime }}.zip"
+          Compress-Archive -Path $sourceFolderPath -DestinationPath $destinationFilePath -CompressionLevel Optimal
+          "ZIP_FILE_PATH=$destinationFilePath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
           Write-Information "Execution complete."
         shell: pwsh
-        env:
-          PUBLISHER_FILENAME: 
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          path: ${{ format('{0}/{1}', runner.temp, env.PUBLISHER_FILENAME) }}
+          name: publisher-${{ matrix.dotnet-runtime }}
+          path: ${{ env.ZIP_FILE_PATH }}
 
   generate_github_pipeline_artifacts:
     name: Generate GitHub artifacts
@@ -153,8 +155,9 @@ jobs:
         shell: pwsh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
+          name: github
           path: ${{ runner.temp }}/Github.zip
 
   generate_ado_pipeline_artifacts:
@@ -209,8 +212,9 @@ jobs:
         shell: pwsh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
+          name: ado
           path: ${{ runner.temp }}/Azure_DevOps.zip
 
   generate_release:
@@ -227,27 +231,29 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ${{github.workspace}}/artifact/extractor.win-x64.exe
-            ${{github.workspace}}/artifact/extractor.linux-x64
-            ${{github.workspace}}/artifact/extractor.linux-arm64
-            ${{github.workspace}}/artifact/extractor.linux-musl-x64
-            ${{github.workspace}}/artifact/extractor.linux-musl-arm64
-            ${{github.workspace}}/artifact/extractor.osx-arm64
-            ${{github.workspace}}/artifact/extractor.osx-x64
-            ${{github.workspace}}/artifact/publisher.win-x64.exe
-            ${{github.workspace}}/artifact/publisher.linux-x64
-            ${{github.workspace}}/artifact/publisher.linux-arm64
-            ${{github.workspace}}/artifact/publisher.linux-musl-x64
-            ${{github.workspace}}/artifact/publisher.linux-musl-arm64
-            ${{github.workspace}}/artifact/publisher.osx-arm64
-            ${{github.workspace}}/artifact/publisher.osx-x64
-            ${{github.workspace}}/artifact/Github.zip
-            ${{github.workspace}}/artifact/Azure_DevOps.zip
+            ${{github.workspace}}/extractor-linux-arm64/extractor-linux-arm64.zip
+            ${{github.workspace}}/extractor-linux-musl-arm64/extractor-linux-musl-arm64.zip
+            ${{github.workspace}}/extractor-linux-musl-x64/extractor-linux-musl-x64.zip
+            ${{github.workspace}}/extractor-linux-x64/extractor-linux-x64.zip
+            ${{github.workspace}}/extractor-osx-arm64/extractor-osx-arm64.zip
+            ${{github.workspace}}/extractor-osx-x64/extractor-osx-x64.zip
+            ${{github.workspace}}/extractor.osx-x64/extractor.osx-x64.zip
+            ${{github.workspace}}/extractor-win-x64/extractor-win-x64.zip
+            ${{github.workspace}}/publisher-linux-arm64/publisher-linux-arm64.zip
+            ${{github.workspace}}/publisher-linux-musl-arm64/publisher-linux-musl-arm64.zip
+            ${{github.workspace}}/publisher-linux-musl-x64/publisher-linux-musl-x64.zip
+            ${{github.workspace}}/publisher-linux-x64/publisher-linux-x64.zip
+            ${{github.workspace}}/publisher-osx-arm64/publisher-osx-arm64.zip
+            ${{github.workspace}}/publisher-osx-x64/publisher-osx-x64.zip
+            ${{github.workspace}}/publisher.osx-x64/publisher.osx-x64.zip
+            ${{github.workspace}}/publisher-win-x64/publisher-win-x64.zip
+            ${{github.workspace}}/github/Github.zip
+            ${{github.workspace}}/ado/Azure_DevOps.zip
           name: APIOps Toolkit for Azure APIM ${{ github.event.inputs.Release_Version }}
           tag_name: ${{ github.event.inputs.Release_Version }}
           generate_release_notes: true

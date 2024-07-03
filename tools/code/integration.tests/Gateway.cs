@@ -5,15 +5,44 @@ using CsCheck;
 using FluentAssertions;
 using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using publisher;
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace integration.tests;
+
+internal delegate ValueTask DeleteAllGateways(ManagementServiceName serviceName, CancellationToken cancellationToken);
+
+file sealed class DeleteAllGatewaysHandler(ILogger<DeleteAllGateways> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+{
+    public async ValueTask Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    {
+        using var _ = activitySource.StartActivity(nameof(DeleteAllGateways));
+
+        logger.LogInformation("Deleting all gateways in {ServiceName}.", serviceName);
+        var serviceUri = getServiceUri(serviceName);
+        await GatewaysUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+    }
+}
+
+internal static class GatewayServices
+{
+    public static void ConfigureDeleteAllGateways(IServiceCollection services)
+    {
+        ManagementServices.ConfigureGetManagementServiceUri(services);
+
+        services.TryAddSingleton<DeleteAllGatewaysHandler>();
+        services.TryAddSingleton<DeleteAllGateways>(provider => provider.GetRequiredService<DeleteAllGatewaysHandler>().Handle);
+    }
+}
 
 internal static class Gateway
 {
