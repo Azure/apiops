@@ -15,7 +15,7 @@ internal delegate ValueTask ExtractLoggers(CancellationToken cancellationToken);
 
 file delegate IAsyncEnumerable<(LoggerName Name, LoggerDto Dto)> ListLoggers(CancellationToken cancellationToken);
 
-file delegate bool ShouldExtractLogger(LoggerName name);
+internal delegate bool ShouldExtractLogger(LoggerName name);
 
 file delegate ValueTask WriteLoggerArtifacts(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
 
@@ -84,7 +84,7 @@ internal static class LoggerServices
         services.TryAddSingleton<ListLoggers>(provider => provider.GetRequiredService<ListLoggersHandler>().Handle);
     }
 
-    private static void ConfigureShouldExtractLogger(IServiceCollection services)
+    public static void ConfigureShouldExtractLogger(IServiceCollection services)
     {
         services.TryAddSingleton<ShouldExtractLoggerHandler>();
         services.TryAddSingleton<ShouldExtractLogger>(provider => provider.GetRequiredService<ShouldExtractLoggerHandler>().Handle);

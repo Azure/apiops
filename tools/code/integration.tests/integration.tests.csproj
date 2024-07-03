@@ -1,37 +1,25 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-	<PropertyGroup>
-		<TargetFramework>net8.0</TargetFramework>
-		<Nullable>enable</Nullable>
-		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-		<WarningsNotAsErrors>CA2007,CA1707,CA1716,CA1724,CA1848</WarningsNotAsErrors>
-		<AnalysisLevel>latest-all</AnalysisLevel>
-		<IsPackable>false</IsPackable>
-		<IsTestProject>true</IsTestProject>
-		<UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
-	</PropertyGroup>
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>CA2007,CA1848,CA1812</WarningsNotAsErrors>
+    <UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
+    <AnalysisLevel>8-all</AnalysisLevel>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+  </ItemGroup>
 
-	<ItemGroup>
-		<PackageReference Include="Azure.ResourceManager.ApiManagement" Version="1.1.0" />
-		<PackageReference Include="FluentAssertions" Version="6.12.0" />
-		<PackageReference Include="FluentAssertions.Web" Version="1.3.0" />
-		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
-		<PackageReference Include="NUnit" Version="4.1.0" />
-		<PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
-		<PackageReference Include="NUnit.Analyzers" Version="4.2.0">
-			<PrivateAssets>all</PrivateAssets>
-			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-		</PackageReference>
-		<PackageReference Include="coverlet.collector" Version="6.0.2">
-			<PrivateAssets>all</PrivateAssets>
-			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-		</PackageReference>
-	</ItemGroup>
-	
-	<ItemGroup>
-		<ProjectReference Include="..\common.tests\common.tests.csproj" />
-		<ProjectReference Include="..\extractor\extractor.csproj" />
-		<ProjectReference Include="..\publisher\publisher.csproj" />
-	</ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\common.tests\common.tests.csproj" />
+    <ProjectReference Include="..\extractor\extractor.csproj" />
+    <ProjectReference Include="..\publisher\publisher.csproj" />
+  </ItemGroup>
 
 </Project>

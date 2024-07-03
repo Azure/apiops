@@ -125,7 +125,8 @@ public static class ProductApiModule
     public static IAsyncEnumerable<ApiName> ListNames(this ProductApisUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
-                .Select(ApiName.From);
+                .Select(ApiName.From)
+                .Where(ApiName.IsNotRevisioned);
 
     public static IAsyncEnumerable<(ApiName Name, ProductApiDto Dto)> List(this ProductApisUri productApisUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         productApisUri.ListNames(pipeline, cancellationToken)

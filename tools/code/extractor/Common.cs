@@ -8,9 +8,11 @@ using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.JsonWebTokens;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 
@@ -20,6 +22,7 @@ internal static class CommonServices
 {
     public static void Configure(IServiceCollection services)
     {
+        services.AddSingleton(GetActivitySource);
         services.AddSingleton(GetAzureEnvironment);
         services.AddSingleton(GetTokenCredential);
         services.AddSingleton(GetHttpPipeline);
@@ -28,7 +31,11 @@ internal static class CommonServices
         services.AddSingleton(GetManagementServiceDirectory);
         services.AddSingleton(GetConfigurationJson);
         services.AddSingleton<ShouldExtractFactory>();
+        OpenTelemetryServices.Configure(services);
     }
+
+    private static ActivitySource GetActivitySource(IServiceProvider provider) =>
+        new("ApiOps.Extractor");
 
     private static AzureEnvironment GetAzureEnvironment(IServiceProvider provider)
     {
@@ -70,6 +77,11 @@ internal static class CommonServices
             AuthorityHost = azureAuthorityHost
         });
 
+    public static void ConfigureHttpPipeline(IServiceCollection services)
+    {
+        services.TryAddSingleton(GetHttpPipeline);
+    }
+
     private static HttpPipeline GetHttpPipeline(IServiceProvider provider)
     {
         var clientOptions = ClientOptions.Default;
@@ -98,6 +110,11 @@ internal static class CommonServices
         return ManagementServiceName.From(name);
     }
 
+    public static void ConfigureManagementServiceUri(IServiceCollection services)
+    {
+        services.TryAddSingleton(GetManagementServiceUri);
+    }
+
     private static ManagementServiceUri GetManagementServiceUri(IServiceProvider provider)
     {
         var azureEnvironment = provider.GetRequiredService<AzureEnvironment>();
@@ -120,6 +137,11 @@ internal static class CommonServices
         return ManagementServiceUri.From(uri);
     }
 
+    public static void ConfigureManagementServiceDirectory(IServiceCollection services)
+    {
+        services.TryAddSingleton(GetManagementServiceDirectory);
+    }
+
     private static ManagementServiceDirectory GetManagementServiceDirectory(IServiceProvider provider)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
@@ -127,6 +149,26 @@ internal static class CommonServices
         var directory = new DirectoryInfo(directoryPath);
 
         return ManagementServiceDirectory.From(directory);
+    }
+
+    public static void ConfigureShouldExtractFactory(IServiceCollection services)
+    {
+        ConfigureConfigurationJson(services);
+
+        services.TryAddSingleton(GetShouldExtractFactory);
+    }
+
+    private static ShouldExtractFactory GetShouldExtractFactory(IServiceProvider provider)
+    {
+        var configurationJson = provider.GetRequiredService<ConfigurationJson>();
+        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+
+        return new ShouldExtractFactory(configurationJson, loggerFactory);
+    }
+
+    private static void ConfigureConfigurationJson(IServiceCollection services)
+    {
+        services.TryAddSingleton(GetConfigurationJson);
     }
 
     private static ConfigurationJson GetConfigurationJson(IServiceProvider provider)

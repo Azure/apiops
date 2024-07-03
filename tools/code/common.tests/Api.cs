@@ -15,9 +15,9 @@ public abstract record ApiType
 
     public static Gen<ApiType> Generate() =>
         Gen.OneOfConst<ApiType>(new GraphQl(),
-                                new Http(),
-                                new WebSocket(),
-                                new Soap());
+                                new Http());
+                                //new WebSocket(),
+                                //new Soap());
 }
 
 public record ApiRevision

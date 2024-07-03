@@ -22,22 +22,25 @@ public sealed record CommitId
 
 public static class Git
 {
-    public static FrozenSet<FileInfo> GetChangedFilesInCommit(DirectoryInfo repositoryDirectory, CommitId commitId) =>
-        GetChanges(repositoryDirectory, commitId)
-            .SelectMany(change => (change.Path, change.OldPath) switch
-            {
-                (null, not null) => [change.OldPath],
-                (not null, null) => [change.Path],
-                (null, null) => [],
-                (var path, var oldPath) => new[] { path, oldPath }.Distinct()
-            })
-            .Select(path => new FileInfo(Path.Combine(repositoryDirectory.FullName, path)))
-            .ToFrozenSet(x => x.FullName);
-
-    private static TreeChanges GetChanges(DirectoryInfo repositoryDirectory, CommitId commitId)
+    public static FrozenSet<FileInfo> GetChangedFilesInCommit(DirectoryInfo directory, CommitId commitId)
     {
+        var repositoryDirectory = GetRepositoryDirectory(directory);
         using var repository = new Repository(repositoryDirectory.FullName);
 
+        return GetChanges(repository, commitId)
+                .SelectMany(change => (change.Path, change.OldPath) switch
+                {
+                    (null, not null) => [change.OldPath],
+                    (not null, null) => [change.Path],
+                    (null, null) => [],
+                    (var path, var oldPath) => new[] { path, oldPath }.Distinct()
+                })
+                .Select(path => new FileInfo(Path.Combine(repositoryDirectory.FullName, path)))
+                .ToFrozenSet(x => x.FullName);
+    }
+
+    private static TreeChanges GetChanges(Repository repository, CommitId commitId)
+    {
         var commit = GetCommit(repository, commitId);
 
         var parentCommit = commit.Parents.FirstOrDefault();
@@ -46,13 +49,31 @@ public static class Git
                          .Compare<TreeChanges>(parentCommit?.Tree, commit.Tree);
     }
 
+    private static DirectoryInfo GetRepositoryDirectory(DirectoryInfo directory)
+    {
+        var repositoryDirectory = directory.EnumerateDirectories(".git", SearchOption.TopDirectoryOnly)
+                                           .FirstOrDefault();
+
+        if (repositoryDirectory is not null)
+        {
+            return directory;
+        }
+
+        var parentDirectory = directory.Parent;
+
+        return parentDirectory is null
+                ? throw new InvalidOperationException("Could not find a Git repository.")
+                : GetRepositoryDirectory(parentDirectory);
+    }
+
     private static Commit GetCommit(Repository repository, CommitId commitId) =>
         repository.Commits
                   .Find(commit => commit.Id.Sha == commitId.Value)
                   .IfNone(() => throw new InvalidOperationException($"Could not find commit with ID {commitId.Value}."));
 
-    public static Option<CommitId> TryGetPreviousCommitId(DirectoryInfo repositoryDirectory, CommitId commitId)
+    public static Option<CommitId> TryGetPreviousCommitId(DirectoryInfo directory, CommitId commitId)
     {
+        var repositoryDirectory = GetRepositoryDirectory(directory);
         using var repository = new Repository(repositoryDirectory.FullName);
 
         var commit = GetCommit(repository, commitId);
@@ -64,9 +85,11 @@ public static class Git
         };
     }
 
-    public static Option<Stream> TryGetFileContentsInCommit(DirectoryInfo repositoryDirectory, FileInfo file, CommitId commitId)
+    public static Option<Stream> TryGetFileContentsInCommit(DirectoryInfo directory, FileInfo file, CommitId commitId)
     {
+        var repositoryDirectory = GetRepositoryDirectory(directory);
         using var repository = new Repository(repositoryDirectory.FullName);
+
         var relativePath = Path.GetRelativePath(repositoryDirectory.FullName, file.FullName);
         var relativePathString = Path.DirectorySeparatorChar == '\\'
                                     ? relativePath.Replace('\\', '/')
@@ -79,8 +102,9 @@ public static class Git
                 : blob.GetContentStream();
     }
 
-    public static FrozenSet<FileInfo> GetExistingFilesInCommit(DirectoryInfo repositoryDirectory, CommitId commitId)
+    public static FrozenSet<FileInfo> GetExistingFilesInCommit(DirectoryInfo directory, CommitId commitId)
     {
+        var repositoryDirectory = GetRepositoryDirectory(directory);
         using var repository = new Repository(repositoryDirectory.FullName);
 
         var commit = GetCommit(repository, commitId);

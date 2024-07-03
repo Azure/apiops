@@ -4,16 +4,44 @@ using common.tests;
 using CsCheck;
 using FluentAssertions;
 using LanguageExt;
-using LanguageExt.UnsafeValueAccess;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using publisher;
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace integration.tests;
+
+internal delegate ValueTask DeleteAllSubscriptions(ManagementServiceName serviceName, CancellationToken cancellationToken);
+
+file sealed class DeleteAllSubscriptionsHandler(ILogger<DeleteAllSubscriptions> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+{
+    public async ValueTask Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    {
+        using var _ = activitySource.StartActivity(nameof(DeleteAllSubscriptions));
+
+        logger.LogInformation("Deleting all subscriptions in {ServiceName}.", serviceName);
+        var serviceUri = getServiceUri(serviceName);
+        await SubscriptionsUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+    }
+}
+
+internal static class SubscriptionServices
+{
+    public static void ConfigureDeleteAllSubscriptions(IServiceCollection services)
+    {
+        ManagementServices.ConfigureGetManagementServiceUri(services);
+
+        services.TryAddSingleton<DeleteAllSubscriptionsHandler>();
+        services.TryAddSingleton<DeleteAllSubscriptions>(provider => provider.GetRequiredService<DeleteAllSubscriptionsHandler>().Handle);
+    }
+}
 
 internal static class Subscription
 {
@@ -22,19 +50,16 @@ internal static class Subscription
         from allowTracing in Gen.Bool.OptionOf()
         select original with
         {
-            DisplayName = displayName,
-            AllowTracing = allowTracing
+            DisplayName = displayName
         };
 
     public static Gen<SubscriptionDto> GenerateOverride(SubscriptionDto original) =>
         from displayName in SubscriptionModel.GenerateDisplayName()
-        from allowTracing in Gen.Bool.OptionOf()
         select new SubscriptionDto
         {
             Properties = new SubscriptionDto.SubscriptionContract
             {
-                DisplayName = displayName,
-                AllowTracing = allowTracing.ValueUnsafe()
+                DisplayName = displayName
             }
         };
 
@@ -52,8 +77,7 @@ internal static class Subscription
                     SubscriptionScope.Product product => $"/products/{product.Name}",
                     SubscriptionScope.Api api => $"/apis/{api.Name}",
                     _ => throw new InvalidOperationException($"Scope {model.Scope} not supported.")
-                },
-                AllowTracing = model.AllowTracing.ValueUnsafe()
+                }
             }
         };
 
@@ -120,8 +144,7 @@ internal static class Subscription
         new
         {
             DisplayName = dto.Properties.DisplayName ?? string.Empty,
-            Scope = string.Join('/', dto.Properties.Scope?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
-            AllowTracing = dto.Properties.AllowTracing ?? false
+            Scope = string.Join('/', dto.Properties.Scope?.Split('/')?.TakeLast(2)?.ToArray() ?? [])
         }.ToString()!;
 
     public static async ValueTask ValidatePublisherChanges(ManagementServiceDirectory serviceDirectory, IDictionary<SubscriptionName, SubscriptionDto> overrides, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
@@ -136,7 +159,8 @@ internal static class Subscription
 
         var expected = PublisherOptions.Override(fileResources, overrides)
                                        .MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
+        var actual = apimResources.MapValue(NormalizeDto)
+                                  .WhereKey(name => name != SubscriptionName.From("master"));
         actual.Should().BeEquivalentTo(expected);
     }
 

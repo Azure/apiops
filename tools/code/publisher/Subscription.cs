@@ -149,12 +149,12 @@ file sealed class PutSubscriptionHandler(FindSubscriptionDto findDto,
     }
 
     private async ValueTask PutProduct(SubscriptionDto dto, CancellationToken cancellationToken) =>
-        await Common.TryGetProductName(dto)
-                    .IterTask(putProduct.Invoke, cancellationToken);
+        await SubscriptionModule.TryGetProductName(dto)
+                                .IterTask(putProduct.Invoke, cancellationToken);
 
     private async ValueTask PutApi(SubscriptionDto dto, CancellationToken cancellationToken) =>
-        await Common.TryGetApiName(dto)
-                    .IterTask(putApi.Invoke, cancellationToken);
+        await SubscriptionModule.TryGetApiName(dto)
+                                .IterTask(putApi.Invoke, cancellationToken);
 
     public void Dispose() => semaphore.Dispose();
 }
@@ -234,7 +234,7 @@ file sealed class OnDeletingProductHandler(GetSubscriptionDtosInPreviousCommit g
                     var dtoOption = await kvp.Value(cancellationToken);
 
                     return from dto in dtoOption
-                           from productName in Common.TryGetProductName(dto)
+                           from productName in SubscriptionModule.TryGetProductName(dto)
                            select (ProductName: productName, SubscriptionName: kvp.Key);
                 })
                 .GroupBy(x => x.ProductName, x => x.SubscriptionName)
@@ -301,7 +301,7 @@ file sealed class OnDeletingApiHandler(GetSubscriptionDtosInPreviousCommit getDt
                     var dtoOption = await kvp.Value(cancellationToken);
 
                     return from dto in dtoOption
-                           from apiName in Common.TryGetApiName(dto)
+                           from apiName in SubscriptionModule.TryGetApiName(dto)
                            select (ApiName: apiName, SubscriptionName: kvp.Key);
                 })
                 .GroupBy(x => x.ApiName, x => x.SubscriptionName)
@@ -420,16 +420,4 @@ file static class Common
 {
     public static ILogger GetLogger(ILoggerFactory factory) =>
         factory.CreateLogger("SubscriptionPublisher");
-
-    public static Option<ProductName> TryGetProductName(SubscriptionDto dto) =>
-        from scope in Prelude.Optional(dto.Properties.Scope)
-        where scope.Contains("/products/", StringComparison.OrdinalIgnoreCase)
-        from productNameString in scope.Split('/').LastOrNone()
-        select ProductName.From(productNameString);
-
-    public static Option<ApiName> TryGetApiName(SubscriptionDto dto) =>
-        from scope in Prelude.Optional(dto.Properties.Scope)
-        where scope.Contains("/apis/", StringComparison.OrdinalIgnoreCase)
-        from apiNameString in scope.Split('/').LastOrNone()
-        select ApiName.From(apiNameString);
 }

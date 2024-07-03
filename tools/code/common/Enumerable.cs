@@ -231,7 +231,13 @@ public static class DictionaryExtensions
     public static ImmutableDictionary<TKey, TValue2> MapValue<TKey, TValue1, TValue2>(this IEnumerable<KeyValuePair<TKey, TValue1>> dictionary, Func<TValue1, TValue2> f) where TKey : notnull =>
         dictionary.ToImmutableDictionary(kvp => kvp.Key, kvp => f(kvp.Value));
 
+    public static ImmutableDictionary<TKey2, TValue> ChooseKey<TKey, TKey2, TValue>(this IEnumerable<KeyValuePair<TKey, TValue>> dictionary, Func<TKey, Option<TKey2>> f) where TKey2 : notnull =>
+        dictionary.Choose(kvp => from key2 in f(kvp.Key)
+                                 select KeyValuePair.Create(key2, kvp.Value))
+                  .ToImmutableDictionary();
+
     public static ImmutableDictionary<TKey, TValue2> ChooseValue<TKey, TValue1, TValue2>(this IEnumerable<KeyValuePair<TKey, TValue1>> dictionary, Func<TValue1, Option<TValue2>> f) where TKey : notnull =>
-        dictionary.Choose(kvp => f(kvp.Value).Map(value2 => KeyValuePair.Create(kvp.Key, value2)))
+        dictionary.Choose(kvp => from value2 in f(kvp.Value)
+                                 select KeyValuePair.Create(kvp.Key, value2))
                   .ToImmutableDictionary();
 }

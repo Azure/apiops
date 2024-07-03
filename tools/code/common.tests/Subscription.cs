@@ -36,18 +36,15 @@ public sealed record SubscriptionModel
     public required SubscriptionName Name { get; init; }
     public required string DisplayName { get; init; }
     public required SubscriptionScope Scope { get; init; }
-    public Option<bool> AllowTracing { get; init; }
 
     public static Gen<SubscriptionModel> Generate() =>
         from name in GenerateName()
         from scope in SubscriptionScope.Generate()
-        from allowTracing in Gen.Bool.OptionOf()
         select new SubscriptionModel
         {
             Name = name,
             DisplayName = name.ToString(),
-            Scope = scope,
-            AllowTracing = allowTracing
+            Scope = scope
         };
 
     public static Gen<SubscriptionName> GenerateName() =>

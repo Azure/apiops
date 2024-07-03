@@ -15,7 +15,7 @@ internal delegate ValueTask ExtractTags(CancellationToken cancellationToken);
 
 file delegate IAsyncEnumerable<(TagName Name, TagDto Dto)> ListTags(CancellationToken cancellationToken);
 
-file delegate bool ShouldExtractTag(TagName name);
+internal delegate bool ShouldExtractTag(TagName name);
 
 file delegate ValueTask WriteTagArtifacts(TagName name, TagDto dto, CancellationToken cancellationToken);
 
@@ -84,7 +84,7 @@ internal static class TagServices
         services.TryAddSingleton<ListTags>(provider => provider.GetRequiredService<ListTagsHandler>().Handle);
     }
 
-    private static void ConfigureShouldExtractTag(IServiceCollection services)
+    public static void ConfigureShouldExtractTag(IServiceCollection services)
     {
         services.TryAddSingleton<ShouldExtractTagHandler>();
         services.TryAddSingleton<ShouldExtractTag>(provider => provider.GetRequiredService<ShouldExtractTagHandler>().Handle);

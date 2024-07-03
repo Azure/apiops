@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -17,10 +18,11 @@ file delegate ValueTask WriteGatewayApiArtifacts(ApiName name, GatewayApiDto dto
 
 file delegate ValueTask WriteGatewayApiInformationFile(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
 
-file sealed class ExtractGatewayApisHandler(ListGatewayApis list, WriteGatewayApiArtifacts writeArtifacts)
+file sealed class ExtractGatewayApisHandler(ListGatewayApis list, ShouldExtractApiName shouldExtractApi, WriteGatewayApiArtifacts writeArtifacts)
 {
     public async ValueTask Handle(GatewayName gatewayName, CancellationToken cancellationToken) =>
         await list(gatewayName, cancellationToken)
+                .Where(api => shouldExtractApi(api.Name))
                 .IterParallel(async gatewayapi => await writeArtifacts(gatewayapi.Name, gatewayapi.Dto, gatewayName, cancellationToken),
                               cancellationToken);
 }
@@ -57,6 +59,7 @@ internal static class GatewayApiServices
     public static void ConfigureExtractGatewayApis(IServiceCollection services)
     {
         ConfigureListGatewayApis(services);
+        ApiServices.ConfigureShouldExtractApiName(services);
         ConfigureWriteGatewayApiArtifacts(services);
 
         services.TryAddSingleton<ExtractGatewayApisHandler>();

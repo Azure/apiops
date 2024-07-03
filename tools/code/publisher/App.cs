@@ -15,6 +15,10 @@ file delegate ValueTask PublishFile(FileInfo file, CancellationToken cancellatio
 
 file sealed class RunPublisherHandler(ProcessNamedValuesToPut processNamedValuesToPut,
                                       ProcessDeletedNamedValues processDeletedNamedValues,
+                                      ProcessBackendsToPut processBackendsToPut,
+                                      ProcessDeletedBackends processDeletedBackends,
+                                      ProcessPolicyFragmentsToPut processPolicyFragmentsToPut,
+                                      ProcessDeletedPolicyFragments processDeletedPolicyFragments,
                                       GetPublisherFiles getPublisherFiles,
                                       PublishFile publishFile,
                                       ILoggerFactory loggerFactory)
@@ -23,12 +27,14 @@ file sealed class RunPublisherHandler(ProcessNamedValuesToPut processNamedValues
 
     public async ValueTask Handle(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Putting named values...");
         await processNamedValuesToPut(cancellationToken);
+        await processBackendsToPut(cancellationToken);
+        await processPolicyFragmentsToPut(cancellationToken);
 
         await ProcessPublisherFiles(cancellationToken);
 
-        logger.LogInformation("Deleting named values...");
+        await processDeletedPolicyFragments(cancellationToken);
+        await processDeletedBackends(cancellationToken);
         await processDeletedNamedValues(cancellationToken);
 
         logger.LogInformation("Publisher completed.");
@@ -49,10 +55,8 @@ file sealed class RunPublisherHandler(ProcessNamedValuesToPut processNamedValues
 file sealed class PublishFileHandler(FindTagAction findTagAction,
                                      FindGatewayAction findGatewayAction,
                                      FindVersionSetAction findVersionSetAction,
-                                     FindBackendAction findBackendAction,
                                      FindLoggerAction findLoggerAction,
                                      FindDiagnosticAction findDiagnosticAction,
-                                     FindPolicyFragmentAction findPolicyFragmentAction,
                                      FindServicePolicyAction findServicePolicyAction,
                                      FindProductAction findProductAction,
                                      FindProductPolicyAction findProductPolicyAction,
@@ -77,10 +81,8 @@ file sealed class PublishFileHandler(FindTagAction findTagAction,
         findTagAction(file)
         | findGatewayAction(file)
         | findVersionSetAction(file)
-        | findBackendAction(file)
         | findLoggerAction(file)
         | findDiagnosticAction(file)
-        | findPolicyFragmentAction(file)
         | findServicePolicyAction(file)
         | findProductAction(file)
         | findProductPolicyAction(file)
@@ -102,6 +104,10 @@ internal static class AppServices
     {
         NamedValueServices.ConfigureProcessNamedValuesToPut(services);
         NamedValueServices.ConfigureProcessDeletedNamedValues(services);
+        BackendServices.ConfigureProcessBackendsToPut(services);
+        BackendServices.ConfigureProcessDeletedBackends(services);
+        PolicyFragmentServices.ConfigureProcessPolicyFragmentsToPut(services);
+        PolicyFragmentServices.ConfigureProcessDeletedPolicyFragments(services);
         ConfigurePublishFile(services);
 
         services.TryAddSingleton<RunPublisherHandler>();
@@ -113,7 +119,6 @@ internal static class AppServices
         TagServices.ConfigureFindTagAction(services);
         GatewayServices.ConfigureFindGatewayAction(services);
         VersionSetServices.ConfigureFindVersionSetAction(services);
-        BackendServices.ConfigureFindBackendAction(services);
         LoggerServices.ConfigureFindLoggerAction(services);
         DiagnosticServices.ConfigureFindDiagnosticAction(services);
         PolicyFragmentServices.ConfigureFindPolicyFragmentAction(services);
