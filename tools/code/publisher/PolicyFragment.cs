@@ -9,10 +9,14 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
+
+internal delegate ValueTask ProcessPolicyFragmentsToPut(CancellationToken cancellationToken);
+internal delegate ValueTask ProcessDeletedPolicyFragments(CancellationToken cancellationToken);
 
 internal delegate Option<PublisherAction> FindPolicyFragmentAction(FileInfo file);
 
@@ -33,6 +37,30 @@ file delegate ValueTask PutPolicyFragmentInApim(PolicyFragmentName name, PolicyF
 file delegate ValueTask DeletePolicyFragmentFromApim(PolicyFragmentName name, CancellationToken cancellationToken);
 
 internal delegate ValueTask OnDeletingPolicyFragment(PolicyFragmentName name, CancellationToken cancellationToken);
+
+file sealed class ProcessPolicyFragmentsToPutHandler(GetPublisherFiles getPublisherFiles,
+                                                     TryParsePolicyFragmentName tryParsePolicyFragmentName,
+                                                     IsPolicyFragmentNameInSourceControl isNameInSourceControl,
+                                                     PutPolicyFragment putPolicyFragment)
+{
+    public async ValueTask Handle(CancellationToken cancellationToken) =>
+        await getPublisherFiles()
+                .Choose(tryParsePolicyFragmentName.Invoke)
+                .Where(isNameInSourceControl.Invoke)
+                .IterParallel(putPolicyFragment.Invoke, cancellationToken);
+}
+
+file sealed class ProcessDeletedPolicyFragmentsHandler(GetPublisherFiles getPublisherFiles,
+                                                       TryParsePolicyFragmentName tryParsePolicyFragmentName,
+                                                       IsPolicyFragmentNameInSourceControl isNameInSourceControl,
+                                                       DeletePolicyFragment deletePolicyFragment)
+{
+    public async ValueTask Handle(CancellationToken cancellationToken) =>
+        await getPublisherFiles()
+                .Choose(tryParsePolicyFragmentName.Invoke)
+                .Where(name => isNameInSourceControl.Invoke(name) is false)
+                .IterParallel(deletePolicyFragment.Invoke, cancellationToken);
+}
 
 file sealed class FindPolicyFragmentActionHandler(TryParsePolicyFragmentName tryParseName, ProcessPolicyFragment processPolicyFragment)
 {
@@ -239,6 +267,26 @@ file sealed class DeletePolicyFragmentFromApimHandler(ILoggerFactory loggerFacto
 
 internal static class PolicyFragmentServices
 {
+    public static void ConfigureProcessPolicyFragmentsToPut(IServiceCollection services)
+    {
+        ConfigureTryParsePolicyFragmentName(services);
+        ConfigureIsPolicyFragmentNameInSourceControl(services);
+        ConfigurePutPolicyFragment(services);
+
+        services.TryAddSingleton<ProcessPolicyFragmentsToPutHandler>();
+        services.TryAddSingleton<ProcessPolicyFragmentsToPut>(provider => provider.GetRequiredService<ProcessPolicyFragmentsToPutHandler>().Handle);
+    }
+
+    public static void ConfigureProcessDeletedPolicyFragments(IServiceCollection services)
+    {
+        ConfigureTryParsePolicyFragmentName(services);
+        ConfigureIsPolicyFragmentNameInSourceControl(services);
+        ConfigureDeletePolicyFragment(services);
+
+        services.TryAddSingleton<ProcessDeletedPolicyFragmentsHandler>();
+        services.TryAddSingleton<ProcessDeletedPolicyFragments>(provider => provider.GetRequiredService<ProcessDeletedPolicyFragmentsHandler>().Handle);
+    }
+
     public static void ConfigureFindPolicyFragmentAction(IServiceCollection services)
     {
         ConfigureTryParsePolicyFragmentName(services);

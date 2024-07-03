@@ -17,6 +17,8 @@ file sealed class RunPublisherHandler(ProcessNamedValuesToPut processNamedValues
                                       ProcessDeletedNamedValues processDeletedNamedValues,
                                       ProcessBackendsToPut processBackendsToPut,
                                       ProcessDeletedBackends processDeletedBackends,
+                                      ProcessPolicyFragmentsToPut processPolicyFragmentsToPut,
+                                      ProcessDeletedPolicyFragments processDeletedPolicyFragments,
                                       GetPublisherFiles getPublisherFiles,
                                       PublishFile publishFile,
                                       ILoggerFactory loggerFactory)
@@ -27,11 +29,13 @@ file sealed class RunPublisherHandler(ProcessNamedValuesToPut processNamedValues
     {
         await processNamedValuesToPut(cancellationToken);
         await processBackendsToPut(cancellationToken);
+        await processPolicyFragmentsToPut(cancellationToken);
 
         await ProcessPublisherFiles(cancellationToken);
 
-        await processDeletedNamedValues(cancellationToken);
+        await processDeletedPolicyFragments(cancellationToken);
         await processDeletedBackends(cancellationToken);
+        await processDeletedNamedValues(cancellationToken);
 
         logger.LogInformation("Publisher completed.");
     }
@@ -80,7 +84,6 @@ file sealed class PublishFileHandler(FindTagAction findTagAction,
         | findVersionSetAction(file)
         | findLoggerAction(file)
         | findDiagnosticAction(file)
-        | findPolicyFragmentAction(file)
         | findServicePolicyAction(file)
         | findProductAction(file)
         | findProductPolicyAction(file)
@@ -104,6 +107,8 @@ internal static class AppServices
         NamedValueServices.ConfigureProcessDeletedNamedValues(services);
         BackendServices.ConfigureProcessBackendsToPut(services);
         BackendServices.ConfigureProcessDeletedBackends(services);
+        PolicyFragmentServices.ConfigureProcessPolicyFragmentsToPut(services);
+        PolicyFragmentServices.ConfigureProcessDeletedPolicyFragments(services);
         ConfigurePublishFile(services);
 
         services.TryAddSingleton<RunPublisherHandler>();
