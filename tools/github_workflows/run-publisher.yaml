@@ -25,8 +25,7 @@ jobs:
       # Set the COMMIT_ID env variable
       - name: Set the Commit Id
         id: commit
-        run: |
-          echo "::set-output name=commit_id::${{ github.sha }}"
+        run: echo "commit_id=${GITHUB_SHA}" >> $GITHUB_ENV
     outputs:
       commit_id: ${{ steps.commit.outputs.commit_id }}
   #Publish with Commit ID
