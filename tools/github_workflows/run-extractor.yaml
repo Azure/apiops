@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev # change this to match the dev environment created in settings 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
           
       - name: Run extractor without Config Yaml
         if: ${{ github.event.inputs.CONFIGURATION_YAML_PATH == 'Extract All APIs' }}
@@ -144,7 +144,7 @@ jobs:
         shell: pwsh
 
       - name: publish artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         env:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder  
         with:
@@ -155,10 +155,10 @@ jobs:
     needs: extract
     runs-on: [ubuntu-latest]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
           
       - name: Download artifacts-from-portal
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4
         env:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder  
         with:
@@ -166,7 +166,7 @@ jobs:
           path: "${{ GITHUB.WORKSPACE }}/${{ env.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}"
 
       - name: Create artifacts pull request
-        uses: peter-evans/create-pull-request@v3
+        uses: peter-evans/create-pull-request@v6
         env:
           API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH: apimartifacts  # change this to the artifacts folder          
         with:
