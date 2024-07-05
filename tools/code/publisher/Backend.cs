@@ -82,7 +82,7 @@ file sealed class TryParseBackendNameHandler(ManagementServiceDirectory serviceD
 /// </summary>
 file sealed class BackendSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<BackendName> locker = new();
+    private readonly AsyncKeyedLocker<BackendName> locker = new(LockOptions.Default);
     private ImmutableHashSet<BackendName> processedNames = [];
 
     /// <summary>
@@ -91,7 +91,7 @@ file sealed class BackendSemaphore : IDisposable
     public async ValueTask Run(BackendName name, Func<BackendName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))
