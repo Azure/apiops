@@ -61,7 +61,7 @@ file sealed class TryParseSubscriptionNameHandler(ManagementServiceDirectory ser
 /// </summary>
 file sealed class SubscriptionSemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<SubscriptionName> locker = new();
+    private readonly AsyncKeyedLocker<SubscriptionName> locker = new(LockOptions.Default);
     private ImmutableHashSet<SubscriptionName> processedNames = [];
 
     /// <summary>
@@ -70,7 +70,7 @@ file sealed class SubscriptionSemaphore : IDisposable
     public async ValueTask Run(SubscriptionName name, Func<SubscriptionName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))

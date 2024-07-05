@@ -59,7 +59,7 @@ file sealed class TryParseGatewayNameHandler(ManagementServiceDirectory serviceD
 /// </summary>
 file sealed class GatewaySemaphore : IDisposable
 {
-    private readonly AsyncKeyedLocker<GatewayName> locker = new();
+    private readonly AsyncKeyedLocker<GatewayName> locker = new(LockOptions.Default);
     private ImmutableHashSet<GatewayName> processedNames = [];
 
     /// <summary>
@@ -68,7 +68,7 @@ file sealed class GatewaySemaphore : IDisposable
     public async ValueTask Run(GatewayName name, Func<GatewayName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
     {
         // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
 
         // Only process each name once
         if (processedNames.Contains(name))
