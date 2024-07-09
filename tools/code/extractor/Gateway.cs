@@ -52,7 +52,10 @@ internal static class GatewayModule
 
         async ValueTask extractGateway(GatewayName name, GatewayDto dto, CancellationToken cancellationToken)
         {
-            await writeArtifacts(name, dto, cancellationToken);
+            if (name != GatewayName.Managed)
+            {
+                await writeArtifacts(name, dto, cancellationToken);
+            }
             await extractGatewayApis(name, cancellationToken);
         }
     }
