@@ -4,45 +4,41 @@ using LanguageExt;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractApis(CancellationToken cancellationToken);
+public delegate ValueTask ExtractApis(CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(ApiName Name, ApiDto Dto, Option<(ApiSpecification Specification, BinaryData Contents)> SpecificationOption)> ListApis(CancellationToken cancellationToken);
+public delegate bool ShouldExtractApiName(ApiName name);
+public delegate bool ShouldExtractApiDto(ApiDto dto);
+public delegate ValueTask WriteApiArtifacts(ApiName name, ApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, CancellationToken cancellationToken);
+public delegate ValueTask WriteApiInformationFile(ApiName name, ApiDto dto, CancellationToken cancellationToken);
+public delegate ValueTask WriteApiSpecificationFile(ApiName name, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken);
 
-internal delegate IAsyncEnumerable<(ApiName Name, ApiDto Dto, Option<(ApiSpecification Specification, BinaryData Contents)> SpecificationOption)> ListApis(CancellationToken cancellationToken);
-
-internal delegate bool ShouldExtractApiName(ApiName name);
-
-internal delegate bool ShouldExtractApiDto(ApiDto dto);
-
-internal delegate ValueTask WriteApiArtifacts(ApiName name, ApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteApiInformationFile(ApiName name, ApiDto dto, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteApiSpecificationFile(ApiName name, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken);
-
-internal static class ApiServices
+internal static class ApiModule
 {
-    public static void ConfigureExtractApis(IServiceCollection services)
+    public static void ConfigureExtractApis(IHostApplicationBuilder builder)
     {
-        ConfigureListApis(services);
-        ConfigureShouldExtractApiName(services);
-        ConfigureShouldExtractApiDto(services);
-        ConfigureWriteApiArtifacts(services);
-        ApiPolicyServices.ConfigureExtractApiPolicies(services);
-        ApiTagServices.ConfigureExtractApiTags(services);
-        ApiOperationServices.ConfigureExtractApiOperations(services);
+        ConfigureListApis(builder);
+        ConfigureShouldExtractApiName(builder);
+        ConfigureShouldExtractApiDto(builder);
+        ConfigureWriteApiArtifacts(builder);
+        ApiPolicyModule.ConfigureExtractApiPolicies(builder);
+        ApiTagModule.ConfigureExtractApiTags(builder);
+        ApiOperationModule.ConfigureExtractApiOperations(builder);
 
-        services.TryAddSingleton(ExtractApis);
+        builder.Services.TryAddSingleton(GetExtractApis);
     }
 
-    private static ExtractApis ExtractApis(IServiceProvider provider)
+    private static ExtractApis GetExtractApis(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListApis>();
         var shouldExtractName = provider.GetRequiredService<ShouldExtractApiName>();
@@ -51,8 +47,15 @@ internal static class ApiServices
         var extractApiPolicies = provider.GetRequiredService<ExtractApiPolicies>();
         var extractApiTags = provider.GetRequiredService<ExtractApiTags>();
         var extractApiOperations = provider.GetRequiredService<ExtractApiOperations>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractApis));
+
+            logger.LogInformation("Extracting APIs...");
+
             await list(cancellationToken)
                     .Where(api => shouldExtractName(api.Name))
                     .Where(api => shouldExtractDto(api.Dto))
@@ -62,6 +65,7 @@ internal static class ApiServices
                     .IterParallel(async group => await group.Iter(async api => await extractApi(api.Name, api.Dto, api.SpecificationOption, cancellationToken),
                                                                   cancellationToken),
                                   cancellationToken);
+        };
 
         async ValueTask extractApi(ApiName name, ApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, CancellationToken cancellationToken)
         {
@@ -72,19 +76,20 @@ internal static class ApiServices
         }
     }
 
-    private static void ConfigureListApis(IServiceCollection services)
+    private static void ConfigureListApis(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceUri(services);
-        CommonServices.ConfigureHttpPipeline(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton(ListApis);
+        builder.Services.TryAddSingleton(GetListApis);
     }
 
-    private static ListApis ListApis(IServiceProvider provider)
+    private static ListApis GetListApis(IServiceProvider provider)
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var configuration = provider.GetRequiredService<IConfiguration>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
         var defaultApiSpecification = getDefaultApiSpecification(configuration);
 
@@ -169,14 +174,14 @@ internal static class ApiServices
             };
     }
 
-    public static void ConfigureShouldExtractApiName(IServiceCollection services)
+    public static void ConfigureShouldExtractApiName(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureShouldExtractFactory(services);
+        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
 
-        services.TryAddSingleton(ShouldExtractApiName);
+        builder.Services.TryAddSingleton(GetShouldExtractApiName);
     }
 
-    private static ShouldExtractApiName ShouldExtractApiName(IServiceProvider provider)
+    private static ShouldExtractApiName GetShouldExtractApiName(IServiceProvider provider)
     {
         var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
 
@@ -185,31 +190,31 @@ internal static class ApiServices
         return name => shouldExtract(name);
     }
 
-    public static void ConfigureShouldExtractApiDto(IServiceCollection services)
+    public static void ConfigureShouldExtractApiDto(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton(ShouldExtractApiDto);
+        builder.Services.TryAddSingleton(GetShouldExtractApiDto);
     }
 
-    private static ShouldExtractApiDto ShouldExtractApiDto(IServiceProvider provider)
+    private static ShouldExtractApiDto GetShouldExtractApiDto(IServiceProvider provider)
     {
         var shouldExtractVersionSet = provider.GetRequiredService<ShouldExtractVersionSet>();
 
         return dto =>
             // Don't extract if its version set should not be extracted
-            ApiModule.TryGetVersionSetName(dto)
-                     .Map(shouldExtractVersionSet.Invoke)
-                     .IfNone(true);
+            common.ApiModule.TryGetVersionSetName(dto)
+                            .Map(shouldExtractVersionSet.Invoke)
+                            .IfNone(true);
     }
 
-    private static void ConfigureWriteApiArtifacts(IServiceCollection services)
+    private static void ConfigureWriteApiArtifacts(IHostApplicationBuilder builder)
     {
-        ConfigureWriteApiInformationFile(services);
-        ConfigureWriteApiSpecificationFile(services);
+        ConfigureWriteApiInformationFile(builder);
+        ConfigureWriteApiSpecificationFile(builder);
 
-        services.TryAddSingleton(WriteApiArtifacts);
+        builder.Services.TryAddSingleton(GetWriteApiArtifacts);
     }
 
-    private static WriteApiArtifacts WriteApiArtifacts(IServiceProvider provider)
+    private static WriteApiArtifacts GetWriteApiArtifacts(IServiceProvider provider)
     {
         var writeInformationFile = provider.GetRequiredService<WriteApiInformationFile>();
         var writeSpecificationFile = provider.GetRequiredService<WriteApiSpecificationFile>();
@@ -226,19 +231,17 @@ internal static class ApiServices
         };
     }
 
-    private static void ConfigureWriteApiInformationFile(IServiceCollection services)
+    private static void ConfigureWriteApiInformationFile(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceDirectory(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        services.TryAddSingleton(WriteApiInformationFile);
+        builder.Services.TryAddSingleton(GetWriteApiInformationFile);
     }
 
-    private static WriteApiInformationFile WriteApiInformationFile(IServiceProvider provider)
+    private static WriteApiInformationFile GetWriteApiInformationFile(IServiceProvider provider)
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
-        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-
-        var logger = Common.GetLogger(loggerFactory);
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (name, dto, cancellationToken) =>
         {
@@ -249,19 +252,17 @@ internal static class ApiServices
         };
     }
 
-    private static void ConfigureWriteApiSpecificationFile(IServiceCollection services)
+    private static void ConfigureWriteApiSpecificationFile(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceDirectory(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        services.TryAddSingleton(WriteApiSpecificationFile);
+        builder.Services.TryAddSingleton(GetWriteApiSpecificationFile);
     }
 
-    private static WriteApiSpecificationFile WriteApiSpecificationFile(IServiceProvider provider)
+    private static WriteApiSpecificationFile GetWriteApiSpecificationFile(IServiceProvider provider)
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
-        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-
-        var logger = Common.GetLogger(loggerFactory);
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (name, specification, contents, cancellationToken) =>
         {
@@ -271,10 +272,4 @@ internal static class ApiServices
             await specificationFile.WriteSpecification(contents, cancellationToken);
         };
     }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-         loggerFactory.CreateLogger("ApiExtractor");
 }

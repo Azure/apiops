@@ -182,17 +182,6 @@ public static class ProductModule
         return content.ToObjectFromJson<ProductDto>();
     }
 
-    public static async ValueTask<Option<ProductDto>> TryGetDto(this ProductUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<ProductDto>())
-                     .Match(Option<ProductDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<ProductDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this ProductUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

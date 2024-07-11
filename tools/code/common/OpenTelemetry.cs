@@ -1,7 +1,9 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using Azure.Monitor.OpenTelemetry.AspNetCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using OpenTelemetry.Instrumentation.Http;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -9,22 +11,34 @@ using System.Diagnostics;
 
 namespace common;
 
-public static class OpenTelemetryServices
+public static class OpenTelemetryModule
 {
-    public static void Configure(IServiceCollection services)
+    public static void Configure(IHostApplicationBuilder builder, string activitySourceName)
     {
-        var sourceName = services.BuildServiceProvider().GetService<ActivitySource>()?.Name ?? "ApiOps.*";
+        builder.Logging.AddOpenTelemetry(Configure);
+        Configure(builder.Services, builder.Configuration, activitySourceName);
+    }
+
+    private static void Configure(OpenTelemetryLoggerOptions options)
+    {
+        options.IncludeFormattedMessage = true;
+        options.IncludeScopes = true;
+    }
+
+    private static void Configure(IServiceCollection services, IConfiguration configuration, string activitySourceName)
+    {
+#pragma warning disable CA2000 // Dispose objects before losing scope
+        services.TryAddSingleton(new ActivitySource(activitySourceName));
+#pragma warning restore CA2000 // Dispose objects before losing scope
 
         services.AddOpenTelemetry()
                 .WithMetrics(metrics => metrics.AddHttpClientInstrumentation()
                                                .AddRuntimeInstrumentation()
-                                               .AddMeter("Azure.*"))
-                .WithTracing(tracing => tracing.AddHttpClientInstrumentation(ConfigureHttpClientTraceInstrumentationOptions)
-                                               .AddSource("Azure.*")
-                                               .AddSource(sourceName)
+                                               .AddMeter("*"))
+                .WithTracing(tracing => tracing.AddHttpClientInstrumentation()
+                                               .AddSource("*")
                                                .SetSampler<AlwaysOnSampler>());
 
-        var configuration = services.BuildServiceProvider().GetRequiredService<IConfiguration>();
         configuration.TryGetValue("OTEL_EXPORTER_OTLP_ENDPOINT")
                      .Iter(_ =>
                      {
@@ -33,10 +47,9 @@ public static class OpenTelemetryServices
                                  .ConfigureOpenTelemetryMeterProvider(metrics => metrics.AddOtlpExporter())
                                  .ConfigureOpenTelemetryTracerProvider(tracing => tracing.AddOtlpExporter());
                      });
-    }
 
-    private static void ConfigureHttpClientTraceInstrumentationOptions(HttpClientTraceInstrumentationOptions options)
-    {
-        options.FilterHttpRequestMessage = (_) => Activity.Current?.Parent?.Source?.Name != "Azure.Core.Http";
+        configuration.TryGetValue("APPLICATIONINSIGHTS_CONNECTION_STRING")
+                     .Iter(_ => services.AddOpenTelemetry()
+                                        .UseAzureMonitor());
     }
 }

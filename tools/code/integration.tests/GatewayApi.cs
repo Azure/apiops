@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal static class GatewayApi
+internal static class GatewayApiModule
 {
     public static async ValueTask Put(IEnumerable<GatewayApiModel> models, GatewayName gatewayName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await models.IterParallel(async model =>
@@ -42,16 +42,16 @@ internal static class GatewayApi
 
     public static async ValueTask ValidateExtractedArtifacts(ManagementServiceDirectory serviceDirectory, GatewayName gatewayName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var apimResources = await GetApimResources(gatewayName, serviceUri, pipeline, cancellationToken);
+        var gatewaymResources = await GetGatewaymResources(gatewayName, serviceUri, pipeline, cancellationToken);
         var fileResources = await GetFileResources(gatewayName, serviceDirectory, cancellationToken);
 
-        var expected = apimResources.MapValue(NormalizeDto);
+        var expected = gatewaymResources.MapValue(NormalizeDto);
         var actual = fileResources.MapValue(NormalizeDto);
 
         actual.Should().BeEquivalentTo(expected);
     }
 
-    private static async ValueTask<FrozenDictionary<ApiName, GatewayApiDto>> GetApimResources(GatewayName gatewayName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    private static async ValueTask<FrozenDictionary<ApiName, GatewayApiDto>> GetGatewaymResources(GatewayName gatewayName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var uri = GatewayApisUri.From(gatewayName, serviceUri);
 
@@ -60,11 +60,11 @@ internal static class GatewayApi
     }
 
     private static async ValueTask<FrozenDictionary<ApiName, GatewayApiDto>> GetFileResources(GatewayName gatewayName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await GatewayApiModule.ListInformationFiles(gatewayName, serviceDirectory)
-                                .ToAsyncEnumerable()
-                                .SelectAwait(async file => (file.Parent.Name,
-                                                            await file.ReadDto(cancellationToken)))
-                                .ToFrozenDictionary(cancellationToken);
+        await common.GatewayApiModule.ListInformationFiles(gatewayName, serviceDirectory)
+                                 .ToAsyncEnumerable()
+                                 .SelectAwait(async file => (file.Parent.Name,
+                                                             await file.ReadDto(cancellationToken)))
+                                 .ToFrozenDictionary(cancellationToken);
 
     private static string NormalizeDto(GatewayApiDto dto) =>
         nameof(GatewayApiDto);
@@ -77,10 +77,10 @@ internal static class GatewayApi
 
     private static async ValueTask ValidatePublisherChanges(GatewayName gatewayName, IDictionary<ApiName, GatewayApiDto> fileResources, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var apimResources = await GetApimResources(gatewayName, serviceUri, pipeline, cancellationToken);
+        var gatewaymResources = await GetGatewaymResources(gatewayName, serviceUri, pipeline, cancellationToken);
 
         var expected = fileResources.MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
+        var actual = gatewaymResources.MapValue(NormalizeDto);
         actual.Should().BeEquivalentTo(expected);
     }
 

@@ -3,6 +3,7 @@ using LanguageExt;
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 
 namespace common.tests;
@@ -67,13 +68,13 @@ public record ServiceModel
     public static Gen<FrozenSet<ApiModel>> UpdateApis(FrozenSet<ApiModel> apis,
                                                       ICollection<VersionSetModel> versionSets,
                                                       ICollection<TagModel> tags) =>
-        apis.Map(api => from version in UpdateApiVersion(versionSets)
-                        from revisions in UpdateApiRevisions(api.Revisions, tags)
-                        select api with
-                        {
-                            Version = version,
-                            Revisions = revisions
-                        })
+        apis.Select(api => from version in UpdateApiVersion(versionSets)
+                           from revisions in UpdateApiRevisions(api.Revisions, tags)
+                           select api with
+                           {
+                               Version = version,
+                               Revisions = revisions
+                           })
             .SequenceToFrozenSet(apis.Comparer);
 
 
@@ -92,11 +93,11 @@ public record ServiceModel
     }
 
     private static Gen<FrozenSet<ApiRevision>> UpdateApiRevisions(FrozenSet<ApiRevision> revisions, ICollection<TagModel> tags) =>
-        revisions.Map(revision => from tags in UpdateApiTags(revision.Tags, tags)
-                                  select revision with
-                                  {
-                                      Tags = tags
-                                  })
+        revisions.Select(revision => from tags in UpdateApiTags(revision.Tags, tags)
+                                     select revision with
+                                     {
+                                         Tags = tags
+                                     })
                  .SequenceToFrozenSet(revisions.Comparer);
 
     private static Gen<FrozenSet<ApiTagModel>> UpdateApiTags(FrozenSet<ApiTagModel> apiTags, ICollection<TagModel> tags)
@@ -107,7 +108,8 @@ public record ServiceModel
                                   .ToFrozenSet(apiTags.Comparer));
         }
 
-        var tagNames = tags.Select(tag => tag.Name);
+        var tagNames = tags.Select(tag => tag.Name)
+                           .ToImmutableArray();
 
         return from apiTagNames in Generator.SubImmutableArrayOf(tagNames)
                select apiTagNames.Select(tagName => new ApiTagModel { Name = tagName })
@@ -125,13 +127,13 @@ public record ServiceModel
 
         var loggersArray = loggers.ToArray();
 
-        return from updates in diagnostics.Map(diagnostic => from logger in Gen.OneOfConst(loggersArray)
-                                                             select diagnostic with
-                                                             {
-                                                                 // Diagnostic name must be "azuremonitor" if the logger type is AzureMonitor
-                                                                 Name = logger.Type is LoggerType.AzureMonitor ? DiagnosticName.From("azuremonitor") : diagnostic.Name,
-                                                                 LoggerName = logger.Name
-                                                             })
+        return from updates in diagnostics.Select(diagnostic => from logger in Gen.OneOfConst(loggersArray)
+                                                                select diagnostic with
+                                                                {
+                                                                    // Diagnostic name must be "azuremonitor" if the logger type is AzureMonitor
+                                                                    Name = logger.Type is LoggerType.AzureMonitor ? DiagnosticName.From("azuremonitor") : diagnostic.Name,
+                                                                    LoggerName = logger.Name
+                                                                })
                                           .SequenceToFrozenSet(diagnostics.Comparer)
                select updates;
     }
@@ -153,11 +155,11 @@ public record ServiceModel
 
         var productsArray = products.ToArray();
 
-        return from updates in subscriptions.Map(subscription => from product in Gen.OneOfConst(productsArray)
-                                                                 select subscription with
-                                                                 {
-                                                                     Scope = new SubscriptionScope.Product { Name = product.Name }
-                                                                 })
+        return from updates in subscriptions.Select(subscription => from product in Gen.OneOfConst(productsArray)
+                                                                    select subscription with
+                                                                    {
+                                                                        Scope = new SubscriptionScope.Product { Name = product.Name }
+                                                                    })
                                           .SequenceToFrozenSet(subscriptions.Comparer)
                select updates;
     }
@@ -172,11 +174,11 @@ public record ServiceModel
 
         var apisArray = apis.ToArray();
 
-        return from updates in subscriptions.Map(subscription => from api in Gen.OneOfConst(apisArray)
-                                                                 select subscription with
-                                                                 {
-                                                                     Scope = new SubscriptionScope.Api { Name = api.Name }
-                                                                 })
+        return from updates in subscriptions.Select(subscription => from api in Gen.OneOfConst(apisArray)
+                                                                    select subscription with
+                                                                    {
+                                                                        Scope = new SubscriptionScope.Api { Name = api.Name }
+                                                                    })
                                           .SequenceToFrozenSet(subscriptions.Comparer)
                select updates;
     }
@@ -185,15 +187,15 @@ public record ServiceModel
                                                               ICollection<GroupModel> groups,
                                                               ICollection<TagModel> tags,
                                                               ICollection<ApiModel> apis) =>
-        products.Map(product => from productGroups in UpdateProductGroups(product.Groups, groups)
-                                from productTags in UpdateProductTags(product.Tags, tags)
-                                from productApis in UpdateProductApis(product.Apis, apis)
-                                select product with
-                                {
-                                    Groups = productGroups,
-                                    Tags = productTags,
-                                    Apis = productApis
-                                })
+        products.Select(product => from productGroups in UpdateProductGroups(product.Groups, groups)
+                                   from productTags in UpdateProductTags(product.Tags, tags)
+                                   from productApis in UpdateProductApis(product.Apis, apis)
+                                   select product with
+                                   {
+                                       Groups = productGroups,
+                                       Tags = productTags,
+                                       Apis = productApis
+                                   })
                 .SequenceToFrozenSet(products.Comparer);
 
     private static Gen<FrozenSet<ProductGroupModel>> UpdateProductGroups(FrozenSet<ProductGroupModel> productGroups, ICollection<GroupModel> groups)
@@ -206,8 +208,8 @@ public record ServiceModel
 
         var groupNames = groups.Select(group => group.Name).ToArray();
 
-        return productGroups.Map(productGroup => from groupName in Gen.OneOfConst(groupNames)
-                                                 select productGroup with { Name = groupName })
+        return productGroups.Select(productGroup => from groupName in Gen.OneOfConst(groupNames)
+                                                    select productGroup with { Name = groupName })
                             .SequenceToFrozenSet(productGroups.Comparer);
     }
 
@@ -221,8 +223,8 @@ public record ServiceModel
 
         var tagNames = tags.Select(tag => tag.Name).ToArray();
 
-        return productTags.Map(productTag => from tagName in Gen.OneOfConst(tagNames)
-                                             select productTag with { Name = tagName })
+        return productTags.Select(productTag => from tagName in Gen.OneOfConst(tagNames)
+                                                select productTag with { Name = tagName })
                             .SequenceToFrozenSet(productTags.Comparer);
     }
 
@@ -236,17 +238,17 @@ public record ServiceModel
 
         var apiNames = apis.Select(api => api.Name).ToArray();
 
-        return productApis.Map(productApi => from apiName in Gen.OneOfConst(apiNames)
-                                             select productApi with { Name = apiName })
+        return productApis.Select(productApi => from apiName in Gen.OneOfConst(apiNames)
+                                                select productApi with { Name = apiName })
                             .SequenceToFrozenSet(productApis.Comparer);
     }
 
     public static Gen<FrozenSet<GatewayModel>> UpdateGateways(FrozenSet<GatewayModel> gateways, ICollection<ApiModel> apis) =>
-        gateways.Map(gateway => from gatewayApis in UpdateGatewayApis(gateway.Apis, apis)
-                                select gateway with
-                                {
-                                    Apis = gatewayApis
-                                })
+        gateways.Select(gateway => from gatewayApis in UpdateGatewayApis(gateway.Apis, apis)
+                                   select gateway with
+                                   {
+                                       Apis = gatewayApis
+                                   })
                 .SequenceToFrozenSet(gateways.Comparer);
 
     private static Gen<FrozenSet<GatewayApiModel>> UpdateGatewayApis(FrozenSet<GatewayApiModel> gatewayApis, ICollection<ApiModel> apis)
@@ -259,8 +261,8 @@ public record ServiceModel
 
         var apiNames = apis.Select(api => api.Name).ToArray();
 
-        return gatewayApis.Map(gatewayApi => from apiName in Gen.OneOfConst(apiNames)
-                                             select gatewayApi with { Name = apiName })
+        return gatewayApis.Select(gatewayApi => from apiName in Gen.OneOfConst(apiNames)
+                                                select gatewayApi with { Name = apiName })
                             .SequenceToFrozenSet(gatewayApis.Comparer);
     }
 }

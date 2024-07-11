@@ -2,52 +2,59 @@
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractApiPolicies(ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask ExtractApiPolicies(ApiName apiName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(ApiPolicyName Name, ApiPolicyDto Dto)> ListApiPolicies(ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask WriteApiPolicyArtifacts(ApiPolicyName name, ApiPolicyDto dto, ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask WriteApiPolicyFile(ApiPolicyName name, ApiPolicyDto dto, ApiName apiName, CancellationToken cancellationToken);
 
-internal delegate IAsyncEnumerable<(ApiPolicyName Name, ApiPolicyDto Dto)> ListApiPolicies(ApiName apiName, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteApiPolicyArtifacts(ApiPolicyName name, ApiPolicyDto dto, ApiName apiName, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteApiPolicyFile(ApiPolicyName name, ApiPolicyDto dto, ApiName apiName, CancellationToken cancellationToken);
-
-internal static class ApiPolicyServices
+internal static class ApiPolicyModule
 {
-    public static void ConfigureExtractApiPolicies(IServiceCollection services)
+    public static void ConfigureExtractApiPolicies(IHostApplicationBuilder builder)
     {
-        ConfigureListApiPolicies(services);
-        ConfigureWriteApiPolicyArtifacts(services);
+        ConfigureListApiPolicies(builder);
+        ConfigureWriteApiPolicyArtifacts(builder);
 
-        services.TryAddSingleton(ExtractApiPolicies);
+        builder.Services.TryAddSingleton(GetExtractApiPolicies);
     }
 
-    private static ExtractApiPolicies ExtractApiPolicies(IServiceProvider provider)
+    private static ExtractApiPolicies GetExtractApiPolicies(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListApiPolicies>();
         var writeArtifacts = provider.GetRequiredService<WriteApiPolicyArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (apiName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractApiPolicies));
+
+            logger.LogInformation("Extracting policies for API {ApiName}...", apiName);
+
             await list(apiName, cancellationToken)
                     .IterParallel(async policy => await writeArtifacts(policy.Name, policy.Dto, apiName, cancellationToken),
                                   cancellationToken);
+        };
     }
 
-    private static void ConfigureListApiPolicies(IServiceCollection services)
+    private static void ConfigureListApiPolicies(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceUri(services);
-        CommonServices.ConfigureHttpPipeline(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton(ListApiPolicies);
+        builder.Services.TryAddSingleton(GetListApiPolicies);
     }
 
-    private static ListApiPolicies ListApiPolicies(IServiceProvider provider)
+    private static ListApiPolicies GetListApiPolicies(IServiceProvider provider)
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
@@ -57,14 +64,14 @@ internal static class ApiPolicyServices
                           .List(pipeline, cancellationToken);
     }
 
-    private static void ConfigureWriteApiPolicyArtifacts(IServiceCollection services)
+    private static void ConfigureWriteApiPolicyArtifacts(IHostApplicationBuilder builder)
     {
-        ConfigureWriteApiPolicyFile(services);
+        ConfigureWriteApiPolicyFile(builder);
 
-        services.TryAddSingleton(WriteApiPolicyArtifacts);
+        builder.Services.TryAddSingleton(GetWriteApiPolicyArtifacts);
     }
 
-    private static WriteApiPolicyArtifacts WriteApiPolicyArtifacts(IServiceProvider provider)
+    private static WriteApiPolicyArtifacts GetWriteApiPolicyArtifacts(IServiceProvider provider)
     {
         var writePolicyFile = provider.GetRequiredService<WriteApiPolicyFile>();
 
@@ -72,19 +79,17 @@ internal static class ApiPolicyServices
             await writePolicyFile(name, dto, apiName, cancellationToken);
     }
 
-    private static void ConfigureWriteApiPolicyFile(IServiceCollection services)
+    private static void ConfigureWriteApiPolicyFile(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceDirectory(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        services.TryAddSingleton(WriteApiPolicyFile);
+        builder.Services.TryAddSingleton(GetWriteApiPolicyFile);
     }
 
-    private static WriteApiPolicyFile WriteApiPolicyFile(IServiceProvider provider)
+    private static WriteApiPolicyFile GetWriteApiPolicyFile(IServiceProvider provider)
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
-        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-
-        var logger = Common.GetLogger(loggerFactory);
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (name, dto, apiName, cancellationToken) =>
         {
@@ -95,10 +100,4 @@ internal static class ApiPolicyServices
             await policyFile.WritePolicy(policy, cancellationToken);
         };
     }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("ApiPolicyExtractor");
 }

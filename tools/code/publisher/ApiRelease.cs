@@ -2,59 +2,62 @@
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate ValueTask PutApiReleaseInApim(ApiReleaseName name, ApiReleaseDto dto, ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask PutApiReleaseInApim(ApiReleaseName name, ApiReleaseDto dto, ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteApiReleaseFromApim(ApiReleaseName name, ApiName apiName, CancellationToken cancellationToken);
 
-internal delegate ValueTask DeleteApiReleaseFromApim(ApiReleaseName name, ApiName apiName, CancellationToken cancellationToken);
-
-file sealed class PutApiReleaseInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
+public static class ApiReleaseModule
 {
-    private readonly ILogger logger = Common.CreateLogger(loggerFactory);
-
-    public async ValueTask Handle(ApiReleaseName name, ApiReleaseDto dto, ApiName apiName, CancellationToken cancellationToken)
+    public static void ConfigurePutApiReleaseInApim(IHostApplicationBuilder builder)
     {
-        logger.LogInformation("Putting API release {ApiReleaseName} in API {ApiName}...", name, apiName);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        var uri = ApiReleaseUri.From(name, apiName, serviceUri);
-        await uri.PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteApiReleaseFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.CreateLogger(loggerFactory);
-
-    public async ValueTask Handle(ApiReleaseName name, ApiName apiName, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Deleting API release {ApiReleaseName} from API {ApiName}...", name, apiName);
-
-        var uri = ApiReleaseUri.From(name, apiName, serviceUri);
-        await uri.Delete(pipeline, cancellationToken);
-    }
-}
-
-internal static class ApiReleaseServices
-{
-    public static void ConfigurePutApiReleaseInApim(IServiceCollection services)
-    {
-        services.TryAddSingleton<PutApiReleaseInApimHandler>();
-        services.TryAddSingleton<PutApiReleaseInApim>(provider => provider.GetRequiredService<PutApiReleaseInApimHandler>().Handle);
+        builder.Services.TryAddSingleton(GetPutApiReleaseInApim);
     }
 
-    public static void ConfigureDeleteApiReleaseFromApim(IServiceCollection services)
+    private static PutApiReleaseInApim GetPutApiReleaseInApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteApiReleaseFromApimHandler>();
-        services.TryAddSingleton<DeleteApiReleaseFromApim>(provider => provider.GetRequiredService<DeleteApiReleaseFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger CreateLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("ApiReleasePublisher");
+        return async (name, dto, apiName, cancellationToken) =>
+        {
+            logger.LogInformation("Putting API release {ApiReleaseName} in API {ApiName}...", name, apiName);
+
+            await ApiReleaseUri.From(name, apiName, serviceUri)
+                               .PutDto(dto, pipeline, cancellationToken);
+        };
+    }
+
+    public static void ConfigureDeleteApiReleaseFromApim(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteApiReleaseFromApim);
+    }
+
+    private static DeleteApiReleaseFromApim GetDeleteApiReleaseFromApim(IServiceProvider provider)
+    {
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, apiName, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting API release {ApiReleaseName} from API {ApiName}...", name, apiName);
+
+            await ApiReleaseUri.From(name, apiName, serviceUri)
+                               .Delete(pipeline, cancellationToken);
+        };
+    }
 }

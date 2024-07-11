@@ -26,13 +26,25 @@ public static class HttpPipelineExtensions
     {
         var either = await pipeline.TryGetContent(uri, cancellationToken);
 
-        return either.IfLeft(response =>
+        return either.IfLeftThrow(uri);
+    }
+
+    /// <summary>
+    /// Gets the response content. If the status code is <see cref="HttpStatusCode.NotFound"/>, returns <see cref="Option.None"/>.
+    /// </summary>
+    public static async ValueTask<Option<BinaryData>> GetContentOption(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
+    {
+        var either = await pipeline.TryGetContent(uri, cancellationToken);
+
+        return either.Match(response =>
         {
             using (response)
             {
-                throw response.ToHttpRequestException(uri);
+                return response.Status == (int)HttpStatusCode.NotFound
+                          ? Option<BinaryData>.None
+                          : throw response.ToHttpRequestException(uri);
             }
-        });
+        }, Option<BinaryData>.Some);
     }
 
     public static async ValueTask<Either<Response, BinaryData>> TryGetContent(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
@@ -57,6 +69,15 @@ public static class HttpPipelineExtensions
     public static HttpRequestException ToHttpRequestException(this Response response, Uri requestUri) =>
         new(message: $"HTTP request to URI {requestUri} failed with status code {response.Status}. Content is '{response.Content}'.", inner: null, statusCode: (HttpStatusCode)response.Status);
 
+    private static T IfLeftThrow<T>(this Either<Response, T> either, Uri requestUri) =>
+        either.IfLeft(response =>
+        {
+            using (response)
+            {
+                throw response.ToHttpRequestException(requestUri);
+            }
+        });
+
     public static async IAsyncEnumerable<JsonObject> ListJsonObjects(this HttpPipeline pipeline, Uri uri, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         Uri? nextLink = uri;
@@ -66,8 +87,8 @@ public static class HttpPipelineExtensions
             var responseJson = await pipeline.GetJsonObject(nextLink, cancellationToken);
 
             var values = responseJson.TryGetJsonArrayProperty("value")
-                                     .IfLeft(() => new JsonArray())
-                                     .GetJsonObjects();
+                                     .IfLeft(() => [])
+                                     .PickJsonObjects();
 
             foreach (var value in values)
             {
@@ -83,13 +104,17 @@ public static class HttpPipelineExtensions
     {
         var either = await pipeline.TryGetJsonObject(uri, cancellationToken);
 
-        return either.IfLeft(response =>
-        {
-            using (response)
-            {
-                throw response.ToHttpRequestException(uri);
-            }
-        });
+        return either.IfLeftThrow(uri);
+    }
+
+    /// <summary>
+    /// Gets the response content as a JSON object. If the status code is <see cref="HttpStatusCode.NotFound"/>, returns <see cref="Option.None"/>.
+    /// </summary>
+    public static async ValueTask<Option<JsonObject>> GetJsonObjectOption(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
+    {
+        var option = await pipeline.GetContentOption(uri, cancellationToken);
+
+        return option.Map(content => content.ToObjectFromJson<JsonObject>());
     }
 
     public static async ValueTask<Either<Response, JsonObject>> TryGetJsonObject(this HttpPipeline pipeline, Uri uri, CancellationToken cancellationToken)
@@ -103,16 +128,7 @@ public static class HttpPipelineExtensions
     {
         var either = await pipeline.TryDeleteResource(uri, waitForCompletion, cancellationToken);
 
-        either.IfLeft(response =>
-        {
-            using (response)
-            {
-                if (response.Status is not (int)HttpStatusCode.NotFound)
-                {
-                    throw response.ToHttpRequestException(uri);
-                }
-            }
-        });
+        either.IfLeftThrow(uri);
     }
 
     public static async ValueTask<Either<Response, Unit>> TryDeleteResource(this HttpPipeline pipeline, Uri uri, bool waitForCompletion, CancellationToken cancellationToken)

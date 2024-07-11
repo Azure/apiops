@@ -182,17 +182,6 @@ public static class SubscriptionModule
         return content.ToObjectFromJson<SubscriptionDto>();
     }
 
-    public static async ValueTask<Option<SubscriptionDto>> TryGetDto(this SubscriptionUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<SubscriptionDto>())
-                     .Match(Option<SubscriptionDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<SubscriptionDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this SubscriptionUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

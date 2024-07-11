@@ -1,267 +1,249 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindApiTagAction(FileInfo file);
+public delegate ValueTask PutApiTags(CancellationToken cancellationToken);
+public delegate Option<(TagName Name, ApiName ApiName)> TryParseApiTagName(FileInfo file);
+public delegate bool IsApiTagNameInSourceControl(TagName name, ApiName apiName);
+public delegate ValueTask PutApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<ApiTagDto>> FindApiTagDto(TagName name, ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask PutApiTagInApim(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteApiTags(CancellationToken cancellationToken);
+public delegate ValueTask DeleteApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteApiTagFromApim(TagName name, ApiName apiName, CancellationToken cancellationToken);
 
-file delegate Option<(TagName Name, ApiName ApiName)> TryParseTagName(FileInfo file);
-
-file delegate ValueTask ProcessApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
-
-file delegate bool IsTagNameInSourceControl(TagName name, ApiName apiName);
-
-file delegate ValueTask<Option<ApiTagDto>> FindApiTagDto(TagName name, ApiName apiName, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
-
-file delegate ValueTask PutApiTagInApim(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteApiTagFromApim(TagName name, ApiName apiName, CancellationToken cancellationToken);
-
-file sealed class FindApiTagActionHandler(TryParseTagName tryParseName, ProcessApiTag processApiTag)
+public static class ApiTagModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from names in tryParseName(file)
-        select GetAction(names.Name, names.ApiName);
-
-    private PublisherAction GetAction(TagName name, ApiName apiName) =>
-        async cancellationToken => await processApiTag(name, apiName, cancellationToken);
-}
-
-file sealed class TryParseTagNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<(TagName, ApiName)> Handle(FileInfo file) =>
-        TryParseNameFromTagInformationFile(file);
-
-    private Option<(TagName, ApiName)> TryParseNameFromTagInformationFile(FileInfo file) =>
-        from informationFile in ApiTagInformationFile.TryParse(file, serviceDirectory)
-        select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class ApiTagSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<(TagName, ApiName)> locker = new(LockOptions.Default);
-    private ImmutableHashSet<(TagName, ApiName)> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(TagName name, ApiName apiName, Func<TagName, ApiName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutApiTags(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync((name, apiName), cancellationToken).ConfigureAwait(false);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryApiParseTagName(builder);
+        ConfigureIsApiTagNameInSourceControl(builder);
+        ConfigurePutApiTag(builder);
 
-        // Only process each name once
-        if (processedNames.Contains((name, apiName)))
-        {
-            return;
-        }
-
-        await action(name, apiName, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add((name, apiName)));
+        builder.Services.TryAddSingleton(GetPutApiTags);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessApiTagHandler(IsTagNameInSourceControl isNameInSourceControl, PutApiTag put, DeleteApiTag delete) : IDisposable
-{
-    private readonly ApiTagSemaphore semaphore = new();
-
-    public async ValueTask Handle(TagName name, ApiName apiName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, apiName, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(TagName name, ApiName apiName, CancellationToken cancellationToken)
+    private static PutApiTags GetPutApiTags(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name, apiName))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseApiTagName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsApiTagNameInSourceControl>();
+        var put = provider.GetRequiredService<PutApiTag>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, apiName, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutApiTags));
+
+            logger.LogInformation("Putting API tags...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(tag => isNameInSourceControl(tag.Name, tag.ApiName))
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryApiParseTagName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseApiTagName);
+    }
+
+    private static TryParseApiTagName GetTryParseApiTagName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in ApiTagInformationFile.TryParse(file, serviceDirectory)
+                       select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
+    }
+
+    private static void ConfigureIsApiTagNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsTagNameInSourceControl);
+    }
+
+    private static IsApiTagNameInSourceControl GetIsTagNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(TagName name, ApiName apiName)
         {
-            await delete(name, apiName, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var tagFile = ApiTagInformationFile.From(name, apiName, serviceDirectory);
+
+            return artifactFiles.Contains(tagFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsTagNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(TagName name, ApiName apiName) =>
-        DoesTagInformationFileExist(name, apiName);
-
-    private bool DoesTagInformationFileExist(TagName name, ApiName apiName)
+    private static void ConfigurePutApiTag(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = ApiTagInformationFile.From(name, apiName, serviceDirectory);
+        ConfigureFindApiTagDto(builder);
+        ConfigurePutApiTagInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutApiTagHandler(FindApiTagDto findDto, PutApi putApi, PutTag putTag, PutApiTagInApim putInApim) : IDisposable
-{
-    private readonly ApiTagSemaphore semaphore = new();
-
-    public async ValueTask Handle(TagName name, ApiName apiName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, apiName, Put, cancellationToken);
-
-    private async ValueTask Put(TagName name, ApiName apiName, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, apiName, cancellationToken);
-        await dtoOption.IterTask(async dto => await Put(name, dto, apiName, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutApiTag);
     }
 
-    private async ValueTask Put(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken)
+    private static PutApiTag GetPutApiTag(IServiceProvider provider)
     {
-        await putApi(apiName, cancellationToken);
-        await putTag(name, cancellationToken);
-        await putInApim(name, dto, apiName, cancellationToken);
+        var findDto = provider.GetRequiredService<FindApiTagDto>();
+        var putInApim = provider.GetRequiredService<PutApiTagInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, apiName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutApiTag))
+                                       ?.AddTag("api_tag.name", name)
+                                       ?.AddTag("api.name", apiName);
+
+            var dtoOption = await findDto(name, apiName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, apiName, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindApiTagDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents)
-{
-    public async ValueTask<Option<ApiTagDto>> Handle(TagName name, ApiName apiName, CancellationToken cancellationToken)
+    private static void ConfigureFindApiTagDto(IHostApplicationBuilder builder)
     {
-        var informationFile = ApiTagInformationFile.From(name, apiName, serviceDirectory);
-        var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
 
-        return from contents in contentsOption
-               select contents.ToObjectFromJson<ApiTagDto>();
-    }
-}
-
-file sealed class PutApiTagInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Adding tag {TagName} to api {ApiName}...", name, apiName);
-        await ApiTagUri.From(name, apiName, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteApiTagHandler(DeleteApiTagFromApim deleteFromApim) : IDisposable
-{
-    private readonly ApiTagSemaphore semaphore = new();
-
-    public async ValueTask Handle(TagName name, ApiName apiName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, apiName, Delete, cancellationToken);
-
-    private async ValueTask Delete(TagName name, ApiName apiName, CancellationToken cancellationToken)
-    {
-        await deleteFromApim(name, apiName, cancellationToken);
+        builder.Services.TryAddSingleton(GetFindApiTagDto);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteApiTagFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(TagName name, ApiName apiName, CancellationToken cancellationToken)
+    private static FindApiTagDto GetFindApiTagDto(IServiceProvider provider)
     {
-        logger.LogInformation("Deleting tag {TagName} from api {ApiName}...", name, apiName);
-        await ApiTagUri.From(name, apiName, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-internal static class ApiTagServices
-{
-    public static void ConfigureFindApiTagAction(IServiceCollection services)
-    {
-        ConfigureTryParseTagName(services);
-        ConfigureProcessApiTag(services);
+        return async (name, apiName, cancellationToken) =>
+        {
+            var informationFile = ApiTagInformationFile.From(name, apiName, serviceDirectory);
+            var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
-        services.TryAddSingleton<FindApiTagActionHandler>();
-        services.TryAddSingleton<FindApiTagAction>(provider => provider.GetRequiredService<FindApiTagActionHandler>().Handle);
+            return from contents in contentsOption
+                   select contents.ToObjectFromJson<ApiTagDto>();
+        };
     }
 
-    private static void ConfigureTryParseTagName(IServiceCollection services)
+    private static void ConfigurePutApiTagInApim(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<TryParseTagNameHandler>();
-        services.TryAddSingleton<TryParseTagName>(provider => provider.GetRequiredService<TryParseTagNameHandler>().Handle);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutApiTagInApim);
     }
 
-    private static void ConfigureProcessApiTag(IServiceCollection services)
+    private static PutApiTagInApim GetPutApiTagInApim(IServiceProvider provider)
     {
-        ConfigureIsTagNameInSourceControl(services);
-        ConfigurePutApiTag(services);
-        ConfigureDeleteApiTag(services);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ProcessApiTagHandler>();
-        services.TryAddSingleton<ProcessApiTag>(provider => provider.GetRequiredService<ProcessApiTagHandler>().Handle);
+        return async (name, dto, apiName, cancellationToken) =>
+        {
+            logger.LogInformation("Adding tag {TagName} to API {ApiName}...", name, apiName);
+
+            await ApiTagUri.From(name, apiName, serviceUri)
+                           .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    private static void ConfigureIsTagNameInSourceControl(IServiceCollection services)
+    public static void ConfigureDeleteApiTags(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<IsTagNameInSourceControlHandler>();
-        services.TryAddSingleton<IsTagNameInSourceControl>(provider => provider.GetRequiredService<IsTagNameInSourceControlHandler>().Handle);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryApiParseTagName(builder);
+        ConfigureIsApiTagNameInSourceControl(builder);
+        ConfigureDeleteApiTag(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteApiTags);
     }
 
-    public static void ConfigurePutApiTag(IServiceCollection services)
+    private static DeleteApiTags GetDeleteApiTags(IServiceProvider provider)
     {
-        ConfigureFindApiTagDto(services);
-        ConfigurePutApiTagInApim(services);
-        ApiServices.ConfigurePutApi(services);
-        TagServices.ConfigurePutTag(services);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseApiTagName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsApiTagNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteApiTag>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<PutApiTagHandler>();
-        services.TryAddSingleton<PutApiTag>(provider => provider.GetRequiredService<PutApiTagHandler>().Handle);
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteApiTags));
+
+            logger.LogInformation("Deleting API tags...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(tag => isNameInSourceControl(tag.Name, tag.ApiName) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigureFindApiTagDto(IServiceCollection services)
+    private static void ConfigureDeleteApiTag(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<FindApiTagDtoHandler>();
-        services.TryAddSingleton<FindApiTagDto>(provider => provider.GetRequiredService<FindApiTagDtoHandler>().Handle);
+        ConfigureDeleteApiTagFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteApiTag);
     }
 
-    private static void ConfigurePutApiTagInApim(IServiceCollection services)
+    private static DeleteApiTag GetDeleteApiTag(IServiceProvider provider)
     {
-        services.TryAddSingleton<PutApiTagInApimHandler>();
-        services.TryAddSingleton<PutApiTagInApim>(provider => provider.GetRequiredService<PutApiTagInApimHandler>().Handle);
+        var deleteFromApim = provider.GetRequiredService<DeleteApiTagFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, apiName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteApiTag))
+                                       ?.AddTag("api_tag.name", name)
+                                       ?.AddTag("api.name", apiName);
+
+            await deleteFromApim(name, apiName, cancellationToken);
+        };
     }
 
-    private static void ConfigureDeleteApiTag(IServiceCollection services)
+    private static void ConfigureDeleteApiTagFromApim(IHostApplicationBuilder builder)
     {
-        ConfigureDeleteApiTagFromApim(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<DeleteApiTagHandler>();
-        services.TryAddSingleton<DeleteApiTag>(provider => provider.GetRequiredService<DeleteApiTagHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteApiTagFromApim);
     }
 
-    private static void ConfigureDeleteApiTagFromApim(IServiceCollection services)
+    private static DeleteApiTagFromApim GetDeleteApiTagFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteApiTagFromApimHandler>();
-        services.TryAddSingleton<DeleteApiTagFromApim>(provider => provider.GetRequiredService<DeleteApiTagFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("ApiTagPublisher");
+        return async (name, apiName, cancellationToken) =>
+        {
+            logger.LogInformation("Removing tag {TagName} from API {ApiName}...", name, apiName);
+
+            await ApiTagUri.From(name, apiName, serviceUri)
+                           .Delete(pipeline, cancellationToken);
+        };
+    }
 }

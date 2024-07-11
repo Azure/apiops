@@ -158,17 +158,6 @@ public static class TagModule
         return content.ToObjectFromJson<TagDto>();
     }
 
-    public static async ValueTask<Option<TagDto>> TryGetDto(this TagUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<TagDto>())
-                     .Match(Option<TagDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<TagDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this TagUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

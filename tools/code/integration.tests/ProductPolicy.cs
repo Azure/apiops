@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal static class ProductPolicy
+internal static class ProductPolicyModule
 {
     public static Gen<ProductPolicyModel> GenerateUpdate(ProductPolicyModel original) =>
         from content in ProductPolicyModel.GenerateContent()
@@ -61,16 +61,16 @@ internal static class ProductPolicy
 
     public static async ValueTask ValidateExtractedArtifacts(ManagementServiceDirectory serviceDirectory, ProductName productName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var apimResources = await GetApimResources(productName, serviceUri, pipeline, cancellationToken);
+        var productmResources = await GetProductmResources(productName, serviceUri, pipeline, cancellationToken);
         var fileResources = await GetFileResources(productName, serviceDirectory, cancellationToken);
 
-        var expected = apimResources.MapValue(NormalizeDto);
+        var expected = productmResources.MapValue(NormalizeDto);
         var actual = fileResources.MapValue(NormalizeDto);
 
         actual.Should().BeEquivalentTo(expected);
     }
 
-    private static async ValueTask<FrozenDictionary<ProductPolicyName, ProductPolicyDto>> GetApimResources(ProductName productName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    private static async ValueTask<FrozenDictionary<ProductPolicyName, ProductPolicyDto>> GetProductmResources(ProductName productName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var uri = ProductPoliciesUri.From(productName, serviceUri);
 
@@ -79,17 +79,17 @@ internal static class ProductPolicy
     }
 
     private static async ValueTask<FrozenDictionary<ProductPolicyName, ProductPolicyDto>> GetFileResources(ProductName productName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await ProductPolicyModule.ListPolicyFiles(productName, serviceDirectory)
-                                 .ToAsyncEnumerable()
-                                 .SelectAwait(async file => (file.Name,
-                                                             new ProductPolicyDto
-                                                             {
-                                                                 Properties = new ProductPolicyDto.ProductPolicyContract
-                                                                 {
-                                                                     Value = await file.ReadPolicy(cancellationToken)
-                                                                 }
-                                                             }))
-                                 .ToFrozenDictionary(cancellationToken);
+        await common.ProductPolicyModule.ListPolicyFiles(productName, serviceDirectory)
+                                    .ToAsyncEnumerable()
+                                    .SelectAwait(async file => (file.Name,
+                                                                new ProductPolicyDto
+                                                                {
+                                                                    Properties = new ProductPolicyDto.ProductPolicyContract
+                                                                    {
+                                                                        Value = await file.ReadPolicy(cancellationToken)
+                                                                    }
+                                                                }))
+                                    .ToFrozenDictionary(cancellationToken);
 
     private static string NormalizeDto(ProductPolicyDto dto) =>
         new
@@ -108,10 +108,10 @@ internal static class ProductPolicy
 
     private static async ValueTask ValidatePublisherChanges(ProductName productName, IDictionary<ProductPolicyName, ProductPolicyDto> fileResources, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var apimResources = await GetApimResources(productName, serviceUri, pipeline, cancellationToken);
+        var productmResources = await GetProductmResources(productName, serviceUri, pipeline, cancellationToken);
 
         var expected = fileResources.MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
+        var actual = productmResources.MapValue(NormalizeDto);
         actual.Should().BeEquivalentTo(expected);
     }
 

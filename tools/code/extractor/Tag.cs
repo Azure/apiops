@@ -3,110 +3,122 @@ using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractTags(CancellationToken cancellationToken);
+public delegate ValueTask ExtractTags(CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(TagName Name, TagDto Dto)> ListTags(CancellationToken cancellationToken);
+public delegate bool ShouldExtractTag(TagName name);
+public delegate ValueTask WriteTagArtifacts(TagName name, TagDto dto, CancellationToken cancellationToken);
+public delegate ValueTask WriteTagInformationFile(TagName name, TagDto dto, CancellationToken cancellationToken);
 
-file delegate IAsyncEnumerable<(TagName Name, TagDto Dto)> ListTags(CancellationToken cancellationToken);
-
-internal delegate bool ShouldExtractTag(TagName name);
-
-file delegate ValueTask WriteTagArtifacts(TagName name, TagDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteTagInformationFile(TagName name, TagDto dto, CancellationToken cancellationToken);
-
-file sealed class ExtractTagsHandler(ListTags list, ShouldExtractTag shouldExtract, WriteTagArtifacts writeArtifacts)
+internal static class TagModule
 {
-    public async ValueTask Handle(CancellationToken cancellationToken) =>
-        await list(cancellationToken)
-                .Where(tag => shouldExtract(tag.Name))
-                .IterParallel(async tag => await writeArtifacts(tag.Name, tag.Dto, cancellationToken),
-                              cancellationToken);
-}
-
-file sealed class ListTagsHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    public IAsyncEnumerable<(TagName, TagDto)> Handle(CancellationToken cancellationToken) =>
-        TagsUri.From(serviceUri).List(pipeline, cancellationToken);
-}
-
-file sealed class ShouldExtractTagHandler(ShouldExtractFactory shouldExtractFactory)
-{
-    public bool Handle(TagName name)
+    public static void ConfigureExtractTags(IHostApplicationBuilder builder)
     {
+        ConfigureListTags(builder);
+        ConfigureShouldExtractTag(builder);
+        ConfigureWriteTagArtifacts(builder);
+
+        builder.Services.TryAddSingleton(GetExtractTags);
+    }
+
+    private static ExtractTags GetExtractTags(IServiceProvider provider)
+    {
+        var list = provider.GetRequiredService<ListTags>();
+        var shouldExtract = provider.GetRequiredService<ShouldExtractTag>();
+        var writeArtifacts = provider.GetRequiredService<WriteTagArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractTags));
+
+            logger.LogInformation("Extracting tags...");
+
+            await list(cancellationToken)
+                    .Where(tag => shouldExtract(tag.Name))
+                    .IterParallel(async tag => await writeArtifacts(tag.Name, tag.Dto, cancellationToken),
+                                  cancellationToken);
+        };
+    }
+
+    private static void ConfigureListTags(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetListTags);
+    }
+
+    private static ListTags GetListTags(IServiceProvider provider)
+    {
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+
+        return cancellationToken =>
+            TagsUri.From(serviceUri)
+                       .List(pipeline, cancellationToken);
+    }
+
+    public static void ConfigureShouldExtractTag(IHostApplicationBuilder builder)
+    {
+        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+
+        builder.Services.TryAddSingleton(GetShouldExtractTag);
+    }
+
+    private static ShouldExtractTag GetShouldExtractTag(IServiceProvider provider)
+    {
+        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
+
         var shouldExtract = shouldExtractFactory.Create<TagName>();
-        return shouldExtract(name);
-    }
-}
 
-file sealed class WriteTagArtifactsHandler(WriteTagInformationFile writeInformationFile)
-{
-    public async ValueTask Handle(TagName name, TagDto dto, CancellationToken cancellationToken)
+        return name => shouldExtract(name);
+    }
+
+    private static void ConfigureWriteTagArtifacts(IHostApplicationBuilder builder)
     {
-        await writeInformationFile(name, dto, cancellationToken);
+        ConfigureWriteTagInformationFile(builder);
+
+        builder.Services.TryAddSingleton(GetWriteTagArtifacts);
     }
-}
 
-file sealed class WriteTagInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(TagName name, TagDto dto, CancellationToken cancellationToken)
+    private static WriteTagArtifacts GetWriteTagArtifacts(IServiceProvider provider)
     {
-        var informationFile = TagInformationFile.From(name, serviceDirectory);
+        var writeInformationFile = provider.GetRequiredService<WriteTagInformationFile>();
 
-        logger.LogInformation("Writing tag information file {InformationFile}", informationFile);
-        await informationFile.WriteDto(dto, cancellationToken);
+        return async (name, dto, cancellationToken) =>
+            await writeInformationFile(name, dto, cancellationToken);
     }
-}
 
-internal static class TagServices
-{
-    public static void ConfigureExtractTags(IServiceCollection services)
+    private static void ConfigureWriteTagInformationFile(IHostApplicationBuilder builder)
     {
-        ConfigureListTags(services);
-        ConfigureShouldExtractTag(services);
-        ConfigureWriteTagArtifacts(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        services.TryAddSingleton<ExtractTagsHandler>();
-        services.TryAddSingleton<ExtractTags>(provider => provider.GetRequiredService<ExtractTagsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetWriteTagInformationFile);
     }
 
-    private static void ConfigureListTags(IServiceCollection services)
+    private static WriteTagInformationFile GetWriteTagInformationFile(IServiceProvider provider)
     {
-        services.TryAddSingleton<ListTagsHandler>();
-        services.TryAddSingleton<ListTags>(provider => provider.GetRequiredService<ListTagsHandler>().Handle);
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            var informationFile = TagInformationFile.From(name, serviceDirectory);
+
+            logger.LogInformation("Writing tag information file {TagInformationFile}...", informationFile);
+            await informationFile.WriteDto(dto, cancellationToken);
+        };
     }
-
-    public static void ConfigureShouldExtractTag(IServiceCollection services)
-    {
-        services.TryAddSingleton<ShouldExtractTagHandler>();
-        services.TryAddSingleton<ShouldExtractTag>(provider => provider.GetRequiredService<ShouldExtractTagHandler>().Handle);
-    }
-
-    private static void ConfigureWriteTagArtifacts(IServiceCollection services)
-    {
-        ConfigureWriteTagInformationFile(services);
-
-        services.TryAddSingleton<WriteTagArtifactsHandler>();
-        services.TryAddSingleton<WriteTagArtifacts>(provider => provider.GetRequiredService<WriteTagArtifactsHandler>().Handle);
-    }
-
-    private static void ConfigureWriteTagInformationFile(IServiceCollection services)
-    {
-        services.TryAddSingleton<WriteTagInformationFileHandler>();
-        services.TryAddSingleton<WriteTagInformationFile>(provider => provider.GetRequiredService<WriteTagInformationFileHandler>().Handle);
-    }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("TagExtractor");
 }

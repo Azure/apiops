@@ -4,8 +4,10 @@ using common.tests;
 using CsCheck;
 using FluentAssertions;
 using LanguageExt;
+using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using publisher;
 using System;
@@ -18,285 +20,309 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal delegate ValueTask DeleteAllServicePolicies(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteAllServicePolicies(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask PutServicePolicyModels(IEnumerable<ServicePolicyModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask ValidateExtractedServicePolicies(ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> GetApimServicePolicies(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> GetFileServicePolicies(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
+public delegate ValueTask WriteServicePolicyModels(IEnumerable<ServicePolicyModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask ValidatePublishedServicePolicies(IDictionary<ServicePolicyName, ServicePolicyDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 
-internal delegate ValueTask PutServicePolicyModels(IEnumerable<ServicePolicyModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidateExtractedServicePolicies(ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> GetApimServicePolicies(ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> GetFileServicePolicies(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteServicePolicyModels(IEnumerable<ServicePolicyModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidatePublishedServicePolicies(IDictionary<ServicePolicyName, ServicePolicyDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file sealed class DeleteAllServicePoliciesHandler(ILogger<DeleteAllServicePolicies> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+public static class ServicePolicyModule
 {
-    public async ValueTask Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    public static void ConfigureDeleteAllServicePolicies(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(DeleteAllServicePolicies));
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        logger.LogInformation("Deleting all service policies in {ServiceName}...", serviceName);
-        var serviceUri = getServiceUri(serviceName);
-        await ServicePoliciesUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+        builder.Services.TryAddSingleton(GetDeleteAllServicePolicies);
     }
-}
 
-file sealed class PutServicePolicyModelsHandler(ILogger<PutServicePolicyModels> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<ServicePolicyModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken)
+    private static DeleteAllServicePolicies GetDeleteAllServicePolicies(IServiceProvider provider)
     {
-        using var _ = activitySource.StartActivity(nameof(PutServicePolicyModels));
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        logger.LogInformation("Putting version set models in {ServiceName}...", serviceName);
-        await models.IterParallel(async model =>
+        return async (serviceName, cancellationToken) =>
         {
-            await Put(model, serviceName, cancellationToken);
-        }, cancellationToken);
-    }
+            using var _ = activitySource.StartActivity(nameof(DeleteAllServicePolicies));
 
-    private async ValueTask Put(ServicePolicyModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var serviceUri = getServiceUri(serviceName);
-        var uri = ServicePolicyUri.From(model.Name, serviceUri);
-        var dto = GetDto(model);
+            logger.LogInformation("Deleting all service policies in {ServiceName}...", serviceName);
 
-        await uri.PutDto(dto, pipeline, cancellationToken);
-    }
+            var serviceUri = getServiceUri(serviceName);
 
-    private static ServicePolicyDto GetDto(ServicePolicyModel model) =>
-        new()
-        {
-            Properties = new ServicePolicyDto.ServicePolicyContract
-            {
-                Format = "rawxml",
-                Value = model.Content
-            }
+            await ServicePoliciesUri.From(serviceUri)
+                                    .DeleteAll(pipeline, cancellationToken);
         };
-}
-
-file sealed class ValidateExtractedServicePoliciesHandler(ILogger<ValidateExtractedServicePolicies> logger, GetApimServicePolicies getApimResources, GetFileServicePolicies getFileResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidateExtractedServicePolicies));
-
-        logger.LogInformation("Validating extracted service policies in {ServiceName}...", serviceName);
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
-
-        var expected = apimResources.MapValue(NormalizeDto);
-        var actual = fileResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
     }
 
-    private static string NormalizeDto(ServicePolicyDto dto) =>
-        new
+    public static void ConfigurePutServicePolicyModels(IHostApplicationBuilder builder)
+    {
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutServicePolicyModels);
+    }
+
+    private static PutServicePolicyModels GetPutServicePolicyModels(IServiceProvider provider)
+    {
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceName, cancellationToken) =>
         {
-            Value = new string((dto.Properties.Value ?? string.Empty)
-                                .ReplaceLineEndings(string.Empty)
-                                .Where(c => char.IsWhiteSpace(c) is false)
-                                .ToArray())
-        }.ToString()!;
-}
+            using var _ = activitySource.StartActivity(nameof(PutServicePolicyModels));
 
-file sealed class GetApimServicePoliciesHandler(ILogger<GetApimServicePolicies> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetApimServicePolicies));
+            logger.LogInformation("Putting policy fragment models in {ServiceName}...", serviceName);
 
-        logger.LogInformation("Getting service policies from {ServiceName}...", serviceName);
-
-        var serviceUri = getServiceUri(serviceName);
-        var uri = ServicePoliciesUri.From(serviceUri);
-
-        return await uri.List(pipeline, cancellationToken)
-                        .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class GetFileServicePoliciesHandler(ILogger<GetFileServicePolicies> logger, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> Handle(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken) =>
-        await commitIdOption.Map(commitId => GetWithCommit(serviceDirectory, commitId, cancellationToken))
-                           .IfNone(() => GetWithoutCommit(serviceDirectory, cancellationToken));
-
-    private async ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> GetWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileServicePolicies));
-
-        logger.LogInformation("Getting service policies from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
-
-        return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
-                        .ToAsyncEnumerable()
-                        .Choose(file => ServicePolicyFile.TryParse(file, serviceDirectory))
-                        .Choose(async file => await TryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
-                        .ToFrozenDictionary(cancellationToken);
-    }
-
-    private static async ValueTask<Option<(ServicePolicyName name, ServicePolicyDto dto)>> TryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, ServicePolicyFile file, CancellationToken cancellationToken)
-    {
-        var name = file.Name;
-        var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
-
-        return await contentsOption.MapTask(async contents =>
-        {
-            using (contents)
+            await models.IterParallel(async model =>
             {
-                var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
-                var dto = new ServicePolicyDto
+                await put(model, serviceName, cancellationToken);
+            }, cancellationToken);
+        };
+
+        async ValueTask put(ServicePolicyModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
+        {
+            var serviceUri = getServiceUri(serviceName);
+
+            var dto = getDto(model);
+
+            await ServicePolicyUri.From(model.Name, serviceUri)
+                                  .PutDto(dto, pipeline, cancellationToken);
+        }
+
+        static ServicePolicyDto getDto(ServicePolicyModel model) =>
+            new()
+            {
+                Properties = new ServicePolicyDto.ServicePolicyContract
                 {
-                    Properties = new ServicePolicyDto.ServicePolicyContract
-                    {
-                        Value = data.ToString()
-                    }
-                };
-                return (name, dto);
-            }
-        });
+                    Format = "rawxml",
+                    Value = model.Content
+                }
+            };
     }
 
-    private async ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> GetWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    public static void ConfigureValidateExtractedServicePolicies(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(GetFileServicePolicies));
+        ConfigureGetApimServicePolicies(builder);
+        ConfigureGetFileServicePolicies(builder);
 
-        logger.LogInformation("Getting service policies from {ServiceDirectory}...", serviceDirectory);
-
-        return await ServicePolicyModule.ListPolicyFiles(serviceDirectory)
-                                        .ToAsyncEnumerable()
-                                        .SelectAwait(async file => (file.Name,
-                                                                    new ServicePolicyDto
-                                                                    {
-                                                                        Properties = new ServicePolicyDto.ServicePolicyContract
-                                                                        {
-                                                                            Value = await file.ReadPolicy(cancellationToken)
-                                                                        }
-                                                                    }))
-                                        .ToFrozenDictionary(cancellationToken);
+        builder.Services.TryAddSingleton(GetValidateExtractedServicePolicies);
     }
-}
 
-file sealed class WriteServicePolicyModelsHandler(ILogger<WriteServicePolicyModels> logger, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<ServicePolicyModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    private static ValidateExtractedServicePolicies GetValidateExtractedServicePolicies(IServiceProvider provider)
     {
-        using var _ = activitySource.StartActivity(nameof(WriteServicePolicyModels));
+        var getApimResources = provider.GetRequiredService<GetApimServicePolicies>();
+        var tryGetApimGraphQlSchema = provider.GetRequiredService<TryGetApimGraphQlSchema>();
+        var getFileResources = provider.GetRequiredService<GetFileServicePolicies>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        logger.LogInformation("Writing version set models to {ServiceDirectory}...", serviceDirectory);
-        await models.IterParallel(async model =>
+        return async (serviceName, serviceDirectory, cancellationToken) =>
         {
-            await WritePolicyFile(model, serviceDirectory, cancellationToken);
-        }, cancellationToken);
-    }
+            using var _ = activitySource.StartActivity(nameof(ValidateExtractedServicePolicies));
 
-    private static async ValueTask WritePolicyFile(ServicePolicyModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        var policyFile = ServicePolicyFile.From(model.Name, serviceDirectory);
-        await policyFile.WritePolicy(model.Content, cancellationToken);
-    }
+            logger.LogInformation("Validating extracted service policies in {ServiceName}...", serviceName);
 
-    private static ServicePolicyDto GetDto(ServicePolicyModel model) =>
-        new()
-        {
-            Properties = new ServicePolicyDto.ServicePolicyContract
-            {
-                Format = "rawxml",
-                Value = model.Content
-            }
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
+
+            var expected = apimResources.MapValue(normalizeDto)
+                                        .ToFrozenDictionary();
+
+            var actual = fileResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
         };
-}
 
-file sealed class ValidatePublishedServicePoliciesHandler(ILogger<ValidatePublishedServicePolicies> logger, GetFileServicePolicies getFileResources, GetApimServicePolicies getApimResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IDictionary<ServicePolicyName, ServicePolicyDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidatePublishedServicePolicies));
-
-        logger.LogInformation("Validating published service policies in {ServiceDirectory}...", serviceDirectory);
-
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
-
-        var expected = PublisherOptions.Override(fileResources, overrides)
-                                       .MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
+        static string normalizeDto(ServicePolicyDto dto) =>
+            new
+            {
+                Value = new string((dto.Properties.Value ?? string.Empty)
+                                    .ReplaceLineEndings(string.Empty)
+                                    .Where(c => char.IsWhiteSpace(c) is false)
+                                    .ToArray())
+            }.ToString()!;
     }
 
-    private static string NormalizeDto(ServicePolicyDto dto) =>
-        new
+    public static void ConfigureGetApimServicePolicies(IHostApplicationBuilder builder)
+    {
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetGetApimServicePolicies);
+    }
+
+    private static GetApimServicePolicies GetGetApimServicePolicies(IServiceProvider provider)
+    {
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (serviceName, cancellationToken) =>
         {
-            Value = new string((dto.Properties.Value ?? string.Empty)
-                                .ReplaceLineEndings(string.Empty)
-                                .Where(c => char.IsWhiteSpace(c) is false)
-                                .ToArray())
-        }.ToString()!;
-}
+            using var _ = activitySource.StartActivity(nameof(GetApimServicePolicies));
 
-internal static class ServicePolicyServices
-{
-    public static void ConfigureDeleteAllServicePolicies(IServiceCollection services)
-    {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+            logger.LogInformation("Getting service policies from {ServiceName}...", serviceName);
 
-        services.TryAddSingleton<DeleteAllServicePoliciesHandler>();
-        services.TryAddSingleton<DeleteAllServicePolicies>(provider => provider.GetRequiredService<DeleteAllServicePoliciesHandler>().Handle);
+            var serviceUri = getServiceUri(serviceName);
+
+            return await ServicePoliciesUri.From(serviceUri)
+                                           .List(pipeline, cancellationToken)
+                                           .ToFrozenDictionary(cancellationToken);
+        };
     }
 
-    public static void ConfigurePutServicePolicyModels(IServiceCollection services)
+    public static void ConfigureGetFileServicePolicies(IHostApplicationBuilder builder)
     {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
-
-        services.TryAddSingleton<PutServicePolicyModelsHandler>();
-        services.TryAddSingleton<PutServicePolicyModels>(provider => provider.GetRequiredService<PutServicePolicyModelsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetGetFileServicePolicies);
     }
 
-    public static void ConfigureValidateExtractedServicePolicies(IServiceCollection services)
+    private static GetFileServicePolicies GetGetFileServicePolicies(IServiceProvider provider)
     {
-        ConfigureGetApimServicePolicies(services);
-        ConfigureGetFileServicePolicies(services);
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidateExtractedServicePoliciesHandler>();
-        services.TryAddSingleton<ValidateExtractedServicePolicies>(provider => provider.GetRequiredService<ValidateExtractedServicePoliciesHandler>().Handle);
+        return async (serviceDirectory, commitIdOption, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileServicePolicies));
+
+            return await commitIdOption.Map(commitId => getWithCommit(serviceDirectory, commitId, cancellationToken))
+                                       .IfNone(() => getWithoutCommit(serviceDirectory, cancellationToken));
+        };
+
+        async ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> getWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileServicePolicies));
+
+            logger.LogInformation("Getting service policies from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
+
+            return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
+                            .ToAsyncEnumerable()
+                            .Choose(file => ServicePolicyFile.TryParse(file, serviceDirectory))
+                            .Choose(async file => await tryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
+                            .ToFrozenDictionary(cancellationToken);
+        }
+
+        static async ValueTask<Option<(ServicePolicyName name, ServicePolicyDto dto)>> tryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, ServicePolicyFile file, CancellationToken cancellationToken)
+        {
+            var name = file.Name;
+            var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
+
+            return await contentsOption.MapTask(async contents =>
+            {
+                using (contents)
+                {
+                    var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
+                    var dto = new ServicePolicyDto
+                    {
+                        Properties = new ServicePolicyDto.ServicePolicyContract
+                        {
+                            Value = data.ToString()
+                        }
+                    };
+                    return (name, dto);
+                }
+            });
+        }
+
+        async ValueTask<FrozenDictionary<ServicePolicyName, ServicePolicyDto>> getWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            logger.LogInformation("Getting service policies from {ServiceDirectory}...", serviceDirectory);
+
+            return await common.ServicePolicyModule.ListPolicyFiles(serviceDirectory)
+                                                   .ToAsyncEnumerable()
+                                                   .SelectAwait(async file => (file.Name,
+                                                                               new ServicePolicyDto
+                                                                               {
+                                                                                   Properties = new ServicePolicyDto.ServicePolicyContract
+                                                                                   {
+                                                                                       Value = await file.ReadPolicy(cancellationToken)
+                                                                                   }
+                                                                               }))
+                                                   .ToFrozenDictionary(cancellationToken);
+        }
     }
 
-    private static void ConfigureGetApimServicePolicies(IServiceCollection services)
+    public static void ConfigureWriteServicePolicyModels(IHostApplicationBuilder builder)
     {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
-
-        services.TryAddSingleton<GetApimServicePoliciesHandler>();
-        services.TryAddSingleton<GetApimServicePolicies>(provider => provider.GetRequiredService<GetApimServicePoliciesHandler>().Handle);
+        builder.Services.TryAddSingleton(GetWriteServicePolicyModels);
     }
 
-    private static void ConfigureGetFileServicePolicies(IServiceCollection services)
+    private static WriteServicePolicyModels GetWriteServicePolicyModels(IServiceProvider provider)
     {
-        services.TryAddSingleton<GetFileServicePoliciesHandler>();
-        services.TryAddSingleton<GetFileServicePolicies>(provider => provider.GetRequiredService<GetFileServicePoliciesHandler>().Handle);
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(WriteServicePolicyModels));
+
+            logger.LogInformation("Writing policy fragment models to {ServiceDirectory}...", serviceDirectory);
+
+            await models.IterParallel(async model =>
+            {
+                await writePolicyFile(model, serviceDirectory, cancellationToken);
+            }, cancellationToken);
+        };
+
+        static async ValueTask writePolicyFile(ServicePolicyModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var policyFile = ServicePolicyFile.From(model.Name, serviceDirectory);
+            await policyFile.WritePolicy(model.Content, cancellationToken);
+        }
     }
 
-    public static void ConfigureWriteServicePolicyModels(IServiceCollection services)
+    public static void ConfigureValidatePublishedServicePolicies(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<WriteServicePolicyModelsHandler>();
-        services.TryAddSingleton<WriteServicePolicyModels>(provider => provider.GetRequiredService<WriteServicePolicyModelsHandler>().Handle);
+        ConfigureGetFileServicePolicies(builder);
+        ConfigureGetApimServicePolicies(builder);
+
+        builder.Services.TryAddSingleton(GetValidatePublishedServicePolicies);
     }
 
-    public static void ConfigureValidatePublishedServicePolicies(IServiceCollection services)
+    private static ValidatePublishedServicePolicies GetValidatePublishedServicePolicies(IServiceProvider provider)
     {
-        ConfigureGetFileServicePolicies(services);
-        ConfigureGetApimServicePolicies(services);
+        var getFileResources = provider.GetRequiredService<GetFileServicePolicies>();
+        var getApimResources = provider.GetRequiredService<GetApimServicePolicies>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidatePublishedServicePoliciesHandler>();
-        services.TryAddSingleton<ValidatePublishedServicePolicies>(provider => provider.GetRequiredService<ValidatePublishedServicePoliciesHandler>().Handle);
+        return async (overrides, commitIdOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidatePublishedServicePolicies));
+
+            logger.LogInformation("Validating published service policies in {ServiceDirectory}...", serviceDirectory);
+
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
+
+            var expected = PublisherOptions.Override(fileResources, overrides)
+                                           .MapValue(normalizeDto)
+                                           .ToFrozenDictionary();
+
+            var actual = apimResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        };
+
+        static string normalizeDto(ServicePolicyDto dto) =>
+            new
+            {
+                Value = new string((dto.Properties.Value ?? string.Empty)
+                                    .ReplaceLineEndings(string.Empty)
+                                    .Where(c => char.IsWhiteSpace(c) is false)
+                                    .ToArray())
+            }.ToString()!;
     }
-}
 
-internal static class ServicePolicy
-{
     public static Gen<ServicePolicyModel> GenerateUpdate(ServicePolicyModel original) =>
         from content in ServicePolicyModel.GenerateContent()
         select original with

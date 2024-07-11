@@ -5,6 +5,7 @@ using extractor;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Frozen;
@@ -20,11 +21,10 @@ using YamlDotNet.System.Text.Json;
 
 namespace integration.tests;
 
-internal delegate ValueTask RunExtractor(ExtractorOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask RunExtractor(ExtractorOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask ValidateExtractorArtifacts(ExtractorOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 
-internal delegate ValueTask ValidateExtractorArtifacts(ExtractorOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-internal sealed record ExtractorOptions
+public sealed record ExtractorOptions
 {
     public required Option<FrozenSet<NamedValueName>> NamedValueNamesToExport { get; init; }
     public required Option<FrozenSet<TagName>> TagNamesToExport { get; init; }
@@ -99,7 +99,7 @@ internal sealed record ExtractorOptions
         var lambdaExpression = Expression.Lambda<Func<TModel, TName>>(propertyExpression, parameterExpression);
         var modelToName = lambdaExpression.Compile();
 
-        return Generator.SubFrozenSetOf(models.Select(modelToName));
+        return Generator.SubFrozenSetOf(models.Select(modelToName).ToArray());
     }
 
     private static Gen<Option<ApiSpecification>> GenerateDefaultApiSpecificationOption() =>
@@ -132,7 +132,6 @@ internal sealed record ExtractorOptions
             var lambda = Expression.Lambda<Func<JsonObject>>(body);
             return lambda.Compile()();
         }
-
 
         return typeof(ExtractorOptions)
                 .GetProperties()
@@ -184,124 +183,118 @@ internal sealed record ExtractorOptions
         }, () => true);
 }
 
-file sealed class RunExtractorHandler(ILogger<RunExtractor> logger,
-                                      ActivitySource activitySource,
-                                      GetSubscriptionId getSubscriptionId,
-                                      GetResourceGroupName getResourceGroupName,
-                                      GetBearerToken getBearerToken)
+public static class ExtractorModule
 {
-    public async ValueTask Handle(ExtractorOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    public static void ConfigureRunExtractor(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(RunExtractor));
-
-        logger.LogInformation("Running extractor...");
-
-        var configurationFileOption = await TryGetConfigurationYamlFile(options, serviceDirectory, cancellationToken);
-        var arguments = await GetArguments(serviceName, serviceDirectory, configurationFileOption, cancellationToken);
-        await extractor.Program.Main(arguments);
+        builder.Services.TryAddSingleton(GetRunExtractor);
     }
 
-    private static async ValueTask<Option<FileInfo>> TryGetConfigurationYamlFile(ExtractorOptions extractorOptions, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    private static RunExtractor GetRunExtractor(IServiceProvider provider)
     {
-        var optionsJson = extractorOptions.ToJsonObject();
-        if (optionsJson.Count == 0)
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (options, serviceName, serviceDirectory, cancellationToken) =>
         {
-            return Option<FileInfo>.None;
-        }
+            using var _ = activitySource.StartActivity(nameof(RunExtractor));
 
-        var yamlFilePath = Path.Combine(serviceDirectory.ToDirectoryInfo().FullName, "configuration.extractor.yaml");
-        var yamlFile = new FileInfo(yamlFilePath);
-        await WriteYamlToFile(optionsJson, yamlFile, cancellationToken);
+            logger.LogInformation("Running extractor...");
 
-        return yamlFile;
-    }
-
-    private static async ValueTask WriteYamlToFile(JsonNode json, FileInfo file, CancellationToken cancellationToken)
-    {
-        var yaml = YamlConverter.Serialize(json);
-        var content = BinaryData.FromString(yaml);
-        await file.OverwriteWithBinaryData(content, cancellationToken);
-    }
-
-    private async ValueTask<string[]> GetArguments(ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, Option<FileInfo> configurationFileOption, CancellationToken cancellationToken)
-    {
-        var argumentDictionary = new Dictionary<string, string>
-        {
-            [$"{GetApiManagementServiceNameParameter()}"] = serviceName.ToString(),
-            ["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"] = serviceDirectory.ToDirectoryInfo().FullName,
-            ["AZURE_SUBSCRIPTION_ID"] = getSubscriptionId(),
-            ["AZURE_RESOURCE_GROUP_NAME"] = getResourceGroupName(),
-            ["AZURE_BEARER_TOKEN"] = await getBearerToken(cancellationToken)
+            var configurationFileOption = await tryGetConfigurationYamlFile(options, serviceDirectory, cancellationToken);
+            var arguments = getArguments(serviceName, serviceDirectory, configurationFileOption, cancellationToken);
+            await extractor.Program.Main(arguments);
         };
 
-#pragma warning disable CA1849 // Call async methods when in an async method
-        configurationFileOption.Iter(file => argumentDictionary.Add("CONFIGURATION_YAML_PATH", file.FullName));
-#pragma warning restore CA1849 // Call async methods when in an async method
+        static async ValueTask<Option<FileInfo>> tryGetConfigurationYamlFile(ExtractorOptions extractorOptions, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var optionsJson = extractorOptions.ToJsonObject();
+            if (optionsJson.Count == 0)
+            {
+                return Option<FileInfo>.None;
+            }
 
-        return argumentDictionary.Aggregate(Array.Empty<string>(), (arguments, kvp) => [.. arguments, $"--{kvp.Key}", kvp.Value]);
+            var yamlFilePath = Path.Combine(serviceDirectory.ToDirectoryInfo().FullName, "configuration.extractor.yaml");
+            var yamlFile = new FileInfo(yamlFilePath);
+            await writeYamlToFile(optionsJson, yamlFile, cancellationToken);
+
+            return yamlFile;
+        }
+
+        static async ValueTask writeYamlToFile(JsonNode json, FileInfo file, CancellationToken cancellationToken)
+        {
+            var yaml = YamlConverter.Serialize(json);
+            var content = BinaryData.FromString(yaml);
+            await file.OverwriteWithBinaryData(content, cancellationToken);
+        }
+
+        static string[] getArguments(ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, Option<FileInfo> configurationFileOption, CancellationToken cancellationToken)
+        {
+            var argumentDictionary = new Dictionary<string, string>
+            {
+                [$"{getApiManagementServiceNameParameter()}"] = serviceName.ToString(),
+                ["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"] = serviceDirectory.ToDirectoryInfo().FullName
+            };
+
+            configurationFileOption.Iter(file => argumentDictionary.Add("CONFIGURATION_YAML_PATH", file.FullName));
+
+            return argumentDictionary.Aggregate(Array.Empty<string>(), (arguments, kvp) => [.. arguments, $"--{kvp.Key}", kvp.Value]);
+        }
+
+        static string getApiManagementServiceNameParameter() =>
+            Gen.OneOfConst("API_MANAGEMENT_SERVICE_NAME", "apimServiceName").Single();
     }
 
-    private static string GetApiManagementServiceNameParameter() =>
-        Gen.OneOfConst("API_MANAGEMENT_SERVICE_NAME", "apimServiceName").Single();
-}
-
-file sealed class ValidateExtractorArtifactsHandler(ILogger<ValidateExtractorArtifacts> logger,
-                                                    ActivitySource activitySource,
-                                                    ValidateExtractedNamedValues validateNamedValues,
-                                                    ValidateExtractedTags validateTags,
-                                                    ValidateExtractedVersionSets validateVersionSets,
-                                                    ValidateExtractedBackends validateBackends,
-                                                    ValidateExtractedLoggers validateLoggers,
-                                                    ValidateExtractedDiagnostics validateDiagnostics,
-                                                    ValidateExtractedPolicyFragments validatePolicyFragments,
-                                                    ValidateExtractedServicePolicies validateServicePolicies,
-                                                    ValidateExtractedGroups validateGroups,
-                                                    ValidateExtractedProducts validateProducts,
-                                                    ValidateExtractedApis validateApis)
-{
-    public async ValueTask Handle(ExtractorOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    public static void ConfigureValidateExtractorArtifacts(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(ValidateExtractorArtifacts));
+        NamedValueModule.ConfigureValidateExtractedNamedValues(builder);
+        TagModule.ConfigureValidateExtractedTags(builder);
+        VersionSetModule.ConfigureValidateExtractedVersionSets(builder);
+        BackendModule.ConfigureValidateExtractedBackends(builder);
+        LoggerModule.ConfigureValidateExtractedLoggers(builder);
+        DiagnosticModule.ConfigureValidateExtractedDiagnostics(builder);
+        PolicyFragmentModule.ConfigureValidateExtractedPolicyFragments(builder);
+        ServicePolicyModule.ConfigureValidateExtractedServicePolicies(builder);
+        GroupModule.ConfigureValidateExtractedGroups(builder);
+        ProductModule.ConfigureValidateExtractedProducts(builder);
+        ApiModule.ConfigureValidateExtractedApis(builder);
 
-        logger.LogInformation("Validating extractor artifacts...");
-
-        await validateNamedValues(options.NamedValueNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validateTags(options.TagNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validateVersionSets(options.VersionSetNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validateBackends(options.BackendNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validateLoggers(options.LoggerNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validateDiagnostics(options.DiagnosticNamesToExport, options.LoggerNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validatePolicyFragments(options.PolicyFragmentNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validateServicePolicies(serviceName, serviceDirectory, cancellationToken);
-        await validateGroups(options.GroupNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validateProducts(options.ProductNamesToExport, serviceName, serviceDirectory, cancellationToken);
-        await validateApis(options.ApiNamesToExport, options.DefaultApiSpecification, options.VersionSetNamesToExport, serviceName, serviceDirectory, cancellationToken);
-    }
-}
-
-internal static class ExtractorServices
-{
-    public static void ConfigureRunExtractor(IServiceCollection services)
-    {
-        services.TryAddSingleton<RunExtractorHandler>();
-        services.TryAddSingleton<RunExtractor>(provider => provider.GetRequiredService<RunExtractorHandler>().Handle);
+        builder.Services.TryAddSingleton(GetValidateExtractorArtifacts);
     }
 
-    public static void ConfigureValidateExtractorArtifacts(IServiceCollection services)
+    private static ValidateExtractorArtifacts GetValidateExtractorArtifacts(IServiceProvider provider)
     {
-        NamedValueServices.ConfigureValidateExtractedNamedValues(services);
-        TagServices.ConfigureValidateExtractedTags(services);
-        VersionSetServices.ConfigureValidateExtractedVersionSets(services);
-        BackendServices.ConfigureValidateExtractedBackends(services);
-        LoggerServices.ConfigureValidateExtractedLoggers(services);
-        DiagnosticServices.ConfigureValidateExtractedDiagnostics(services);
-        PolicyFragmentServices.ConfigureValidateExtractedPolicyFragments(services);
-        ServicePolicyServices.ConfigureValidateExtractedServicePolicies(services);
-        GroupServices.ConfigureValidateExtractedGroups(services);
-        ProductServices.ConfigureValidateExtractedProducts(services);
-        ApiServices.ConfigureValidateExtractedApis(services);
+        var validateNamedValues = provider.GetRequiredService<ValidateExtractedNamedValues>();
+        var validateTags = provider.GetRequiredService<ValidateExtractedTags>();
+        var validateVersionSets = provider.GetRequiredService<ValidateExtractedVersionSets>();
+        var validateBackends = provider.GetRequiredService<ValidateExtractedBackends>();
+        var validateLoggers = provider.GetRequiredService<ValidateExtractedLoggers>();
+        var validateDiagnostics = provider.GetRequiredService<ValidateExtractedDiagnostics>();
+        var validatePolicyFragments = provider.GetRequiredService<ValidateExtractedPolicyFragments>();
+        var validateServicePolicies = provider.GetRequiredService<ValidateExtractedServicePolicies>();
+        var validateGroups = provider.GetRequiredService<ValidateExtractedGroups>();
+        var validateProducts = provider.GetRequiredService<ValidateExtractedProducts>();
+        var validateApis = provider.GetRequiredService<ValidateExtractedApis>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidateExtractorArtifactsHandler>();
-        services.TryAddSingleton<ValidateExtractorArtifacts>(provider => provider.GetRequiredService<ValidateExtractorArtifactsHandler>().Handle);
+        return async (options, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidateExtractorArtifacts));
+
+            logger.LogInformation("Validating extractor artifacts...");
+
+            await validateNamedValues(options.NamedValueNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validateTags(options.TagNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validateVersionSets(options.VersionSetNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validateBackends(options.BackendNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validateLoggers(options.LoggerNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validateDiagnostics(options.DiagnosticNamesToExport, options.LoggerNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validatePolicyFragments(options.PolicyFragmentNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validateServicePolicies(serviceName, serviceDirectory, cancellationToken);
+            await validateGroups(options.GroupNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validateProducts(options.ProductNamesToExport, serviceName, serviceDirectory, cancellationToken);
+            await validateApis(options.ApiNamesToExport, options.DefaultApiSpecification, options.VersionSetNamesToExport, serviceName, serviceDirectory, cancellationToken);
+        };
     }
 }

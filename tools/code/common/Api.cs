@@ -438,17 +438,6 @@ public static class ApiModule
         return content.ToObjectFromJson<ApiDto>();
     }
 
-    public static async ValueTask<Option<ApiDto>> TryGetDto(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<ApiDto>())
-                     .Match(Option<ApiDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<ApiDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask<Option<BinaryData>> TryGetSpecificationContents(this ApiUri apiUri, ApiSpecification specification, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         if (specification is ApiSpecification.GraphQl)
@@ -664,7 +653,7 @@ public static class ApiModule
         }
     }
 
-    public static async ValueTask PutGraphQlSchema(this ApiUri uri, string schema, HttpPipeline pipeline, CancellationToken cancellationToken)
+    public static async ValueTask PutGraphQlSchema(this ApiUri uri, BinaryData schema, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var contents = BinaryData.FromObjectAsJson(new JsonObject()
         {
@@ -673,7 +662,7 @@ public static class ApiModule
                 ["contentType"] = "application/vnd.ms-azure-apim.graphql.schema",
                 ["document"] = new JsonObject()
                 {
-                    ["value"] = schema
+                    ["value"] = schema.ToString()
                 }
             }
         });
@@ -691,13 +680,9 @@ public static class ApiModule
                            .AppendPathSegment("graphql")
                            .ToUri();
 
-        var schemaJsonEither = await pipeline.TryGetJsonObject(schemaUri, cancellationToken);
+        var schemaJsonOption = await pipeline.GetJsonObjectOption(schemaUri, cancellationToken);
 
-        return schemaJsonEither.Map(GetGraphQlSpecificationFromSchemaResponse)
-                               .Match(Option<BinaryData>.Some,
-                                      response => response.Status == (int)HttpStatusCode.NotFound
-                                                    ? Option<BinaryData>.None
-                                                    : throw response.ToHttpRequestException(schemaUri));
+        return schemaJsonOption.Map(GetGraphQlSpecificationFromSchemaResponse);
     }
 
     private static BinaryData GetGraphQlSpecificationFromSchemaResponse(JsonObject responseJson)
@@ -724,11 +709,11 @@ public static class ApiModule
             .Select(directory => new ApiInformationFile { Parent = directory })
             .Where(informationFile => informationFile.ToFileInfo().Exists());
 
-    public static IAsyncEnumerable<ApiSpecificationFile> ListSpecificationFiles(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<ApiSpecificationFile> ListSpecificationFiles(ManagementServiceDirectory serviceDirectory) =>
         ListDirectories(serviceDirectory)
             .SelectMany(directory => directory.ToDirectoryInfo().ListFiles("*"))
             .ToAsyncEnumerable()
-            .Choose(async file => await ApiSpecificationFile.TryParse(file, serviceDirectory, cancellationToken));
+            .Choose(async (file, cancellationToken) => await ApiSpecificationFile.TryParse(file, serviceDirectory, cancellationToken));
 
     public static async ValueTask WriteDto(this ApiInformationFile file, ApiDto dto, CancellationToken cancellationToken)
     {
@@ -765,6 +750,7 @@ public static class ApiModule
 
     public static Option<VersionSetName> TryGetVersionSetName(ApiDto dto) =>
         from versionSetId in Prelude.Optional(dto.Properties.ApiVersionSetId)
-        from versionSetNameString in versionSetId.Split('/').LastOrNone()
+        from versionSetNameString in versionSetId.Split('/')
+                                                 .LastOrNone()
         select VersionSetName.From(versionSetNameString);
 }

@@ -1,267 +1,249 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindProductGroupAction(FileInfo file);
+public delegate ValueTask PutProductGroups(CancellationToken cancellationToken);
+public delegate Option<(GroupName Name, ProductName ProductName)> TryParseProductGroupName(FileInfo file);
+public delegate bool IsProductGroupNameInSourceControl(GroupName name, ProductName productName);
+public delegate ValueTask PutProductGroup(GroupName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<ProductGroupDto>> FindProductGroupDto(GroupName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask PutProductGroupInApim(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductGroups(CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductGroup(GroupName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductGroupFromApim(GroupName name, ProductName productName, CancellationToken cancellationToken);
 
-file delegate Option<(GroupName Name, ProductName ProductName)> TryParseGroupName(FileInfo file);
-
-file delegate ValueTask ProcessProductGroup(GroupName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate bool IsGroupNameInSourceControl(GroupName name, ProductName productName);
-
-file delegate ValueTask<Option<ProductGroupDto>> FindProductGroupDto(GroupName name, ProductName productName, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutProductGroup(GroupName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteProductGroup(GroupName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask PutProductGroupInApim(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteProductGroupFromApim(GroupName name, ProductName productName, CancellationToken cancellationToken);
-
-file sealed class FindProductGroupActionHandler(TryParseGroupName tryParseName, ProcessProductGroup processProductGroup)
+public static class ProductGroupModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from names in tryParseName(file)
-        select GetAction(names.Name, names.ProductName);
-
-    private PublisherAction GetAction(GroupName name, ProductName productName) =>
-        async cancellationToken => await processProductGroup(name, productName, cancellationToken);
-}
-
-file sealed class TryParseGroupNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<(GroupName, ProductName)> Handle(FileInfo file) =>
-        TryParseNameFromGroupInformationFile(file);
-
-    private Option<(GroupName, ProductName)> TryParseNameFromGroupInformationFile(FileInfo file) =>
-        from informationFile in ProductGroupInformationFile.TryParse(file, serviceDirectory)
-        select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class ProductGroupSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<(GroupName, ProductName)> locker = new(LockOptions.Default);
-    private ImmutableHashSet<(GroupName, ProductName)> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(GroupName name, ProductName productName, Func<GroupName, ProductName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutProductGroups(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync((name, productName), cancellationToken).ConfigureAwait(false);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryProductParseGroupName(builder);
+        ConfigureIsProductGroupNameInSourceControl(builder);
+        ConfigurePutProductGroup(builder);
 
-        // Only process each name once
-        if (processedNames.Contains((name, productName)))
-        {
-            return;
-        }
-
-        await action(name, productName, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add((name, productName)));
+        builder.Services.TryAddSingleton(GetPutProductGroups);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessProductGroupHandler(IsGroupNameInSourceControl isNameInSourceControl, PutProductGroup put, DeleteProductGroup delete) : IDisposable
-{
-    private readonly ProductGroupSemaphore semaphore = new();
-
-    public async ValueTask Handle(GroupName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(GroupName name, ProductName productName, CancellationToken cancellationToken)
+    private static PutProductGroups GetPutProductGroups(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name, productName))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseProductGroupName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsProductGroupNameInSourceControl>();
+        var put = provider.GetRequiredService<PutProductGroup>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, productName, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutProductGroups));
+
+            logger.LogInformation("Putting product groups...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(group => isNameInSourceControl(group.Name, group.ProductName))
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryProductParseGroupName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseProductGroupName);
+    }
+
+    private static TryParseProductGroupName GetTryParseProductGroupName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in ProductGroupInformationFile.TryParse(file, serviceDirectory)
+                       select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
+    }
+
+    private static void ConfigureIsProductGroupNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsGroupNameInSourceControl);
+    }
+
+    private static IsProductGroupNameInSourceControl GetIsGroupNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(GroupName name, ProductName productName)
         {
-            await delete(name, productName, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var groupFile = ProductGroupInformationFile.From(name, productName, serviceDirectory);
+
+            return artifactFiles.Contains(groupFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsGroupNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(GroupName name, ProductName productName) =>
-        DoesGroupInformationFileExist(name, productName);
-
-    private bool DoesGroupInformationFileExist(GroupName name, ProductName productName)
+    private static void ConfigurePutProductGroup(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = ProductGroupInformationFile.From(name, productName, serviceDirectory);
+        ConfigureFindProductGroupDto(builder);
+        ConfigurePutProductGroupInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutProductGroupHandler(FindProductGroupDto findDto, PutProduct putProduct, PutGroup putGroup, PutProductGroupInApim putInApim) : IDisposable
-{
-    private readonly ProductGroupSemaphore semaphore = new();
-
-    public async ValueTask Handle(GroupName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, Put, cancellationToken);
-
-    private async ValueTask Put(GroupName name, ProductName productName, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, productName, cancellationToken);
-        await dtoOption.IterTask(async dto => await Put(name, dto, productName, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutProductGroup);
     }
 
-    private async ValueTask Put(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken)
+    private static PutProductGroup GetPutProductGroup(IServiceProvider provider)
     {
-        await putProduct(productName, cancellationToken);
-        await putGroup(name, cancellationToken);
-        await putInApim(name, dto, productName, cancellationToken);
+        var findDto = provider.GetRequiredService<FindProductGroupDto>();
+        var putInApim = provider.GetRequiredService<PutProductGroupInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, productName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutProductGroup))
+                                       ?.AddTag("product_group.name", name)
+                                       ?.AddTag("product.name", productName);
+
+            var dtoOption = await findDto(name, productName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, productName, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindProductGroupDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents)
-{
-    public async ValueTask<Option<ProductGroupDto>> Handle(GroupName name, ProductName productName, CancellationToken cancellationToken)
+    private static void ConfigureFindProductGroupDto(IHostApplicationBuilder builder)
     {
-        var informationFile = ProductGroupInformationFile.From(name, productName, serviceDirectory);
-        var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
 
-        return from contents in contentsOption
-               select contents.ToObjectFromJson<ProductGroupDto>();
-    }
-}
-
-file sealed class PutProductGroupInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Adding group {GroupName} to product {ProductName}...", name, productName);
-        await ProductGroupUri.From(name, productName, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteProductGroupHandler(DeleteProductGroupFromApim deleteFromApim) : IDisposable
-{
-    private readonly ProductGroupSemaphore semaphore = new();
-
-    public async ValueTask Handle(GroupName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, Delete, cancellationToken);
-
-    private async ValueTask Delete(GroupName name, ProductName productName, CancellationToken cancellationToken)
-    {
-        await deleteFromApim(name, productName, cancellationToken);
+        builder.Services.TryAddSingleton(GetFindProductGroupDto);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteProductGroupFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(GroupName name, ProductName productName, CancellationToken cancellationToken)
+    private static FindProductGroupDto GetFindProductGroupDto(IServiceProvider provider)
     {
-        logger.LogInformation("Deleting group {GroupName} from product {ProductName}...", name, productName);
-        await ProductGroupUri.From(name, productName, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-internal static class ProductGroupServices
-{
-    public static void ConfigureFindProductGroupAction(IServiceCollection services)
-    {
-        ConfigureTryParseGroupName(services);
-        ConfigureProcessProductGroup(services);
+        return async (name, productName, cancellationToken) =>
+        {
+            var informationFile = ProductGroupInformationFile.From(name, productName, serviceDirectory);
+            var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
-        services.TryAddSingleton<FindProductGroupActionHandler>();
-        services.TryAddSingleton<FindProductGroupAction>(provider => provider.GetRequiredService<FindProductGroupActionHandler>().Handle);
+            return from contents in contentsOption
+                   select contents.ToObjectFromJson<ProductGroupDto>();
+        };
     }
 
-    private static void ConfigureTryParseGroupName(IServiceCollection services)
+    private static void ConfigurePutProductGroupInApim(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<TryParseGroupNameHandler>();
-        services.TryAddSingleton<TryParseGroupName>(provider => provider.GetRequiredService<TryParseGroupNameHandler>().Handle);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutProductGroupInApim);
     }
 
-    private static void ConfigureProcessProductGroup(IServiceCollection services)
+    private static PutProductGroupInApim GetPutProductGroupInApim(IServiceProvider provider)
     {
-        ConfigureIsGroupNameInSourceControl(services);
-        ConfigurePutProductGroup(services);
-        ConfigureDeleteProductGroup(services);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ProcessProductGroupHandler>();
-        services.TryAddSingleton<ProcessProductGroup>(provider => provider.GetRequiredService<ProcessProductGroupHandler>().Handle);
+        return async (name, dto, productName, cancellationToken) =>
+        {
+            logger.LogInformation("Adding group {GroupName} to product {ProductName}...", name, productName);
+
+            await ProductGroupUri.From(name, productName, serviceUri)
+                                 .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    private static void ConfigureIsGroupNameInSourceControl(IServiceCollection services)
+    public static void ConfigureDeleteProductGroups(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<IsGroupNameInSourceControlHandler>();
-        services.TryAddSingleton<IsGroupNameInSourceControl>(provider => provider.GetRequiredService<IsGroupNameInSourceControlHandler>().Handle);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryProductParseGroupName(builder);
+        ConfigureIsProductGroupNameInSourceControl(builder);
+        ConfigureDeleteProductGroup(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteProductGroups);
     }
 
-    public static void ConfigurePutProductGroup(IServiceCollection services)
+    private static DeleteProductGroups GetDeleteProductGroups(IServiceProvider provider)
     {
-        ConfigureFindProductGroupDto(services);
-        ConfigurePutProductGroupInApim(services);
-        ProductServices.ConfigurePutProduct(services);
-        GroupServices.ConfigurePutGroup(services);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseProductGroupName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsProductGroupNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteProductGroup>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<PutProductGroupHandler>();
-        services.TryAddSingleton<PutProductGroup>(provider => provider.GetRequiredService<PutProductGroupHandler>().Handle);
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteProductGroups));
+
+            logger.LogInformation("Deleting product groups...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(group => isNameInSourceControl(group.Name, group.ProductName) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigureFindProductGroupDto(IServiceCollection services)
+    private static void ConfigureDeleteProductGroup(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<FindProductGroupDtoHandler>();
-        services.TryAddSingleton<FindProductGroupDto>(provider => provider.GetRequiredService<FindProductGroupDtoHandler>().Handle);
+        ConfigureDeleteProductGroupFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteProductGroup);
     }
 
-    private static void ConfigurePutProductGroupInApim(IServiceCollection services)
+    private static DeleteProductGroup GetDeleteProductGroup(IServiceProvider provider)
     {
-        services.TryAddSingleton<PutProductGroupInApimHandler>();
-        services.TryAddSingleton<PutProductGroupInApim>(provider => provider.GetRequiredService<PutProductGroupInApimHandler>().Handle);
+        var deleteFromApim = provider.GetRequiredService<DeleteProductGroupFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, productName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteProductGroup))
+                                       ?.AddTag("product_group.name", name)
+                                       ?.AddTag("product.name", productName);
+
+            await deleteFromApim(name, productName, cancellationToken);
+        };
     }
 
-    private static void ConfigureDeleteProductGroup(IServiceCollection services)
+    private static void ConfigureDeleteProductGroupFromApim(IHostApplicationBuilder builder)
     {
-        ConfigureDeleteProductGroupFromApim(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<DeleteProductGroupHandler>();
-        services.TryAddSingleton<DeleteProductGroup>(provider => provider.GetRequiredService<DeleteProductGroupHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteProductGroupFromApim);
     }
 
-    private static void ConfigureDeleteProductGroupFromApim(IServiceCollection services)
+    private static DeleteProductGroupFromApim GetDeleteProductGroupFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteProductGroupFromApimHandler>();
-        services.TryAddSingleton<DeleteProductGroupFromApim>(provider => provider.GetRequiredService<DeleteProductGroupFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("ProductGroupPublisher");
+        return async (name, productName, cancellationToken) =>
+        {
+            logger.LogInformation("Removing group {GroupName} from product {ProductName}...", name, productName);
+
+            await ProductGroupUri.From(name, productName, serviceUri)
+                                 .Delete(pipeline, cancellationToken);
+        };
+    }
 }

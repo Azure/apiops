@@ -1,7 +1,11 @@
 ﻿using common;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -9,7 +13,7 @@ namespace publisher;
 
 public delegate TDto OverrideDto<TName, TDto>(TName name, TDto dto) where TName : notnull;
 
-public class OverrideDtoFactory(ConfigurationJson configurationJson)
+public sealed class OverrideDtoFactory(ConfigurationJson configurationJson)
 {
     private readonly FrozenDictionary<string, FrozenDictionary<string, JsonObject>> configurationDtos = GetConfigurationDtos(configurationJson);
     private static readonly FrozenDictionary<Type, string> sectionNames = GetConfigurationSectionNames();
@@ -17,12 +21,16 @@ public class OverrideDtoFactory(ConfigurationJson configurationJson)
     private static FrozenDictionary<string, FrozenDictionary<string, JsonObject>> GetConfigurationDtos(ConfigurationJson configurationJson) =>
         configurationJson.Value
                          // Get sections that are JSON arrays
-                         .ChooseValue(node => node.TryAsJsonArray())
-                         // Map sections to dictionaries
-                         .MapValue(sectionArray => sectionArray.GetJsonObjects()
-                                                               .Choose(jsonObject => from name in jsonObject.TryGetStringProperty("name").ToOption()
-                                                                                     select (name, jsonObject))
-                                                               .ToFrozenDictionary(StringComparer.OrdinalIgnoreCase))
+                         .ChooseValues(node => node.TryAsJsonArray().ToOption())
+                         // Convert each JSON array a dictionary
+                         .Select(kvp => kvp.MapValue(jsonArray => jsonArray.PickJsonObjects()
+                                                                           // Where the JSON object has a "name" property
+                                                                           .Choose(jsonObject => from name in jsonObject.TryGetStringProperty("name").ToOption()
+                                                                                                 select (name, jsonObject))
+                                                                           // Return a dictionary where the key is the "name" property and the value is the JSON object                               
+                                                                           .ToFrozenDictionary(StringComparer.OrdinalIgnoreCase)))
+                         // Return a dictionary where the key is the section name and the value is the dictionary of JSON objects.
+                         // For instance, one item in this dictionary could be "apis" -> { "api1": { ... }, "api2": { ... } }
                          .ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     private static FrozenDictionary<Type, string> GetConfigurationSectionNames() =>
@@ -72,7 +80,8 @@ public class OverrideDtoFactory(ConfigurationJson configurationJson)
 
     public static T Override<T>(T current, JsonObject other)
     {
-        var currentJson = JsonObjectExtensions.Parse(current);
+        var currentJson = BinaryData.FromObjectAsJson(current)
+                                    .ToObjectFromJson<JsonObject>();
         var overridenJson = Override(currentJson, other);
 
         return overridenJson.Deserialize<T>() ?? throw new JsonException($"Failed to deserialize dto of type {typeof(T).Name}.");
@@ -87,21 +96,13 @@ public class OverrideDtoFactory(ConfigurationJson configurationJson)
             string propertyName = property.Key;
             var currentPropertyValue = property.Value;
 
-            if (other.TryGetPropertyValue(propertyName, out var otherPropertyValue))
-            {
-                if (currentPropertyValue is JsonObject currentObject && otherPropertyValue is JsonObject otherObject)
-                {
-                    merged[propertyName] = Override(currentObject, otherObject);
-                }
-                else
-                {
-                    merged[propertyName] = otherPropertyValue?.DeepClone();
-                }
-            }
-            else
-            {
-                merged[propertyName] = currentPropertyValue?.DeepClone();
-            }
+            merged[propertyName] = other.TryGetPropertyValue(propertyName, out var otherPropertyValue)
+                                    ? (currentPropertyValue, otherPropertyValue) switch
+                                    {
+                                        (JsonObject currentObject, JsonObject otherObject) => Override(currentObject, otherObject),
+                                        _ => otherPropertyValue?.DeepClone(),
+                                    }
+                                    : (currentPropertyValue?.DeepClone());
         }
 
         foreach (var property in other)
@@ -114,5 +115,22 @@ public class OverrideDtoFactory(ConfigurationJson configurationJson)
         }
 
         return merged;
+    }
+}
+
+public static class OverrideDtoModule
+{
+    public static void ConfigureOverrideDtoFactory(IHostApplicationBuilder builder)
+    {
+        ConfigurationModule.ConfigureConfigurationJson(builder);
+
+        builder.Services.TryAddSingleton(GetOverrideDtoFactory);
+    }
+
+    private static OverrideDtoFactory GetOverrideDtoFactory(IServiceProvider provider)
+    {
+        var configurationJson = provider.GetRequiredService<ConfigurationJson>();
+
+        return new OverrideDtoFactory(configurationJson);
     }
 }

@@ -1,8 +1,14 @@
 ﻿using LanguageExt;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Yaml2JsonNode;
@@ -12,6 +18,8 @@ namespace common;
 
 public record ConfigurationJson
 {
+    private static readonly JsonNodeOptions nodeOptions = new() { PropertyNameCaseInsensitive = true };
+
     public required JsonObject Value { get; init; }
 
     public static ConfigurationJson From(IConfiguration configuration) =>
@@ -19,18 +27,18 @@ public record ConfigurationJson
         {
             Value = SerializeConfiguration(configuration) is JsonObject configurationJsonObject
                     ? configurationJsonObject
-                    : new JsonObject(JsonNodeExtensions.Options)
+                    : new JsonObject(nodeOptions)
         };
 
     private static JsonNode? SerializeConfiguration(IConfiguration configuration)
     {
-        var jsonObject = new JsonObject(JsonNodeExtensions.Options);
+        var jsonObject = new JsonObject();
 
         foreach (var child in configuration.GetChildren())
         {
             if (child.Path.EndsWith(":0", StringComparison.Ordinal))
             {
-                var jsonArray = new JsonArray(JsonNodeExtensions.Options);
+                var jsonArray = new JsonArray(nodeOptions);
 
                 foreach (var arrayChild in configuration.GetChildren())
                 {
@@ -85,7 +93,7 @@ public record ConfigurationJson
 
         return yamlStream.Documents switch
         {
-        [] => new JsonObject(JsonNodeExtensions.Options),
+        [] => new JsonObject(nodeOptions),
         [var document] => document.ToJsonNode()?.AsObject() ?? throw new JsonException("Failed to convert YAML to JSON."),
             _ => throw new JsonException("More than one YAML document was found.")
         };
@@ -157,4 +165,51 @@ public static class ConfigurationExtensions
                 ? Option<IConfigurationSection>.Some(section)
                 : Option<IConfigurationSection>.None;
     }
+
+    public static IConfigurationBuilder AddUserSecretsWithLowestPriority(this IConfigurationBuilder builder, Assembly assembly, bool optional = true) =>
+        builder.AddWithLowestPriority(b => b.AddUserSecrets(assembly, optional));
+
+    private static IConfigurationBuilder AddWithLowestPriority(this IConfigurationBuilder builder, Func<IConfigurationBuilder, IConfigurationBuilder> adder)
+    {
+        // Configuration sources added last have the highest priority. We empty existing sources,
+        // add the new sources, and then add the existing sources back.
+        var adderSources = adder(new ConfigurationBuilder()).Sources;
+        var existingSources = builder.Sources;
+        var sources = adderSources.Concat(existingSources)
+                                  .ToImmutableArray();
+
+        builder.Sources.Clear();
+        sources.Iter(source => builder.Add(source));
+
+        return builder;
+    }
+}
+
+public static class ConfigurationModule
+{
+    public static void ConfigureConfigurationJson(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetConfigurationJson);
+    }
+
+    private static ConfigurationJson GetConfigurationJson(IServiceProvider provider)
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+
+        var configurationJson = ConfigurationJson.From(configuration);
+
+        return TryGetConfigurationJsonFromYaml(configuration)
+                .Map(configurationJson.MergeWith)
+                .IfNone(configurationJson);
+    }
+
+    private static Option<ConfigurationJson> TryGetConfigurationJsonFromYaml(IConfiguration configuration) =>
+        configuration.TryGetValue("CONFIGURATION_YAML_PATH")
+                     .Map(path => new FileInfo(path))
+                     .Where(file => file.Exists)
+                     .Map(file =>
+                     {
+                         using var reader = File.OpenText(file.FullName);
+                         return ConfigurationJson.FromYaml(reader);
+                     });
 }

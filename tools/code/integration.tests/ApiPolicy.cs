@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal static class ApiPolicy
+internal static class ApiPolicyModule
 {
     public static Gen<ApiPolicyModel> GenerateUpdate(ApiPolicyModel original) =>
         from content in ApiPolicyModel.GenerateContent()
@@ -79,17 +79,17 @@ internal static class ApiPolicy
     }
 
     private static async ValueTask<FrozenDictionary<ApiPolicyName, ApiPolicyDto>> GetFileResources(ApiName apiName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await ApiPolicyModule.ListPolicyFiles(apiName, serviceDirectory)
-                                 .ToAsyncEnumerable()
-                                 .SelectAwait(async file => (file.Name,
-                                                             new ApiPolicyDto
-                                                             {
-                                                                 Properties = new ApiPolicyDto.ApiPolicyContract
-                                                                 {
-                                                                     Value = await file.ReadPolicy(cancellationToken)
-                                                                 }
-                                                             }))
-                                 .ToFrozenDictionary(cancellationToken);
+        await common.ApiPolicyModule.ListPolicyFiles(apiName, serviceDirectory)
+                                    .ToAsyncEnumerable()
+                                    .SelectAwait(async file => (file.Name,
+                                                                new ApiPolicyDto
+                                                                {
+                                                                    Properties = new ApiPolicyDto.ApiPolicyContract
+                                                                    {
+                                                                        Value = await file.ReadPolicy(cancellationToken)
+                                                                    }
+                                                                }))
+                                    .ToFrozenDictionary(cancellationToken);
 
     private static string NormalizeDto(ApiPolicyDto dto) =>
         new

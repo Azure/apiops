@@ -5,7 +5,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <WarningsNotAsErrors>CA2007,CA1848,CA1812</WarningsNotAsErrors>
+    <WarningsNotAsErrors>CA2007,CA1848,CA1812,NU1903</WarningsNotAsErrors>
     <UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
     <AnalysisLevel>8-all</AnalysisLevel>
     <Nullable>enable</Nullable>

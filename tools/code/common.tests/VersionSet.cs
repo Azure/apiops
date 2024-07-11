@@ -1,6 +1,5 @@
 ﻿using CsCheck;
 using LanguageExt;
-using Nito.Comparers;
 using System.Collections.Frozen;
 using System.Linq;
 
@@ -74,8 +73,6 @@ public sealed record VersionSetModel
         select lorem.Paragraph();
 
     public static Gen<FrozenSet<VersionSetModel>> GenerateSet() =>
-        Generate().FrozenSetOf(EqualityComparerBuilder.For<VersionSetModel>()
-                                                      .EquateBy(x => x.Name)
-                                                      .ThenEquateBy(x => x.DisplayName),
-                               0, 10);
+        Generate().FrozenSetOf(x => x.Name, 0, 10)
+                  .DistinctBy(x => x.DisplayName);
 }
