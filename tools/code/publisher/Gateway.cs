@@ -1,271 +1,254 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindGatewayAction(FileInfo file);
+public delegate ValueTask PutGateways(CancellationToken cancellationToken);
+public delegate Option<GatewayName> TryParseGatewayName(FileInfo file);
+public delegate bool IsGatewayNameInSourceControl(GatewayName name);
+public delegate ValueTask PutGateway(GatewayName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<GatewayDto>> FindGatewayDto(GatewayName name, CancellationToken cancellationToken);
+public delegate ValueTask PutGatewayInApim(GatewayName name, GatewayDto dto, CancellationToken cancellationToken);
+public delegate ValueTask DeleteGateways(CancellationToken cancellationToken);
+public delegate ValueTask DeleteGateway(GatewayName name, CancellationToken cancellationToken);
+public delegate ValueTask DeleteGatewayFromApim(GatewayName name, CancellationToken cancellationToken);
 
-file delegate Option<GatewayName> TryParseGatewayName(FileInfo file);
-
-file delegate ValueTask ProcessGateway(GatewayName name, CancellationToken cancellationToken);
-
-file delegate bool IsGatewayNameInSourceControl(GatewayName name);
-
-file delegate ValueTask<Option<GatewayDto>> FindGatewayDto(GatewayName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutGateway(GatewayName name, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteGateway(GatewayName name, CancellationToken cancellationToken);
-
-file delegate ValueTask PutGatewayInApim(GatewayName name, GatewayDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteGatewayFromApim(GatewayName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask OnDeletingGateway(GatewayName name, CancellationToken cancellationToken);
-
-file sealed class FindGatewayActionHandler(TryParseGatewayName tryParseName, ProcessGateway processGateway)
+public static class GatewayModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from name in tryParseName(file)
-        select GetAction(name);
-
-    private PublisherAction GetAction(GatewayName name) =>
-        async cancellationToken => await processGateway(name, cancellationToken);
-}
-
-file sealed class TryParseGatewayNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<GatewayName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file);
-
-    private Option<GatewayName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in GatewayInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class GatewaySemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<GatewayName> locker = new();
-    private ImmutableHashSet<GatewayName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(GatewayName name, Func<GatewayName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutGateways(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseGatewayName(builder);
+        ConfigureIsGatewayNameInSourceControl(builder);
+        ConfigurePutGateway(builder);
 
-        // Only process each name once
-        if (processedNames.Contains(name))
-        {
-            return;
-        }
-
-        await action(name, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+        builder.Services.TryAddSingleton(GetPutGateways);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessGatewayHandler(IsGatewayNameInSourceControl isNameInSourceControl, PutGateway put, DeleteGateway delete) : IDisposable
-{
-    private readonly GatewaySemaphore semaphore = new();
-
-    public async ValueTask Handle(GatewayName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(GatewayName name, CancellationToken cancellationToken)
+    private static PutGateways GetPutGateways(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseGatewayName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsGatewayNameInSourceControl>();
+        var put = provider.GetRequiredService<PutGateway>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutGateways));
+
+            logger.LogInformation("Putting gateways...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParseGatewayName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseGatewayName);
+    }
+
+    private static TryParseGatewayName GetTryParseGatewayName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in GatewayInformationFile.TryParse(file, serviceDirectory)
+                       select informationFile.Parent.Name;
+    }
+
+    private static void ConfigureIsGatewayNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsGatewayNameInSourceControl);
+    }
+
+    private static IsGatewayNameInSourceControl GetIsGatewayNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(GatewayName name)
         {
-            await delete(name, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var informationFile = GatewayInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsGatewayNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(GatewayName name) =>
-        DoesInformationFileExist(name);
-
-    private bool DoesInformationFileExist(GatewayName name)
+    private static void ConfigurePutGateway(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = GatewayInformationFile.From(name, serviceDirectory);
+        ConfigureFindGatewayDto(builder);
+        ConfigurePutGatewayInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutGatewayHandler(FindGatewayDto findDto, PutGatewayInApim putInApim) : IDisposable
-{
-    private readonly GatewaySemaphore semaphore = new();
-
-    public async ValueTask Handle(GatewayName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(GatewayName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutGateway);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindGatewayDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
-{
-    public async ValueTask<Option<GatewayDto>> Handle(GatewayName name, CancellationToken cancellationToken)
+    private static PutGateway GetPutGateway(IServiceProvider provider)
     {
-        var informationFile = GatewayInformationFile.From(name, serviceDirectory);
-        var informationFileInfo = informationFile.ToFileInfo();
+        var findDto = provider.GetRequiredService<FindGatewayDto>();
+        var putInApim = provider.GetRequiredService<PutGatewayInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutGateway))
+                                       ?.AddTag("gateway.name", name);
 
-        return from contents in contentsOption
-               let dto = contents.ToObjectFromJson<GatewayDto>()
-               let overrideDto = overrideFactory.Create<GatewayName, GatewayDto>()
-               select overrideDto(name, dto);
-    }
-}
-
-file sealed class PutGatewayInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(GatewayName name, GatewayDto dto, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting gateway {GatewayName}...", name);
-        await GatewayUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteGatewayHandler(IEnumerable<OnDeletingGateway> onDeletingHandlers, DeleteGatewayFromApim deleteFromApim) : IDisposable
-{
-    private readonly GatewaySemaphore semaphore = new();
-
-    public async ValueTask Handle(GatewayName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(GatewayName name, CancellationToken cancellationToken)
-    {
-        await onDeletingHandlers.IterParallel(async handler => await handler(name, cancellationToken), cancellationToken);
-        await deleteFromApim(name, cancellationToken);
+            var dtoOption = await findDto(name, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteGatewayFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(GatewayName name, CancellationToken cancellationToken)
+    private static void ConfigureFindGatewayDto(IHostApplicationBuilder builder)
     {
-        logger.LogInformation("Deleting gateway {GatewayName}...", name);
-        await GatewayUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
 
-internal static class GatewayServices
-{
-    public static void ConfigureFindGatewayAction(IServiceCollection services)
-    {
-        ConfigureTryParseGatewayName(services);
-        ConfigureProcessGateway(services);
-
-        services.TryAddSingleton<FindGatewayActionHandler>();
-        services.TryAddSingleton<FindGatewayAction>(provider => provider.GetRequiredService<FindGatewayActionHandler>().Handle);
+        builder.Services.TryAddSingleton(GetFindGatewayDto);
     }
 
-    private static void ConfigureTryParseGatewayName(IServiceCollection services)
+    private static FindGatewayDto GetFindGatewayDto(IServiceProvider provider)
     {
-        services.TryAddSingleton<TryParseGatewayNameHandler>();
-        services.TryAddSingleton<TryParseGatewayName>(provider => provider.GetRequiredService<TryParseGatewayNameHandler>().Handle);
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+
+        var overrideDto = overrideFactory.Create<GatewayName, GatewayDto>();
+
+        return async (name, cancellationToken) =>
+        {
+            var informationFile = GatewayInformationFile.From(name, serviceDirectory);
+            var informationFileInfo = informationFile.ToFileInfo();
+
+            var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+
+            return from contents in contentsOption
+                   let dto = contents.ToObjectFromJson<GatewayDto>()
+                   select overrideDto(name, dto);
+        };
     }
 
-    private static void ConfigureProcessGateway(IServiceCollection services)
+    private static void ConfigurePutGatewayInApim(IHostApplicationBuilder builder)
     {
-        ConfigureIsGatewayNameInSourceControl(services);
-        ConfigurePutGateway(services);
-        ConfigureDeleteGateway(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<ProcessGatewayHandler>();
-        services.TryAddSingleton<ProcessGateway>(provider => provider.GetRequiredService<ProcessGatewayHandler>().Handle);
+        builder.Services.TryAddSingleton(GetPutGatewayInApim);
     }
 
-    private static void ConfigureIsGatewayNameInSourceControl(IServiceCollection services)
+    private static PutGatewayInApim GetPutGatewayInApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<IsGatewayNameInSourceControlHandler>();
-        services.TryAddSingleton<IsGatewayNameInSourceControl>(provider => provider.GetRequiredService<IsGatewayNameInSourceControlHandler>().Handle);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            logger.LogInformation("Putting gateway {GatewayName}...", name);
+
+            await GatewayUri.From(name, serviceUri)
+                            .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    public static void ConfigurePutGateway(IServiceCollection services)
+    public static void ConfigureDeleteGateways(IHostApplicationBuilder builder)
     {
-        ConfigureFindGatewayDto(services);
-        ConfigurePutGatewayInApim(services);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseGatewayName(builder);
+        ConfigureIsGatewayNameInSourceControl(builder);
+        ConfigureDeleteGateway(builder);
 
-        services.TryAddSingleton<PutGatewayHandler>();
-        services.TryAddSingleton<PutGateway>(provider => provider.GetRequiredService<PutGatewayHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteGateways);
     }
 
-    private static void ConfigureFindGatewayDto(IServiceCollection services)
+    private static DeleteGateways GetDeleteGateways(IServiceProvider provider)
     {
-        services.TryAddSingleton<FindGatewayDtoHandler>();
-        services.TryAddSingleton<FindGatewayDto>(provider => provider.GetRequiredService<FindGatewayDtoHandler>().Handle);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseGatewayName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsGatewayNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteGateway>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteGateways));
+
+            logger.LogInformation("Deleting gateways...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigurePutGatewayInApim(IServiceCollection services)
+    private static void ConfigureDeleteGateway(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<PutGatewayInApimHandler>();
-        services.TryAddSingleton<PutGatewayInApim>(provider => provider.GetRequiredService<PutGatewayInApimHandler>().Handle);
+        ConfigureDeleteGatewayFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteGateway);
     }
 
-    private static void ConfigureDeleteGateway(IServiceCollection services)
+    private static DeleteGateway GetDeleteGateway(IServiceProvider provider)
     {
-        ConfigureOnDeletingGateway(services);
-        ConfigureDeleteGatewayFromApim(services);
+        var deleteFromApim = provider.GetRequiredService<DeleteGatewayFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        services.TryAddSingleton<DeleteGatewayHandler>();
-        services.TryAddSingleton<DeleteGateway>(provider => provider.GetRequiredService<DeleteGatewayHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteGateway))
+                                       ?.AddTag("gateway.name", name);
+
+            await deleteFromApim(name, cancellationToken);
+        };
     }
 
-    private static void ConfigureOnDeletingGateway(IServiceCollection services)
+    private static void ConfigureDeleteGatewayFromApim(IHostApplicationBuilder builder)
     {
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteGatewayFromApim);
     }
 
-    private static void ConfigureDeleteGatewayFromApim(IServiceCollection services)
+    private static DeleteGatewayFromApim GetDeleteGatewayFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteGatewayFromApimHandler>();
-        services.TryAddSingleton<DeleteGatewayFromApim>(provider => provider.GetRequiredService<DeleteGatewayFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("GatewayPublisher");
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting gateway {GatewayName}...", name);
+
+            await GatewayUri.From(name, serviceUri)
+                            .Delete(pipeline, cancellationToken);
+        };
+    }
 }

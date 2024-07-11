@@ -2,51 +2,57 @@
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractApiOperations(ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask ExtractApiOperations(ApiName apiName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<ApiOperationName> ListApiOperations(ApiName apiName, CancellationToken cancellationToken);
 
-internal delegate IAsyncEnumerable<ApiOperationName> ListApiOperations(ApiName apiName, CancellationToken cancellationToken);
-
-internal static class ApiOperationServices
+internal static class ApiOperationModule
 {
-    public static void ConfigureExtractApiOperations(IServiceCollection services)
+    public static void ConfigureExtractApiOperations(IHostApplicationBuilder builder)
     {
-        ConfigureListApiOperations(services);
-        ApiOperationPolicyServices.ConfigureExtractApiOperationPolicies(services);
+        ConfigureListApiOperations(builder);
+        ApiOperationPolicyModule.ConfigureExtractApiOperationPolicies(builder);
 
-        services.TryAddSingleton(ExtractApiOperations);
+        builder.Services.TryAddSingleton(GetExtractApiOperations);
     }
 
-    private static ExtractApiOperations ExtractApiOperations(IServiceProvider provider)
+    private static ExtractApiOperations GetExtractApiOperations(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListApiOperations>();
         var extractPolicies = provider.GetRequiredService<ExtractApiOperationPolicies>();
-        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-
-        var logger = Common.GetLogger(loggerFactory);
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (apiName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractApiOperations));
+
+            logger.LogInformation("Extracting API operations for {ApiName}...", apiName);
+
             await list(apiName, cancellationToken)
                     .IterParallel(async name => await extractPolicies(name, apiName, cancellationToken),
                                   cancellationToken);
+        };
     }
 
-    private static void ConfigureListApiOperations(IServiceCollection services)
+    private static void ConfigureListApiOperations(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceUri(services);
-        CommonServices.ConfigureHttpPipeline(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton(ListApiOperations);
+        builder.Services.TryAddSingleton(GetListApiOperations);
     }
 
-    private static ListApiOperations ListApiOperations(IServiceProvider provider)
+    private static ListApiOperations GetListApiOperations(IServiceProvider provider)
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
@@ -55,10 +61,4 @@ internal static class ApiOperationServices
             ApiOperationsUri.From(apiName, serviceUri)
                             .ListNames(pipeline, cancellationToken);
     }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("ApiOperationExtractor");
 }

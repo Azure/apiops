@@ -2,90 +2,107 @@
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractProductTags(ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask ExtractProductTags(ProductName productName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(TagName Name, ProductTagDto Dto)> ListProductTags(ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask WriteProductTagArtifacts(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask WriteProductTagInformationFile(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken);
 
-file delegate IAsyncEnumerable<(TagName Name, ProductTagDto Dto)> ListProductTags(ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteProductTagArtifacts(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteProductTagInformationFile(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken);
-
-file sealed class ExtractProductTagsHandler(ListProductTags list, WriteProductTagArtifacts writeArtifacts)
+public static class ProductTagModule
 {
-    public async ValueTask Handle(ProductName productName, CancellationToken cancellationToken) =>
-        await list(productName, cancellationToken)
-                .IterParallel(async producttag => await writeArtifacts(producttag.Name, producttag.Dto, productName, cancellationToken),
-                              cancellationToken);
-}
-
-file sealed class ListProductTagsHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    public IAsyncEnumerable<(TagName, ProductTagDto)> Handle(ProductName productName, CancellationToken cancellationToken) =>
-        ProductTagsUri.From(productName, serviceUri).List(pipeline, cancellationToken);
-}
-
-file sealed class WriteProductTagArtifactsHandler(WriteProductTagInformationFile writeTagFile)
-{
-    public async ValueTask Handle(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken)
+    public static void ConfigureExtractProductTags(IHostApplicationBuilder builder)
     {
-        await writeTagFile(name, dto, productName, cancellationToken);
-    }
-}
+        ConfigureListProductTags(builder);
+        TagModule.ConfigureShouldExtractTag(builder);
+        ConfigureWriteProductTagArtifacts(builder);
 
-file sealed class WriteProductTagInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken)
-    {
-        var informationFile = ProductTagInformationFile.From(name, productName, serviceDirectory);
-
-        logger.LogInformation("Writing product tag information file {ProductTagInformationFile}...", informationFile);
-        await informationFile.WriteDto(dto, cancellationToken);
-    }
-}
-
-internal static class ProductTagServices
-{
-    public static void ConfigureExtractProductTags(IServiceCollection services)
-    {
-        ConfigureListProductTags(services);
-        ConfigureWriteProductTagArtifacts(services);
-
-        services.TryAddSingleton<ExtractProductTagsHandler>();
-        services.TryAddSingleton<ExtractProductTags>(provider => provider.GetRequiredService<ExtractProductTagsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetExtractProductTags);
     }
 
-    private static void ConfigureListProductTags(IServiceCollection services)
+    private static ExtractProductTags GetExtractProductTags(IServiceProvider provider)
     {
-        services.TryAddSingleton<ListProductTagsHandler>();
-        services.TryAddSingleton<ListProductTags>(provider => provider.GetRequiredService<ListProductTagsHandler>().Handle);
+        var list = provider.GetRequiredService<ListProductTags>();
+        var shouldExtractTag = provider.GetRequiredService<ShouldExtractTag>();
+        var writeArtifacts = provider.GetRequiredService<WriteProductTagArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (productName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractProductTags));
+
+            logger.LogInformation("Extracting tags for product {ProductName}...", productName);
+
+            await list(productName, cancellationToken)
+                    .Where(tag => shouldExtractTag(tag.Name))
+                    .IterParallel(async producttag => await writeArtifacts(producttag.Name, producttag.Dto, productName, cancellationToken),
+                                  cancellationToken);
+        };
     }
 
-    private static void ConfigureWriteProductTagArtifacts(IServiceCollection services)
+    private static void ConfigureListProductTags(IHostApplicationBuilder builder)
     {
-        ConfigureWriteProductTagInformationFile(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<WriteProductTagArtifactsHandler>();
-        services.TryAddSingleton<WriteProductTagArtifacts>(provider => provider.GetRequiredService<WriteProductTagArtifactsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetListProductTags);
     }
 
-    private static void ConfigureWriteProductTagInformationFile(IServiceCollection services)
+    private static ListProductTags GetListProductTags(IServiceProvider provider)
     {
-        services.TryAddSingleton<WriteProductTagInformationFileHandler>();
-        services.TryAddSingleton<WriteProductTagInformationFile>(provider => provider.GetRequiredService<WriteProductTagInformationFileHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("ProductTagExtractor");
+        return (gatewyName, cancellationToken) =>
+            ProductTagsUri.From(gatewyName, serviceUri)
+                          .List(pipeline, cancellationToken);
+    }
+
+    private static void ConfigureWriteProductTagArtifacts(IHostApplicationBuilder builder)
+    {
+        ConfigureWriteProductTagInformationFile(builder);
+
+        builder.Services.TryAddSingleton(GetWriteProductTagArtifacts);
+    }
+
+    private static WriteProductTagArtifacts GetWriteProductTagArtifacts(IServiceProvider provider)
+    {
+        var writeInformationFile = provider.GetRequiredService<WriteProductTagInformationFile>();
+
+        return async (name, dto, productName, cancellationToken) =>
+        {
+            await writeInformationFile(name, dto, productName, cancellationToken);
+        };
+    }
+
+    public static void ConfigureWriteProductTagInformationFile(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetWriteProductTagInformationFile);
+    }
+
+    private static WriteProductTagInformationFile GetWriteProductTagInformationFile(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, productName, cancellationToken) =>
+        {
+            var informationFile = ProductTagInformationFile.From(name, productName, serviceDirectory);
+
+            logger.LogInformation("Writing product tag information file {ProductTagInformationFile}...", informationFile);
+            await informationFile.WriteDto(dto, cancellationToken);
+        };
+    }
 }

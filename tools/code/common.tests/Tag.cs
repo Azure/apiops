@@ -1,6 +1,5 @@
 ﻿using CsCheck;
 using LanguageExt;
-using Nito.Comparers;
 using System.Collections.Frozen;
 using System.Linq;
 
@@ -28,8 +27,6 @@ public sealed record TagModel
         Generator.AlphaNumericStringBetween(10, 20);
 
     public static Gen<FrozenSet<TagModel>> GenerateSet() =>
-        Generate().FrozenSetOf(EqualityComparerBuilder.For<TagModel>()
-                                                      .EquateBy(x => x.Name)
-                                                      .ThenEquateBy(x => x.DisplayName),
-                               0, 10);
+        Generate().FrozenSetOf(x => x.Name, 0, 10)
+                  .DistinctBy(x => x.DisplayName);
 }

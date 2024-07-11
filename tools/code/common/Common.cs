@@ -1,12 +1,11 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using System;
+﻿using System;
 using System.IO;
 
 namespace common;
 
-public abstract record ResourceName
+public abstract record NonEmptyString
 {
-    protected ResourceName(string value)
+    protected NonEmptyString(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value, nameof(value));
         Value = value;
@@ -14,11 +13,16 @@ public abstract record ResourceName
 
     public string Value { get; }
 
+    public sealed override string ToString() => Value;
+}
+
+public abstract record ResourceName : NonEmptyString
+{
+    protected ResourceName(string value) : base(value) { }
+
     public virtual bool Equals(ResourceName? other) => string.Equals(Value, other?.Value, StringComparison.OrdinalIgnoreCase);
 
     public override int GetHashCode() => Value.GetHashCode(StringComparison.OrdinalIgnoreCase);
-
-    public sealed override string ToString() => Value;
 }
 
 public abstract record ResourceDirectory

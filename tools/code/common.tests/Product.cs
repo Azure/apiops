@@ -1,6 +1,5 @@
 ﻿using CsCheck;
 using LanguageExt;
-using Nito.Comparers;
 using System.Collections.Frozen;
 using System.Linq;
 
@@ -60,8 +59,6 @@ public sealed record ProductModel
         select lorem.Paragraph();
 
     public static Gen<FrozenSet<ProductModel>> GenerateSet() =>
-        Generate().FrozenSetOf(EqualityComparerBuilder.For<ProductModel>()
-                                                      .EquateBy(x => x.Name)
-                                                      .ThenEquateBy(x => x.DisplayName),
-                               0, 10);
+        Generate().FrozenSetOf(x => x.Name, 0, 10)
+                  .DistinctBy(x => x.DisplayName);
 }

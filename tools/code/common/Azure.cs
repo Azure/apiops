@@ -1,24 +1,17 @@
 ﻿using Azure.Core;
+using Azure.Core.Pipeline;
 using Azure.Identity;
 using Azure.ResourceManager;
 using Flurl;
-using LanguageExt;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Polly.Retry;
+using Microsoft.IdentityModel.JsonWebTokens;
 using System;
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Net;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Reflection;
 
 namespace common;
 
@@ -33,232 +26,205 @@ public sealed record AzureEnvironment(Uri AuthorityHost, string DefaultScope, Ur
     public static AzureEnvironment China { get; } = new(AzureAuthorityHosts.AzureChina, ArmEnvironment.AzureChina.DefaultScope, ArmEnvironment.AzureChina.Endpoint);
 }
 
-public class ApimHttpClient(HttpClient client)
+public sealed record SubscriptionId : NonEmptyString
 {
-    public HttpClient HttpClient { get; } = client;
+    public SubscriptionId(string value) : base(value) { }
 }
 
-public static class ApimHttpClientExtensions
+public sealed record ResourceGroupName : NonEmptyString
 {
-    public static IServiceCollection ConfigureApimHttpClient(this IServiceCollection services)
-    {
-        services.AddHttpClient<ApimHttpClient>()
-                .AddHttpMessageHandler<LoggingHandler>()
-                .AddHttpMessageHandler<TokenCredentialHandler>()
-                .AddStandardResilienceHandler(ConfigureResilienceOptions);
-
-        services.TryAddTransient<LoggingHandler>();
-        services.TryAddTransient<TokenCredentialHandler>();
-
-        return services;
-    }
-
-    private static void ConfigureResilienceOptions(HttpStandardResilienceOptions options)
-    {
-        options.Retry.ShouldHandle = ShouldRetry;
-    }
-
-    private static async ValueTask<bool> ShouldRetry(RetryPredicateArguments<HttpResponseMessage> arguments) =>
-        HttpClientResiliencePredicates.IsTransient(arguments.Outcome)
-        || arguments.Outcome switch
-        {
-            { Result: { } response } =>
-                await HasManagementApiRequestFailed(response, arguments.Context.CancellationToken)
-                || await IsEntityNotFound(response, arguments.Context.CancellationToken),
-            _ => false
-        };
-
-    private static async ValueTask<bool> HasManagementApiRequestFailed(HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var responseJsonOption = await Common.TryGetJsonObjectCopy(response.Content, cancellationToken);
-
-            return responseJsonOption.Bind(responseJson => responseJson.TryGetJsonObjectProperty("error")
-                                                                       .Bind(error => error.TryGetStringProperty("code"))
-                                                                       .ToOption()
-                                                                       .Where(code => code.Equals("ManagementApiRequestFailed", StringComparison.OrdinalIgnoreCase)))
-                                     .IsSome;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    private static async ValueTask<bool> IsEntityNotFound(HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        if (response.StatusCode is not HttpStatusCode.BadRequest)
-        {
-            return false;
-        }
-
-        var content = await Common.GetStringCopy(response.Content, cancellationToken);
-        return content.Contains("Entity with specified identifier not found", StringComparison.OrdinalIgnoreCase);
-    }
+    public ResourceGroupName(string value) : base(value) { }
 }
 
-# pragma warning disable CA1812
-file sealed class LoggingHandler(ILoggerFactory loggerFactory) : DelegatingHandler
+public static class AzureModule
 {
-    private readonly ILogger logger = loggerFactory.CreateLogger(nameof(ApimHttpClient));
-
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    private static void ConfigureAzureEnvironment(IHostApplicationBuilder builder)
     {
-        await LogRequest(request, cancellationToken);
-
-        var stopWatch = Stopwatch.StartNew();
-        var response = await base.SendAsync(request, cancellationToken);
-        stopWatch.Stop();
-
-        await LogResponse(response, stopWatch.Elapsed, cancellationToken);
-
-        return response;
+        builder.Services.TryAddSingleton(GetAzureEnvironment);
     }
 
-    private async ValueTask LogRequest(HttpRequestMessage request, CancellationToken cancellationToken)
+    private static AzureEnvironment GetAzureEnvironment(IServiceProvider provider)
     {
-        if (logger.IsEnabled(LogLevel.Trace))
-        {
-            logger.LogTrace("""
-                            Starting request
-                            Method: {HttpMethod}
-                            Uri: {Uri}
-                            Content: {RequestContent}
-                            """,
-                            request.Method,
-                            request.RequestUri,
-                            await GetContentString(request.Content, request.Headers, cancellationToken));
-        }
-        else if (logger.IsEnabled(LogLevel.Debug))
-        {
-            logger.LogDebug("""
-                            Starting request
-                            Method: {HttpMethod}
-                            Uri: {Uri}
-                            """,
-                            request.Method,
-                            request.RequestUri);
-        }
+        var configuration = provider.GetRequiredService<IConfiguration>();
+
+        return configuration.TryGetValue("AZURE_CLOUD_ENVIRONMENT")
+                            .Map(value => value switch
+                            {
+                                "AzureGlobalCloud" or nameof(ArmEnvironment.AzurePublicCloud) => AzureEnvironment.Public,
+                                "AzureChinaCloud" or nameof(ArmEnvironment.AzureChina) => AzureEnvironment.China,
+                                "AzureUSGovernment" or nameof(ArmEnvironment.AzureGovernment) => AzureEnvironment.USGovernment,
+                                "AzureGermanCloud" or nameof(ArmEnvironment.AzureGermany) => AzureEnvironment.Germany,
+                                _ => throw new InvalidOperationException($"AZURE_CLOUD_ENVIRONMENT is invalid. Valid values are {nameof(ArmEnvironment.AzurePublicCloud)}, {nameof(ArmEnvironment.AzureChina)}, {nameof(ArmEnvironment.AzureGovernment)}, {nameof(ArmEnvironment.AzureGermany)}")
+                            })
+                            .IfNone(() => AzureEnvironment.Public);
     }
 
-    private static async ValueTask<string> GetContentString(HttpContent? content, HttpHeaders headers, CancellationToken cancellationToken) =>
-        content switch
-        {
-            null => "<null>",
-            _ => HeaderIsJson(headers)
-                    ? await Common.GetStringCopy(content, cancellationToken)
-                    : "<non-json>"
-        };
-
-    private static bool HeaderIsJson(HttpHeaders headers) =>
-        headers.TryGetValues("Content-Type", out var values) &&
-        values.Contains("application/json", StringComparer.OrdinalIgnoreCase);
-
-    private async ValueTask LogResponse(HttpResponseMessage response, TimeSpan duration, CancellationToken cancellationToken)
+    private static void ConfigureTokenCredential(IHostApplicationBuilder builder)
     {
-        if (logger.IsEnabled(LogLevel.Trace))
-        {
-            logger.LogTrace("""
-                            Starting request
-                            Method: {HttpMethod}
-                            Uri: {Uri}
-                            Duration (hh:mm:ss): {Duration}
-                            Content: {RequestContent}
-                            """,
-                            response.RequestMessage?.Method,
-                            response.RequestMessage?.RequestUri,
-                            duration.ToString("c"),
-                            await GetContentString(response.Content, response.Headers, cancellationToken));
-        }
-        else if (logger.IsEnabled(LogLevel.Debug))
-        {
-            logger.LogDebug("""
-                            Starting request
-                            Method: {HttpMethod}
-                            Duration (hh:mm:ss): {Duration}
-                            Uri: {Uri}
-                            """,
-                            response.RequestMessage?.Method,
-                            response.RequestMessage?.RequestUri,
-                            duration.ToString("c"));
-        }
+        ConfigureAzureEnvironment(builder);
+
+        builder.Services.TryAddSingleton(GetTokenCredential);
     }
-}
 
-file sealed class TokenCredentialHandler(TokenCredential tokenCredential) : DelegatingHandler
-{
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    private static TokenCredential GetTokenCredential(IServiceProvider provider)
     {
-        if (request.RequestUri is null)
+        var environment = provider.GetRequiredService<AzureEnvironment>();
+        var configuration = provider.GetRequiredService<IConfiguration>();
+
+        return configuration.TryGetValue("AZURE_BEARER_TOKEN")
+                            .Map(GetCredentialFromToken)
+                            .IfNone(() => GetDefaultAzureCredential(environment.AuthorityHost));
+
+
+        static TokenCredential GetCredentialFromToken(string token)
         {
-            return await base.SendAsync(request, cancellationToken);
+            var jsonWebToken = new JsonWebToken(token);
+            var expirationDate = new DateTimeOffset(jsonWebToken.ValidTo);
+            var accessToken = new AccessToken(token, expirationDate);
+
+            return DelegatedTokenCredential.Create((context, cancellationToken) => accessToken);
         }
 
-        request.Headers.Authorization = await GetAuthenticationHeader(request.RequestUri, cancellationToken);
-
-        return await base.SendAsync(request, cancellationToken);
+        static DefaultAzureCredential GetDefaultAzureCredential(Uri azureAuthorityHost) =>
+            new(new DefaultAzureCredentialOptions
+            {
+                AuthorityHost = azureAuthorityHost
+            });
     }
 
-    private async ValueTask<AuthenticationHeaderValue> GetAuthenticationHeader(Uri uri, CancellationToken cancellationToken)
+    public static void ConfigureHttpPipeline(IHostApplicationBuilder builder)
     {
-        var accessToken = await GetAccessToken(uri, cancellationToken);
+        ConfigureTokenCredential(builder);
+        ConfigureAzureEnvironment(builder);
 
-        return new AuthenticationHeaderValue("Bearer", accessToken.Token);
+        builder.Services.TryAddSingleton(GetHttpPipeline);
     }
 
-    private async ValueTask<AccessToken> GetAccessToken(Uri uri, CancellationToken cancellationToken)
+    private static HttpPipeline GetHttpPipeline(IServiceProvider provider)
     {
-        var scopeUrl = uri.GetLeftPart(UriPartial.Authority)
-                          .AppendPathSegment(".default")
-                          .ToString();
+        var tokenCredential = provider.GetRequiredService<TokenCredential>();
+        var azureEnvironment = provider.GetRequiredService<AzureEnvironment>();
 
-        return await GetAccessToken([scopeUrl], cancellationToken);
+        var clientOptions = ClientOptions.Default;
+        clientOptions.RetryPolicy = new CommonRetryPolicy();
+
+        var bearerAuthenticationPolicy = new BearerTokenAuthenticationPolicy(tokenCredential, azureEnvironment.DefaultScope);
+
+        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(HttpPipeline));
+        var loggingPolicy = new ILoggerHttpPipelinePolicy(logger);
+
+        var version = Assembly.GetEntryAssembly()?.GetName().Version ?? new Version("-1");
+        var telemetryPolicy = new TelemetryPolicy(version);
+
+        return HttpPipelineBuilder.Build(clientOptions, bearerAuthenticationPolicy, loggingPolicy, telemetryPolicy);
     }
 
-    private async ValueTask<AccessToken> GetAccessToken(string[] scopes, CancellationToken cancellationToken)
+    private static void ConfigureManagementServiceName(IHostApplicationBuilder builder)
     {
-        var context = new TokenRequestContext(scopes);
-
-        return await tokenCredential.GetTokenAsync(context, cancellationToken);
-    }
-}
-#pragma warning restore CA1812
-
-file static class Common
-{
-    public static async ValueTask<Stream> GetStreamCopy(HttpContent content, CancellationToken cancellationToken)
-    {
-        using var stream = new MemoryStream();
-        await content.CopyToAsync(stream, cancellationToken);
-        stream.Position = 0;
-
-        return stream;
+        builder.Services.TryAddSingleton(GetManagementServiceName);
     }
 
-    public static async ValueTask<string> GetStringCopy(HttpContent content, CancellationToken cancellationToken)
+    private static ManagementServiceName GetManagementServiceName(IServiceProvider provider)
     {
-        using var stream = await GetStreamCopy(content, cancellationToken);
-        var data = await BinaryData.FromStreamAsync(stream, cancellationToken);
+        var configuration = provider.GetRequiredService<IConfiguration>();
 
-        return data.ToString();
+        var name = configuration.TryGetValue("API_MANAGEMENT_SERVICE_NAME")
+                                .IfNone(() => configuration.GetValue("apimServiceName"));
+
+        return ManagementServiceName.From(name);
     }
 
-    public static async ValueTask<Option<JsonObject>> TryGetJsonObjectCopy(HttpContent content, CancellationToken cancellationToken)
+    public static void ConfigureManagementServiceUri(IHostApplicationBuilder builder)
     {
-        using var stream = await GetStreamCopy(content, cancellationToken);
+        ConfigureManagementServiceProviderUri(builder);
+        ConfigureManagementServiceName(builder);
 
-        try
-        {
-            var node = await JsonNode.ParseAsync(stream, cancellationToken: cancellationToken);
+        builder.Services.TryAddSingleton(GetManagementServiceUri);
+    }
 
-            return node is JsonObject jsonObject
-                    ? Option<JsonObject>.Some(jsonObject)
-                    : Option<JsonObject>.None;
-        }
-        catch (JsonException)
-        {
-            return Option<JsonObject>.None;
-        }
+    private static ManagementServiceUri GetManagementServiceUri(IServiceProvider provider)
+    {
+        var serviceProviderUri = provider.GetRequiredService<ManagementServiceProviderUri>();
+        var serviceName = provider.GetRequiredService<ManagementServiceName>();
+
+        var uri = serviceProviderUri.ToUri()
+                                    .AppendPathSegment(serviceName)
+                                    .ToUri();
+
+        return ManagementServiceUri.From(uri);
+    }
+
+    public static void ConfigureManagementServiceProviderUri(IHostApplicationBuilder builder)
+    {
+        ConfigureAzureEnvironment(builder);
+        ConfigureSubscriptionId(builder);
+        ConfigureResourceGroupName(builder);
+
+        builder.Services.TryAddSingleton(GetManagementServiceProviderUri);
+    }
+
+    private static ManagementServiceProviderUri GetManagementServiceProviderUri(IServiceProvider provider)
+    {
+        var azureEnvironment = provider.GetRequiredService<AzureEnvironment>();
+        var subscriptionId = provider.GetRequiredService<SubscriptionId>();
+        var resourceGroupName = provider.GetRequiredService<ResourceGroupName>();
+        var configuration = provider.GetRequiredService<IConfiguration>();
+
+        var apiVersion = configuration.TryGetValue("ARM_API_VERSION")
+                                      .IfNone(() => "2023-09-01-preview");
+
+        var uri = azureEnvironment.ManagementEndpoint
+                                  .AppendPathSegment("subscriptions")
+                                  .AppendPathSegment(subscriptionId)
+                                  .AppendPathSegment("resourceGroups")
+                                  .AppendPathSegment(resourceGroupName)
+                                  .AppendPathSegment("providers/Microsoft.ApiManagement/service")
+                                  .SetQueryParam("api-version", apiVersion)
+                                  .ToUri();
+
+        return ManagementServiceProviderUri.From(uri);
+    }
+
+    private static void ConfigureSubscriptionId(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetSubscriptionId);
+    }
+
+    private static SubscriptionId GetSubscriptionId(IServiceProvider provider)
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+
+        var subscriptionId = configuration.GetValue("AZURE_SUBSCRIPTION_ID");
+
+        return new SubscriptionId(subscriptionId);
+    }
+
+    private static void ConfigureResourceGroupName(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetResourceGroupName);
+    }
+
+    private static ResourceGroupName GetResourceGroupName(IServiceProvider provider)
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+
+        var resourceGroupName = configuration.GetValue("AZURE_RESOURCE_GROUP_NAME");
+
+        return new ResourceGroupName(resourceGroupName);
+    }
+
+    public static void ConfigureManagementServiceDirectory(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetManagementServiceDirectory);
+    }
+
+    private static ManagementServiceDirectory GetManagementServiceDirectory(IServiceProvider provider)
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+
+        var directoryPath = configuration.GetValue("API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH");
+        var directory = new DirectoryInfo(directoryPath);
+
+        return ManagementServiceDirectory.From(directory);
     }
 }

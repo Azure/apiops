@@ -186,17 +186,6 @@ public static class NamedValueModule
         return content.ToObjectFromJson<NamedValueDto>();
     }
 
-    public static async ValueTask<Option<NamedValueDto>> TryGetDto(this NamedValueUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<NamedValueDto>())
-                     .Match(Option<NamedValueDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<NamedValueDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this NamedValueUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

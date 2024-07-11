@@ -174,17 +174,6 @@ public static class VersionSetModule
         return content.ToObjectFromJson<VersionSetDto>();
     }
 
-    public static async ValueTask<Option<VersionSetDto>> TryGetDto(this VersionSetUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<VersionSetDto>())
-                     .Match(Option<VersionSetDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<VersionSetDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this VersionSetUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

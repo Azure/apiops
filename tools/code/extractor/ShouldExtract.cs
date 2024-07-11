@@ -1,5 +1,8 @@
 ﻿using common;
 using LanguageExt;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Frozen;
@@ -14,7 +17,7 @@ public sealed class ShouldExtractFactory(ConfigurationJson configurationJson, IL
 {
     private static readonly FrozenDictionary<Type, string> typeSectionNames = GetTypeSectionNames();
     private static readonly FrozenDictionary<string, Type> sectionNameTypes = GetSectionNameTypes(typeSectionNames);
-    private readonly FrozenDictionary<Type, FrozenSet<string>> resourcesToExtract = GetResourcesToExtract(configurationJson, sectionNameTypes);
+    private readonly FrozenDictionary<Type, FrozenSet<string>> resourcesToExtract = GetResourcesToExtract(configurationJson);
     private readonly ILogger logger = loggerFactory.CreateLogger<ShouldExtractFactory>();
 
     private static FrozenDictionary<Type, string> GetTypeSectionNames() =>
@@ -38,16 +41,16 @@ public sealed class ShouldExtractFactory(ConfigurationJson configurationJson, IL
     private static FrozenDictionary<string, Type> GetSectionNameTypes(FrozenDictionary<Type, string> typeSectionNames) =>
         typeSectionNames.ToFrozenDictionary(kvp => kvp.Value, kvp => kvp.Key, StringComparer.OrdinalIgnoreCase);
 
-    private static FrozenDictionary<Type, FrozenSet<string>> GetResourcesToExtract(ConfigurationJson configurationJson, FrozenDictionary<string, Type> sectionNameTypes) =>
+    private static FrozenDictionary<Type, FrozenSet<string>> GetResourcesToExtract(ConfigurationJson configurationJson) =>
         configurationJson.Value
                          // Get configuration sections that are JSON arrays
-                         .ChooseValue(node => node.TryAsJsonArray())
+                         .ChooseValues(node => node.TryAsJsonArray().ToOption())
                          // Map each JSON array to a set of strings
-                         .MapValue(jsonArray => jsonArray.Choose(node => node.TryAsString())
-                                                         .Where(value => string.IsNullOrWhiteSpace(value) is false)
-                                                         .ToFrozenSet(StringComparer.OrdinalIgnoreCase))
+                         .Select(kvp => kvp.MapValue(jsonArray => jsonArray.PickStrings()
+                                                                           .Where(value => string.IsNullOrWhiteSpace(value) is false)
+                                                                           .ToFrozenSet(StringComparer.OrdinalIgnoreCase)))
                          // Map each configuration section to a resource name type
-                         .ChooseKey(sectionNameTypes.Find)
+                         .ChooseKeys(sectionNameTypes.Find)
                          .ToFrozenDictionary();
 
     public static string GetConfigurationSectionName<T>() =>
@@ -75,9 +78,27 @@ public sealed class ShouldExtractFactory(ConfigurationJson configurationJson, IL
 
         if (shouldExtract is false)
         {
-            logger.LogWarning("{ResourceType} {ResourceName} is not in configuration and will be skipped.", typeof(TName).Name, name);
+            logger.LogWarning("{ResourceType} {ResourceName} is not in configuration and will be not be extracted.", typeof(TName).Name, name);
         }
 
         return shouldExtract;
+    }
+}
+
+public static class ShouldExtractModule
+{
+    public static void ConfigureShouldExtractFactory(IHostApplicationBuilder builder)
+    {
+        ConfigurationModule.ConfigureConfigurationJson(builder);
+
+        builder.Services.TryAddSingleton(GetShouldExtractFactory);
+    }
+
+    private static ShouldExtractFactory GetShouldExtractFactory(IServiceProvider provider)
+    {
+        var configurationJson = provider.GetRequiredService<ConfigurationJson>();
+        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+
+        return new ShouldExtractFactory(configurationJson, loggerFactory);
     }
 }

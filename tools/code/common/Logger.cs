@@ -181,17 +181,6 @@ public static class LoggerModule
         return content.ToObjectFromJson<LoggerDto>();
     }
 
-    public static async ValueTask<Option<LoggerDto>> TryGetDto(this LoggerUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<LoggerDto>())
-                     .Match(Option<LoggerDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<LoggerDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this LoggerUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

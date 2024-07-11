@@ -9,15 +9,9 @@ using System.Linq;
 
 namespace publisher;
 
-public sealed record CommitId
+public sealed record CommitId : NonEmptyString
 {
-    public CommitId(string value)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value, nameof(value));
-        Value = value;
-    }
-
-    public string Value { get; }
+    public CommitId(string value) : base(value) { }
 }
 
 public static class Git
@@ -36,6 +30,7 @@ public static class Git
                     (var path, var oldPath) => new[] { path, oldPath }.Distinct()
                 })
                 .Select(path => new FileInfo(Path.Combine(repositoryDirectory.FullName, path)))
+                
                 .ToFrozenSet(x => x.FullName);
     }
 
@@ -68,7 +63,8 @@ public static class Git
 
     private static Commit GetCommit(Repository repository, CommitId commitId) =>
         repository.Commits
-                  .Find(commit => commit.Id.Sha == commitId.Value)
+                  .Where(commit => commit.Id.Sha == commitId.Value)
+                  .HeadOrNone()
                   .IfNone(() => throw new InvalidOperationException($"Could not find commit with ID {commitId.Value}."));
 
     public static Option<CommitId> TryGetPreviousCommitId(DirectoryInfo directory, CommitId commitId)
@@ -78,11 +74,9 @@ public static class Git
 
         var commit = GetCommit(repository, commitId);
 
-        return commit.Parents.FirstOrDefault() switch
-        {
-            null => Option<CommitId>.None,
-            var parent => new CommitId(parent.Id.Sha)
-        };
+        return commit.Parents
+                     .HeadOrNone()
+                     .Map(parent => new CommitId(parent.Id.Sha));
     }
 
     public static Option<Stream> TryGetFileContentsInCommit(DirectoryInfo directory, FileInfo file, CommitId commitId)

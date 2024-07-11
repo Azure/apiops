@@ -1,272 +1,254 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindLoggerAction(FileInfo file);
+public delegate ValueTask PutLoggers(CancellationToken cancellationToken);
+public delegate Option<LoggerName> TryParseLoggerName(FileInfo file);
+public delegate bool IsLoggerNameInSourceControl(LoggerName name);
+public delegate ValueTask PutLogger(LoggerName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<LoggerDto>> FindLoggerDto(LoggerName name, CancellationToken cancellationToken);
+public delegate ValueTask PutLoggerInApim(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
+public delegate ValueTask DeleteLoggers(CancellationToken cancellationToken);
+public delegate ValueTask DeleteLogger(LoggerName name, CancellationToken cancellationToken);
+public delegate ValueTask DeleteLoggerFromApim(LoggerName name, CancellationToken cancellationToken);
 
-file delegate Option<LoggerName> TryParseLoggerName(FileInfo file);
-
-file delegate ValueTask ProcessLogger(LoggerName name, CancellationToken cancellationToken);
-
-file delegate bool IsLoggerNameInSourceControl(LoggerName name);
-
-file delegate ValueTask<Option<LoggerDto>> FindLoggerDto(LoggerName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutLogger(LoggerName name, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteLogger(LoggerName name, CancellationToken cancellationToken);
-
-file delegate ValueTask PutLoggerInApim(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteLoggerFromApim(LoggerName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask OnDeletingLogger(LoggerName name, CancellationToken cancellationToken);
-
-file sealed class FindLoggerActionHandler(TryParseLoggerName tryParseName, ProcessLogger processLogger)
+public static class LoggerModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from name in tryParseName(file)
-        select GetAction(name);
-
-    private PublisherAction GetAction(LoggerName name) =>
-        async cancellationToken => await processLogger(name, cancellationToken);
-}
-
-file sealed class TryParseLoggerNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<LoggerName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file);
-
-    private Option<LoggerName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in LoggerInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class LoggerSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<LoggerName> locker = new();
-    private ImmutableHashSet<LoggerName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(LoggerName name, Func<LoggerName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutLoggers(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseLoggerName(builder);
+        ConfigureIsLoggerNameInSourceControl(builder);
+        ConfigurePutLogger(builder);
 
-        // Only process each name once
-        if (processedNames.Contains(name))
-        {
-            return;
-        }
-
-        await action(name, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+        builder.Services.TryAddSingleton(GetPutLoggers);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessLoggerHandler(IsLoggerNameInSourceControl isNameInSourceControl, PutLogger put, DeleteLogger delete) : IDisposable
-{
-    private readonly LoggerSemaphore semaphore = new();
-
-    public async ValueTask Handle(LoggerName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(LoggerName name, CancellationToken cancellationToken)
+    private static PutLoggers GetPutLoggers(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseLoggerName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsLoggerNameInSourceControl>();
+        var put = provider.GetRequiredService<PutLogger>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutLoggers));
+
+            logger.LogInformation("Putting loggers...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParseLoggerName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseLoggerName);
+    }
+
+    private static TryParseLoggerName GetTryParseLoggerName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in LoggerInformationFile.TryParse(file, serviceDirectory)
+                       select informationFile.Parent.Name;
+    }
+
+    private static void ConfigureIsLoggerNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsLoggerNameInSourceControl);
+    }
+
+    private static IsLoggerNameInSourceControl GetIsLoggerNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(LoggerName name)
         {
-            await delete(name, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var informationFile = LoggerInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsLoggerNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(LoggerName name) =>
-        DoesInformationFileExist(name);
-
-    private bool DoesInformationFileExist(LoggerName name)
+    private static void ConfigurePutLogger(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = LoggerInformationFile.From(name, serviceDirectory);
+        ConfigureFindLoggerDto(builder);
+        ConfigurePutLoggerInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutLoggerHandler(FindLoggerDto findDto, PutLoggerInApim putInApim) : IDisposable
-{
-    private readonly LoggerSemaphore semaphore = new();
-
-    public async ValueTask Handle(LoggerName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(LoggerName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutLogger);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindLoggerDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
-{
-    public async ValueTask<Option<LoggerDto>> Handle(LoggerName name, CancellationToken cancellationToken)
+    private static PutLogger GetPutLogger(IServiceProvider provider)
     {
-        var informationFile = LoggerInformationFile.From(name, serviceDirectory);
-        var informationFileInfo = informationFile.ToFileInfo();
+        var findDto = provider.GetRequiredService<FindLoggerDto>();
+        var putInApim = provider.GetRequiredService<PutLoggerInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutLogger))
+                                       ?.AddTag("logger.name", name);
 
-        return from contents in contentsOption
-               let dto = contents.ToObjectFromJson<LoggerDto>()
-               let overrideDto = overrideFactory.Create<LoggerName, LoggerDto>()
-               select overrideDto(name, dto);
-    }
-}
-
-file sealed class PutLoggerInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(LoggerName name, LoggerDto dto, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting logger {LoggerName}...", name);
-        await LoggerUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteLoggerHandler(IEnumerable<OnDeletingLogger> onDeletingHandlers, DeleteLoggerFromApim deleteFromApim) : IDisposable
-{
-    private readonly LoggerSemaphore semaphore = new();
-
-    public async ValueTask Handle(LoggerName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(LoggerName name, CancellationToken cancellationToken)
-    {
-        await onDeletingHandlers.IterParallel(async handler => await handler(name, cancellationToken), cancellationToken);
-        await deleteFromApim(name, cancellationToken);
+            var dtoOption = await findDto(name, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteLoggerFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(LoggerName name, CancellationToken cancellationToken)
+    private static void ConfigureFindLoggerDto(IHostApplicationBuilder builder)
     {
-        logger.LogInformation("Deleting logger {LoggerName}...", name);
-        await LoggerUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
 
-internal static class LoggerServices
-{
-    public static void ConfigureFindLoggerAction(IServiceCollection services)
-    {
-        ConfigureTryParseLoggerName(services);
-        ConfigureProcessLogger(services);
-
-        services.TryAddSingleton<FindLoggerActionHandler>();
-        services.TryAddSingleton<FindLoggerAction>(provider => provider.GetRequiredService<FindLoggerActionHandler>().Handle);
+        builder.Services.TryAddSingleton(GetFindLoggerDto);
     }
 
-    private static void ConfigureTryParseLoggerName(IServiceCollection services)
+    private static FindLoggerDto GetFindLoggerDto(IServiceProvider provider)
     {
-        services.TryAddSingleton<TryParseLoggerNameHandler>();
-        services.TryAddSingleton<TryParseLoggerName>(provider => provider.GetRequiredService<TryParseLoggerNameHandler>().Handle);
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+
+        var overrideDto = overrideFactory.Create<LoggerName, LoggerDto>();
+
+        return async (name, cancellationToken) =>
+        {
+            var informationFile = LoggerInformationFile.From(name, serviceDirectory);
+            var informationFileInfo = informationFile.ToFileInfo();
+
+            var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+
+            return from contents in contentsOption
+                   let dto = contents.ToObjectFromJson<LoggerDto>()
+                   select overrideDto(name, dto);
+        };
     }
 
-    private static void ConfigureProcessLogger(IServiceCollection services)
+    private static void ConfigurePutLoggerInApim(IHostApplicationBuilder builder)
     {
-        ConfigureIsLoggerNameInSourceControl(services);
-        ConfigurePutLogger(services);
-        ConfigureDeleteLogger(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<ProcessLoggerHandler>();
-        services.TryAddSingleton<ProcessLogger>(provider => provider.GetRequiredService<ProcessLoggerHandler>().Handle);
+        builder.Services.TryAddSingleton(GetPutLoggerInApim);
     }
 
-    private static void ConfigureIsLoggerNameInSourceControl(IServiceCollection services)
+    private static PutLoggerInApim GetPutLoggerInApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<IsLoggerNameInSourceControlHandler>();
-        services.TryAddSingleton<IsLoggerNameInSourceControl>(provider => provider.GetRequiredService<IsLoggerNameInSourceControlHandler>().Handle);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            logger.LogInformation("Putting logger {LoggerName}...", name);
+
+            await LoggerUri.From(name, serviceUri)
+                           .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    public static void ConfigurePutLogger(IServiceCollection services)
+    public static void ConfigureDeleteLoggers(IHostApplicationBuilder builder)
     {
-        ConfigureFindLoggerDto(services);
-        ConfigurePutLoggerInApim(services);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseLoggerName(builder);
+        ConfigureIsLoggerNameInSourceControl(builder);
+        ConfigureDeleteLogger(builder);
 
-        services.TryAddSingleton<PutLoggerHandler>();
-        services.TryAddSingleton<PutLogger>(provider => provider.GetRequiredService<PutLoggerHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteLoggers);
     }
 
-    private static void ConfigureFindLoggerDto(IServiceCollection services)
+    private static DeleteLoggers GetDeleteLoggers(IServiceProvider provider)
     {
-        services.TryAddSingleton<FindLoggerDtoHandler>();
-        services.TryAddSingleton<FindLoggerDto>(provider => provider.GetRequiredService<FindLoggerDtoHandler>().Handle);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseLoggerName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsLoggerNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteLogger>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteLoggers));
+
+            logger.LogInformation("Deleting loggers...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigurePutLoggerInApim(IServiceCollection services)
+    private static void ConfigureDeleteLogger(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<PutLoggerInApimHandler>();
-        services.TryAddSingleton<PutLoggerInApim>(provider => provider.GetRequiredService<PutLoggerInApimHandler>().Handle);
+        ConfigureDeleteLoggerFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteLogger);
     }
 
-    private static void ConfigureDeleteLogger(IServiceCollection services)
+    private static DeleteLogger GetDeleteLogger(IServiceProvider provider)
     {
-        ConfigureOnDeletingLogger(services);
-        ConfigureDeleteLoggerFromApim(services);
+        var deleteFromApim = provider.GetRequiredService<DeleteLoggerFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        services.TryAddSingleton<DeleteLoggerHandler>();
-        services.TryAddSingleton<DeleteLogger>(provider => provider.GetRequiredService<DeleteLoggerHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteLogger))
+                                       ?.AddTag("logger.name", name);
+
+            await deleteFromApim(name, cancellationToken);
+        };
     }
 
-    private static void ConfigureOnDeletingLogger(IServiceCollection services)
+    private static void ConfigureDeleteLoggerFromApim(IHostApplicationBuilder builder)
     {
-        DiagnosticServices.ConfigureOnDeletingLogger(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteLoggerFromApim);
     }
 
-    private static void ConfigureDeleteLoggerFromApim(IServiceCollection services)
+    private static DeleteLoggerFromApim GetDeleteLoggerFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteLoggerFromApimHandler>();
-        services.TryAddSingleton<DeleteLoggerFromApim>(provider => provider.GetRequiredService<DeleteLoggerFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("LoggerPublisher");
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting logger {LoggerName}...", name);
+
+            await LoggerUri.From(name, serviceUri)
+                           .Delete(pipeline, cancellationToken);
+        };
+    }
 }

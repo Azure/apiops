@@ -3,58 +3,64 @@ using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractBackends(CancellationToken cancellationToken);
+public delegate ValueTask ExtractBackends(CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(BackendName Name, BackendDto Dto)> ListBackends(CancellationToken cancellationToken);
+public delegate bool ShouldExtractBackend(BackendName name);
+public delegate ValueTask WriteBackendArtifacts(BackendName name, BackendDto dto, CancellationToken cancellationToken);
+public delegate ValueTask WriteBackendInformationFile(BackendName name, BackendDto dto, CancellationToken cancellationToken);
 
-internal delegate IAsyncEnumerable<(BackendName Name, BackendDto Dto)> ListBackends(CancellationToken cancellationToken);
-
-internal delegate bool ShouldExtractBackend(BackendName name);
-
-internal delegate ValueTask WriteBackendArtifacts(BackendName name, BackendDto dto, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteBackendInformationFile(BackendName name, BackendDto dto, CancellationToken cancellationToken);
-
-internal static class BackendServices
+internal static class BackendModule
 {
-    public static void ConfigureExtractBackends(IServiceCollection services)
+    public static void ConfigureExtractBackends(IHostApplicationBuilder builder)
     {
-        ConfigureListBackends(services);
-        ConfigureShouldExtractBackend(services);
-        ConfigureWriteBackendArtifacts(services);
+        ConfigureListBackends(builder);
+        ConfigureShouldExtractBackend(builder);
+        ConfigureWriteBackendArtifacts(builder);
 
-        services.TryAddSingleton(ExtractBackends);
+        builder.Services.TryAddSingleton(GetExtractBackends);
     }
 
-    private static ExtractBackends ExtractBackends(IServiceProvider provider)
+    private static ExtractBackends GetExtractBackends(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListBackends>();
         var shouldExtract = provider.GetRequiredService<ShouldExtractBackend>();
         var writeArtifacts = provider.GetRequiredService<WriteBackendArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractBackends));
+
+            logger.LogInformation("Extracting backends...");
+
             await list(cancellationToken)
                     .Where(backend => shouldExtract(backend.Name))
                     .IterParallel(async backend => await writeArtifacts(backend.Name, backend.Dto, cancellationToken),
                                   cancellationToken);
+        };
     }
 
-    private static void ConfigureListBackends(IServiceCollection services)
+    private static void ConfigureListBackends(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceUri(services);
-        CommonServices.ConfigureHttpPipeline(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton(ListBackends);
+        builder.Services.TryAddSingleton(GetListBackends);
     }
 
-    private static ListBackends ListBackends(IServiceProvider provider)
+    private static ListBackends GetListBackends(IServiceProvider provider)
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
@@ -64,14 +70,14 @@ internal static class BackendServices
                        .List(pipeline, cancellationToken);
     }
 
-    private static void ConfigureShouldExtractBackend(IServiceCollection services)
+    private static void ConfigureShouldExtractBackend(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureShouldExtractFactory(services);
+        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
 
-        services.TryAddSingleton(ShouldExtractBackend);
+        builder.Services.TryAddSingleton(GetShouldExtractBackend);
     }
 
-    private static ShouldExtractBackend ShouldExtractBackend(IServiceProvider provider)
+    private static ShouldExtractBackend GetShouldExtractBackend(IServiceProvider provider)
     {
         var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
 
@@ -80,14 +86,14 @@ internal static class BackendServices
         return name => shouldExtract(name);
     }
 
-    private static void ConfigureWriteBackendArtifacts(IServiceCollection services)
+    private static void ConfigureWriteBackendArtifacts(IHostApplicationBuilder builder)
     {
-        ConfigureWriteBackendInformationFile(services);
+        ConfigureWriteBackendInformationFile(builder);
 
-        services.TryAddSingleton(WriteBackendArtifacts);
+        builder.Services.TryAddSingleton(GetWriteBackendArtifacts);
     }
 
-    private static WriteBackendArtifacts WriteBackendArtifacts(IServiceProvider provider)
+    private static WriteBackendArtifacts GetWriteBackendArtifacts(IServiceProvider provider)
     {
         var writeInformationFile = provider.GetRequiredService<WriteBackendInformationFile>();
 
@@ -95,19 +101,17 @@ internal static class BackendServices
             await writeInformationFile(name, dto, cancellationToken);
     }
 
-    private static void ConfigureWriteBackendInformationFile(IServiceCollection services)
+    private static void ConfigureWriteBackendInformationFile(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceDirectory(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        services.TryAddSingleton(WriteBackendInformationFile);
+        builder.Services.TryAddSingleton(GetWriteBackendInformationFile);
     }
 
-    private static WriteBackendInformationFile WriteBackendInformationFile(IServiceProvider provider)
+    private static WriteBackendInformationFile GetWriteBackendInformationFile(IServiceProvider provider)
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
-        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-
-        var logger = Common.GetLogger(loggerFactory);
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (name, dto, cancellationToken) =>
         {
@@ -117,10 +121,4 @@ internal static class BackendServices
             await informationFile.WriteDto(dto, cancellationToken);
         };
     }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("BackendExtractor");
 }

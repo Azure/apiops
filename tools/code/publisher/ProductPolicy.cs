@@ -1,278 +1,262 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindProductPolicyAction(FileInfo file);
+public delegate ValueTask PutProductPolicies(CancellationToken cancellationToken);
+public delegate Option<(ProductPolicyName Name, ProductName ProductName)> TryParseProductPolicyName(FileInfo file);
+public delegate bool IsProductPolicyNameInSourceControl(ProductPolicyName name, ProductName productName);
+public delegate ValueTask PutProductPolicy(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<ProductPolicyDto>> FindProductPolicyDto(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask PutProductPolicyInApim(ProductPolicyName name, ProductPolicyDto dto, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductPolicies(CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductPolicy(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductPolicyFromApim(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
 
-file delegate Option<(ProductPolicyName Name, ProductName ProductName)> TryParseProductPolicyName(FileInfo file);
-
-file delegate ValueTask ProcessProductPolicy(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate bool IsProductPolicyNameInSourceControl(ProductPolicyName name, ProductName productName);
-
-file delegate ValueTask<Option<ProductPolicyDto>> FindProductPolicyDto(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutProductPolicy(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteProductPolicy(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask PutProductPolicyInApim(ProductPolicyName name, ProductPolicyDto dto, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteProductPolicyFromApim(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
-
-file sealed class FindProductPolicyActionHandler(TryParseProductPolicyName tryParseName, ProcessProductPolicy processProductPolicy)
+public static class ProductPolicyModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from names in tryParseName(file)
-        select GetAction(names.Name, names.ProductName);
-
-    private PublisherAction GetAction(ProductPolicyName name, ProductName productName) =>
-        async cancellationToken => await processProductPolicy(name, productName, cancellationToken);
-}
-
-file sealed class TryParseProductPolicyNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<(ProductPolicyName, ProductName)> Handle(FileInfo file) =>
-        TryParseNameFromPolicyFile(file);
-
-    private Option<(ProductPolicyName, ProductName)> TryParseNameFromPolicyFile(FileInfo file) =>
-        from policyFile in ProductPolicyFile.TryParse(file, serviceDirectory)
-        select (policyFile.Name, policyFile.Parent.Name);
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class ProductPolicySemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<(ProductPolicyName, ProductName)> locker = new();
-    private ImmutableHashSet<(ProductPolicyName, ProductName)> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(ProductPolicyName name, ProductName productName, Func<ProductPolicyName, ProductName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutProductPolicies(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync((name, productName), cancellationToken);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseProductPolicyName(builder);
+        ConfigureIsProductPolicyNameInSourceControl(builder);
+        ConfigurePutProductPolicy(builder);
 
-        // Only process each name once
-        if (processedNames.Contains((name, productName)))
-        {
-            return;
-        }
-
-        await action(name, productName, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add((name, productName)));
+        builder.Services.TryAddSingleton(GetPutProductPolicies);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessProductPolicyHandler(IsProductPolicyNameInSourceControl isNameInSourceControl, PutProductPolicy put, DeleteProductPolicy delete) : IDisposable
-{
-    private readonly ProductPolicySemaphore semaphore = new();
-
-    public async ValueTask Handle(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken)
+    private static PutProductPolicies GetPutProductPolicies(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name, productName))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseProductPolicyName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsProductPolicyNameInSourceControl>();
+        var put = provider.GetRequiredService<PutProductPolicy>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, productName, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutProductPolicies));
+
+            logger.LogInformation("Putting product policies...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(policy => isNameInSourceControl(policy.Name, policy.ProductName))
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParseProductPolicyName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseProductPolicyName);
+    }
+
+    private static TryParseProductPolicyName GetTryParseProductPolicyName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from policyFile in ProductPolicyFile.TryParse(file, serviceDirectory)
+                       select (policyFile.Name, policyFile.Parent.Name);
+    }
+
+    private static void ConfigureIsProductPolicyNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsProductPolicyNameInSourceControl);
+    }
+
+    private static IsProductPolicyNameInSourceControl GetIsProductPolicyNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesPolicyFileExist;
+
+        bool doesPolicyFileExist(ProductPolicyName name, ProductName productName)
         {
-            await delete(name, productName, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var policyFile = ProductPolicyFile.From(name, productName, serviceDirectory);
+
+            return artifactFiles.Contains(policyFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsProductPolicyNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(ProductPolicyName name, ProductName productName) =>
-        DoesPolicyFileExist(name, productName);
-
-    private bool DoesPolicyFileExist(ProductPolicyName name, ProductName productName)
+    private static void ConfigurePutProductPolicy(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var policyFile = ProductPolicyFile.From(name, productName, serviceDirectory);
+        ConfigureFindProductPolicyDto(builder);
+        ConfigurePutProductPolicyInApim(builder);
 
-        return artifactFiles.Contains(policyFile.ToFileInfo());
-    }
-}
-
-file sealed class PutProductPolicyHandler(FindProductPolicyDto findDto, PutProduct putProduct, PutProductPolicyInApim putInApim) : IDisposable
-{
-    private readonly ProductPolicySemaphore semaphore = new();
-
-    public async ValueTask Handle(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, Put, cancellationToken);
-
-    private async ValueTask Put(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, productName, cancellationToken);
-        await dtoOption.IterTask(async dto => await Put(name, dto, productName, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutProductPolicy);
     }
 
-    private async ValueTask Put(ProductPolicyName name, ProductPolicyDto dto, ProductName productName, CancellationToken cancellationToken)
+    private static PutProductPolicy GetPutProductPolicy(IServiceProvider provider)
     {
-        await putProduct(productName, cancellationToken);
-        await putInApim(name, dto, productName, cancellationToken);
+        var findDto = provider.GetRequiredService<FindProductPolicyDto>();
+        var putInApim = provider.GetRequiredService<PutProductPolicyInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, productName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutProductPolicy))
+                                       ?.AddTag("product_policy.name", name)
+                                       ?.AddTag("product.name", productName);
+
+            var dtoOption = await findDto(name, productName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, productName, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindProductPolicyDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents)
-{
-    public async ValueTask<Option<ProductPolicyDto>> Handle(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken)
+    private static void ConfigureFindProductPolicyDto(IHostApplicationBuilder builder)
     {
-        var contentsOption = await TryGetPolicyContents(name, productName, cancellationToken);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
 
-        return from contents in contentsOption
-               select new ProductPolicyDto
-               {
-                   Properties = new ProductPolicyDto.ProductPolicyContract
+        builder.Services.TryAddSingleton(GetFindProductPolicyDto);
+    }
+
+    private static FindProductPolicyDto GetFindProductPolicyDto(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+
+        return async (name, productName, cancellationToken) =>
+        {
+            var contentsOption = await tryGetPolicyContents(name, productName, cancellationToken);
+
+            return from contents in contentsOption
+                   select new ProductPolicyDto
                    {
-                       Format = "rawxml",
-                       Value = contents.ToString()
-                   }
-               };
+                       Properties = new ProductPolicyDto.ProductPolicyContract
+                       {
+                           Format = "rawxml",
+                           Value = contents.ToString()
+                       }
+                   };
+        };
+
+        async ValueTask<Option<BinaryData>> tryGetPolicyContents(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken)
+        {
+            var policyFile = ProductPolicyFile.From(name, productName, serviceDirectory);
+
+            return await tryGetFileContents(policyFile.ToFileInfo(), cancellationToken);
+        }
     }
 
-    private async ValueTask<Option<BinaryData>> TryGetPolicyContents(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken)
+    private static void ConfigurePutProductPolicyInApim(IHostApplicationBuilder builder)
     {
-        var policyFile = ProductPolicyFile.From(name, productName, serviceDirectory);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        return await tryGetFileContents(policyFile.ToFileInfo(), cancellationToken);
+        builder.Services.TryAddSingleton(GetPutProductPolicyInApim);
     }
-}
 
-file sealed class PutProductPolicyInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(ProductPolicyName name, ProductPolicyDto dto, ProductName productName, CancellationToken cancellationToken)
+    private static PutProductPolicyInApim GetPutProductPolicyInApim(IServiceProvider provider)
     {
-        logger.LogInformation("Putting policy {ProductPolicyName} for product {ProductName}...", name, productName);
-        await ProductPolicyUri.From(name, productName, serviceUri).PutDto(dto, pipeline, cancellationToken);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, productName, cancellationToken) =>
+        {
+            logger.LogInformation("Putting policy {ProductPolicyName} for product {ProductName}...", name, productName);
+
+            await ProductPolicyUri.From(name, productName, serviceUri)
+                                  .PutDto(dto, pipeline, cancellationToken);
+        };
     }
-}
 
-file sealed class DeleteProductPolicyHandler(DeleteProductPolicyFromApim deleteFromApim) : IDisposable
-{
-    private readonly ProductPolicySemaphore semaphore = new();
-
-    public async ValueTask Handle(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, Delete, cancellationToken);
-
-    private async ValueTask Delete(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken)
+    public static void ConfigureDeleteProductPolicies(IHostApplicationBuilder builder)
     {
-        await deleteFromApim(name, productName, cancellationToken);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseProductPolicyName(builder);
+        ConfigureIsProductPolicyNameInSourceControl(builder);
+        ConfigureDeleteProductPolicy(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteProductPolicies);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteProductPolicyFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken)
+    private static DeleteProductPolicies GetDeleteProductPolicies(IServiceProvider provider)
     {
-        logger.LogInformation("Deleting policy {ProductPolicyName} from product {ProductName}...", name, productName);
-        await ProductPolicyUri.From(name, productName, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseProductPolicyName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsProductPolicyNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteProductPolicy>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-internal static class ProductPolicyServices
-{
-    public static void ConfigureFindProductPolicyAction(IServiceCollection services)
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteProductPolicies));
+
+            logger.LogInformation("Deleting product policies...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(policy => isNameInSourceControl(policy.Name, policy.ProductName) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureDeleteProductPolicy(IHostApplicationBuilder builder)
     {
-        ConfigureTryParseProductPolicyName(services);
-        ConfigureProcessProductPolicy(services);
+        ConfigureDeleteProductPolicyFromApim(builder);
 
-        services.TryAddSingleton<FindProductPolicyActionHandler>();
-        services.TryAddSingleton<FindProductPolicyAction>(provider => provider.GetRequiredService<FindProductPolicyActionHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteProductPolicy);
     }
 
-    private static void ConfigureTryParseProductPolicyName(IServiceCollection services)
+    private static DeleteProductPolicy GetDeleteProductPolicy(IServiceProvider provider)
     {
-        services.TryAddSingleton<TryParseProductPolicyNameHandler>();
-        services.TryAddSingleton<TryParseProductPolicyName>(provider => provider.GetRequiredService<TryParseProductPolicyNameHandler>().Handle);
+        var deleteFromApim = provider.GetRequiredService<DeleteProductPolicyFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, productName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteProductPolicy))
+                                       ?.AddTag("product_policy.name", name)
+                                       ?.AddTag("product.name", productName);
+
+            await deleteFromApim(name, productName, cancellationToken);
+        };
     }
 
-    private static void ConfigureProcessProductPolicy(IServiceCollection services)
+    private static void ConfigureDeleteProductPolicyFromApim(IHostApplicationBuilder builder)
     {
-        ConfigureIsProductPolicyNameInSourceControl(services);
-        ConfigurePutProductPolicy(services);
-        ConfigureDeleteProductPolicy(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<ProcessProductPolicyHandler>();
-        services.TryAddSingleton<ProcessProductPolicy>(provider => provider.GetRequiredService<ProcessProductPolicyHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteProductPolicyFromApim);
     }
 
-    private static void ConfigureIsProductPolicyNameInSourceControl(IServiceCollection services)
+    private static DeleteProductPolicyFromApim GetDeleteProductPolicyFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<IsProductPolicyNameInSourceControlHandler>();
-        services.TryAddSingleton<IsProductPolicyNameInSourceControl>(provider => provider.GetRequiredService<IsProductPolicyNameInSourceControlHandler>().Handle);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, productName, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting policy {ProductPolicyName} from product {ProductName}...", name, productName);
+
+            await ProductPolicyUri.From(name, productName, serviceUri)
+                                  .Delete(pipeline, cancellationToken);
+        };
     }
-
-    public static void ConfigurePutProductPolicy(IServiceCollection services)
-    {
-        ConfigureFindProductPolicyDto(services);
-        ConfigurePutProductPolicyInApim(services);
-        ProductServices.ConfigurePutProduct(services);
-
-        services.TryAddSingleton<PutProductPolicyHandler>();
-        services.TryAddSingleton<PutProductPolicy>(provider => provider.GetRequiredService<PutProductPolicyHandler>().Handle);
-    }
-
-    private static void ConfigureFindProductPolicyDto(IServiceCollection services)
-    {
-        services.TryAddSingleton<FindProductPolicyDtoHandler>();
-        services.TryAddSingleton<FindProductPolicyDto>(provider => provider.GetRequiredService<FindProductPolicyDtoHandler>().Handle);
-    }
-
-    private static void ConfigurePutProductPolicyInApim(IServiceCollection services)
-    {
-        services.TryAddSingleton<PutProductPolicyInApimHandler>();
-        services.TryAddSingleton<PutProductPolicyInApim>(provider => provider.GetRequiredService<PutProductPolicyInApimHandler>().Handle);
-    }
-
-    private static void ConfigureDeleteProductPolicy(IServiceCollection services)
-    {
-        ConfigureDeleteProductPolicyFromApim(services);
-
-        services.TryAddSingleton<DeleteProductPolicyHandler>();
-        services.TryAddSingleton<DeleteProductPolicy>(provider => provider.GetRequiredService<DeleteProductPolicyHandler>().Handle);
-    }
-
-    private static void ConfigureDeleteProductPolicyFromApim(IServiceCollection services)
-    {
-        services.TryAddSingleton<DeleteProductPolicyFromApimHandler>();
-        services.TryAddSingleton<DeleteProductPolicyFromApim>(provider => provider.GetRequiredService<DeleteProductPolicyFromApimHandler>().Handle);
-    }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("ProductPolicyPublisher");
 }

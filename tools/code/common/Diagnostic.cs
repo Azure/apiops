@@ -261,17 +261,6 @@ public static class DiagnosticModule
         return content.ToObjectFromJson<DiagnosticDto>();
     }
 
-    public static async ValueTask<Option<DiagnosticDto>> TryGetDto(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<DiagnosticDto>())
-                     .Match(Option<DiagnosticDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<DiagnosticDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

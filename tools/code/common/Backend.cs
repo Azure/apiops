@@ -301,17 +301,6 @@ public static class BackendModule
         return content.ToObjectFromJson<BackendDto>();
     }
 
-    public static async ValueTask<Option<BackendDto>> TryGetDto(this BackendUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<BackendDto>())
-                     .Match(Option<BackendDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<BackendDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this BackendUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

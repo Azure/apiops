@@ -94,7 +94,7 @@ public abstract record ApiSpecificationFile : ResourceFile
 
         return await ImmutableArray.Create(tryParseGraphQl, tryParseWadl, tryParseWsdl, tryParseOpenApi)
                                    .ToAsyncEnumerable()
-                                   .Pick(async f => await f(), cancellationToken);
+                                   .Pick(async (f, cancellationToken) => await f(), cancellationToken);
     }
 }
 
@@ -181,7 +181,7 @@ public abstract record OpenApiSpecificationFile : ApiSpecificationFile
 
         return await ImmutableArray.Create(tryParseYaml, tryParseJson)
                                    .ToAsyncEnumerable()
-                                   .Pick(async f => await f(), cancellationToken);
+                                   .Pick(async (f, cancellationToken) => await f(), cancellationToken);
     }
 }
 

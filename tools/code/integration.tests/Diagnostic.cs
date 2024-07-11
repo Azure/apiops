@@ -7,6 +7,7 @@ using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using publisher;
 using System;
@@ -19,295 +20,329 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal delegate ValueTask DeleteAllDiagnostics(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteAllDiagnostics(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask PutDiagnosticModels(IEnumerable<DiagnosticModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask ValidateExtractedDiagnostics(Option<FrozenSet<DiagnosticName>> diagnosticNamesOption, Option<FrozenSet<LoggerName>> loggerNamesOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> GetApimDiagnostics(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> GetFileDiagnostics(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
+public delegate ValueTask WriteDiagnosticModels(IEnumerable<DiagnosticModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask ValidatePublishedDiagnostics(IDictionary<DiagnosticName, DiagnosticDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 
-internal delegate ValueTask PutDiagnosticModels(IEnumerable<DiagnosticModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidateExtractedDiagnostics(Option<FrozenSet<DiagnosticName>> diagnosticNamesOption, Option<FrozenSet<LoggerName>> loggerNamesOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> GetApimDiagnostics(ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> GetFileDiagnostics(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteDiagnosticModels(IEnumerable<DiagnosticModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidatePublishedDiagnostics(IDictionary<DiagnosticName, DiagnosticDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file sealed class DeleteAllDiagnosticsHandler(ILogger<DeleteAllDiagnostics> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+public static class DiagnosticModule
 {
-    public async ValueTask Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    public static void ConfigureDeleteAllDiagnostics(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(DeleteAllDiagnostics));
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        logger.LogInformation("Deleting all diagnostics in {ServiceName}...", serviceName);
-        var serviceUri = getServiceUri(serviceName);
-        await DiagnosticsUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+        builder.Services.TryAddSingleton(GetDeleteAllDiagnostics);
     }
-}
 
-file sealed class PutDiagnosticModelsHandler(ILogger<PutDiagnosticModels> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<DiagnosticModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken)
+    private static DeleteAllDiagnostics GetDeleteAllDiagnostics(IServiceProvider provider)
     {
-        using var _ = activitySource.StartActivity(nameof(PutDiagnosticModels));
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        logger.LogInformation("Putting diagnostic models in {ServiceName}...", serviceName);
-        await models.IterParallel(async model =>
+        return async (serviceName, cancellationToken) =>
         {
-            await Put(model, serviceName, cancellationToken);
-        }, cancellationToken);
-    }
+            using var _ = activitySource.StartActivity(nameof(DeleteAllDiagnostics));
 
-    private async ValueTask Put(DiagnosticModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var serviceUri = getServiceUri(serviceName);
-        var uri = DiagnosticUri.From(model.Name, serviceUri);
-        var dto = GetDto(model);
+            logger.LogInformation("Deleting all diagnostics in {ServiceName}...", serviceName);
 
-        await uri.PutDto(dto, pipeline, cancellationToken);
-    }
+            var serviceUri = getServiceUri(serviceName);
 
-    private static DiagnosticDto GetDto(DiagnosticModel model) =>
-        new()
-        {
-            Properties = new DiagnosticDto.DiagnosticContract
-            {
-                LoggerId = $"/loggers/{model.LoggerName}",
-                AlwaysLog = model.AlwaysLog.ValueUnsafe(),
-                Sampling = model.Sampling.Map(sampling => new DiagnosticDto.SamplingSettings
-                {
-                    SamplingType = sampling.Type,
-                    Percentage = sampling.Percentage
-                }).ValueUnsafe()
-            }
+            await DiagnosticsUri.From(serviceUri)
+                                .DeleteAll(pipeline, cancellationToken);
         };
-}
-
-file sealed class ValidateExtractedDiagnosticsHandler(ILogger<ValidateExtractedDiagnostics> logger, GetApimDiagnostics getApimResources, GetFileDiagnostics getFileResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(Option<FrozenSet<DiagnosticName>> diagnosticNamesOption, Option<FrozenSet<LoggerName>> loggerNamesOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidateExtractedDiagnostics));
-
-        logger.LogInformation("Validating extracted diagnostics in {ServiceName}...", serviceName);
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
-
-        var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, diagnosticNamesOption))
-                                    .WhereValue(dto => DiagnosticModule.TryGetLoggerName(dto)
-                                                                       .Map(name => ExtractorOptions.ShouldExtract(name, loggerNamesOption))
-                                                                       .IfNone(true))
-                                    .MapValue(NormalizeDto);
-        var actual = fileResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
     }
 
-    private static string NormalizeDto(DiagnosticDto dto) =>
-        new
+    public static void ConfigurePutDiagnosticModels(IHostApplicationBuilder builder)
+    {
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutDiagnosticModels);
+    }
+
+    private static PutDiagnosticModels GetPutDiagnosticModels(IServiceProvider provider)
+    {
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceName, cancellationToken) =>
         {
-            LoggerId = string.Join('/', dto.Properties.LoggerId?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
-            AlwaysLog = dto.Properties.AlwaysLog ?? string.Empty,
-            Sampling = new
+            using var _ = activitySource.StartActivity(nameof(PutDiagnosticModels));
+
+            logger.LogInformation("Putting diagnostic models in {ServiceName}...", serviceName);
+
+            await models.IterParallel(async model =>
             {
-                Type = dto.Properties.Sampling?.SamplingType ?? string.Empty,
-                Percentage = dto.Properties.Sampling?.Percentage ?? 0
-            }
-        }.ToString()!;
-}
-
-file sealed class GetApimDiagnosticsHandler(ILogger<GetApimDiagnostics> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetApimDiagnostics));
-
-        logger.LogInformation("Getting diagnostics from {ServiceName}...", serviceName);
-
-        var serviceUri = getServiceUri(serviceName);
-        var uri = DiagnosticsUri.From(serviceUri);
-
-        return await uri.List(pipeline, cancellationToken)
-                        .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class GetFileDiagnosticsHandler(ILogger<GetFileDiagnostics> logger, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> Handle(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken) =>
-        await commitIdOption.Map(commitId => GetWithCommit(serviceDirectory, commitId, cancellationToken))
-                           .IfNone(() => GetWithoutCommit(serviceDirectory, cancellationToken));
-
-    private async ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> GetWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileDiagnostics));
-
-        logger.LogInformation("Getting diagnostics from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
-
-        return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
-                        .ToAsyncEnumerable()
-                        .Choose(file => DiagnosticInformationFile.TryParse(file, serviceDirectory))
-                        .Choose(async file => await TryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
-                        .ToFrozenDictionary(cancellationToken);
-    }
-
-    private static async ValueTask<Option<(DiagnosticName name, DiagnosticDto dto)>> TryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, DiagnosticInformationFile file, CancellationToken cancellationToken)
-    {
-        var name = file.Parent.Name;
-        var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
-
-        return await contentsOption.MapTask(async contents =>
-        {
-            using (contents)
-            {
-                var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
-                var dto = data.ToObjectFromJson<DiagnosticDto>();
-                return (name, dto);
-            }
-        });
-    }
-
-    private async ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> GetWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileDiagnostics));
-
-        logger.LogInformation("Getting diagnostics from {ServiceDirectory}...", serviceDirectory);
-
-        return await DiagnosticModule.ListInformationFiles(serviceDirectory)
-                              .ToAsyncEnumerable()
-                              .SelectAwait(async file => (file.Parent.Name,
-                                                          await file.ReadDto(cancellationToken)))
-                              .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class WriteDiagnosticModelsHandler(ILogger<WriteDiagnosticModels> logger, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<DiagnosticModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(WriteDiagnosticModels));
-
-        logger.LogInformation("Writing diagnostic models to {ServiceDirectory}...", serviceDirectory);
-        await models.IterParallel(async model =>
-        {
-            await WriteInformationFile(model, serviceDirectory, cancellationToken);
-        }, cancellationToken);
-    }
-
-    private static async ValueTask WriteInformationFile(DiagnosticModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        var informationFile = DiagnosticInformationFile.From(model.Name, serviceDirectory);
-        var dto = GetDto(model);
-
-        await informationFile.WriteDto(dto, cancellationToken);
-    }
-
-    private static DiagnosticDto GetDto(DiagnosticModel model) =>
-        new()
-        {
-            Properties = new DiagnosticDto.DiagnosticContract
-            {
-                LoggerId = $"/loggers/{model.LoggerName}",
-                AlwaysLog = model.AlwaysLog.ValueUnsafe(),
-                Sampling = model.Sampling.Map(sampling => new DiagnosticDto.SamplingSettings
-                {
-                    SamplingType = sampling.Type,
-                    Percentage = sampling.Percentage
-                }).ValueUnsafe()
-            }
+                await put(model, serviceName, cancellationToken);
+            }, cancellationToken);
         };
-}
 
-file sealed class ValidatePublishedDiagnosticsHandler(ILogger<ValidatePublishedDiagnostics> logger, GetFileDiagnostics getFileResources, GetApimDiagnostics getApimResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IDictionary<DiagnosticName, DiagnosticDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidatePublishedDiagnostics));
-
-        logger.LogInformation("Validating published diagnostics in {ServiceDirectory}...", serviceDirectory);
-
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
-
-        var expected = PublisherOptions.Override(fileResources, overrides)
-                                       .MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
-    }
-
-    private static string NormalizeDto(DiagnosticDto dto) =>
-        new
+        async ValueTask put(DiagnosticModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
         {
-            LoggerId = string.Join('/', dto.Properties.LoggerId?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
-            AlwaysLog = dto.Properties.AlwaysLog ?? string.Empty,
-            Sampling = new
+            var serviceUri = getServiceUri(serviceName);
+
+            var dto = getDto(model);
+
+            await DiagnosticUri.From(model.Name, serviceUri)
+                            .PutDto(dto, pipeline, cancellationToken);
+        }
+
+        static DiagnosticDto getDto(DiagnosticModel model) =>
+            new()
             {
-                Type = dto.Properties.Sampling?.SamplingType ?? string.Empty,
-                Percentage = dto.Properties.Sampling?.Percentage ?? 0
-            }
-        }.ToString()!;
-}
-
-internal static class DiagnosticServices
-{
-    public static void ConfigureDeleteAllDiagnostics(IServiceCollection services)
-    {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
-
-        services.TryAddSingleton<DeleteAllDiagnosticsHandler>();
-        services.TryAddSingleton<DeleteAllDiagnostics>(provider => provider.GetRequiredService<DeleteAllDiagnosticsHandler>().Handle);
+                Properties = new DiagnosticDto.DiagnosticContract
+                {
+                    LoggerId = $"/loggers/{model.LoggerName}",
+                    AlwaysLog = model.AlwaysLog.ValueUnsafe(),
+                    Sampling = model.Sampling.Map(sampling => new DiagnosticDto.SamplingSettings
+                    {
+                        SamplingType = sampling.Type,
+                        Percentage = sampling.Percentage
+                    }).ValueUnsafe()
+                }
+            };
     }
 
-    public static void ConfigurePutDiagnosticModels(IServiceCollection services)
+    public static void ConfigureValidateExtractedDiagnostics(IHostApplicationBuilder builder)
     {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+        ConfigureGetApimDiagnostics(builder);
+        ConfigureGetFileDiagnostics(builder);
 
-        services.TryAddSingleton<PutDiagnosticModelsHandler>();
-        services.TryAddSingleton<PutDiagnosticModels>(provider => provider.GetRequiredService<PutDiagnosticModelsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetValidateExtractedDiagnostics);
     }
 
-    public static void ConfigureValidateExtractedDiagnostics(IServiceCollection services)
+    private static ValidateExtractedDiagnostics GetValidateExtractedDiagnostics(IServiceProvider provider)
     {
-        ConfigureGetApimDiagnostics(services);
-        ConfigureGetFileDiagnostics(services);
+        var getApimResources = provider.GetRequiredService<GetApimDiagnostics>();
+        var tryGetApimGraphQlSchema = provider.GetRequiredService<TryGetApimGraphQlSchema>();
+        var getFileResources = provider.GetRequiredService<GetFileDiagnostics>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidateExtractedDiagnosticsHandler>();
-        services.TryAddSingleton<ValidateExtractedDiagnostics>(provider => provider.GetRequiredService<ValidateExtractedDiagnosticsHandler>().Handle);
+        return async (namesFilterOption, loggerNamesFilterOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidateExtractedDiagnostics));
+
+            logger.LogInformation("Validating extracted diagnostics in {ServiceName}...", serviceName);
+
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
+
+            var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, namesFilterOption))
+                                        .WhereValue(dto => common.DiagnosticModule.TryGetLoggerName(dto)
+                                                                                  .Map(name => ExtractorOptions.ShouldExtract(name, loggerNamesFilterOption))
+                                                                                  .IfNone(true))
+                                        .MapValue(normalizeDto)
+                                        .ToFrozenDictionary();
+
+            var actual = fileResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        };
+
+        static string normalizeDto(DiagnosticDto dto) =>
+            new
+            {
+                LoggerId = string.Join('/', dto.Properties.LoggerId?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
+                AlwaysLog = dto.Properties.AlwaysLog ?? string.Empty,
+                Sampling = new
+                {
+                    Type = dto.Properties.Sampling?.SamplingType ?? string.Empty,
+                    Percentage = dto.Properties.Sampling?.Percentage ?? 0
+                }
+            }.ToString()!;
     }
 
-    private static void ConfigureGetApimDiagnostics(IServiceCollection services)
+    public static void ConfigureGetApimDiagnostics(IHostApplicationBuilder builder)
     {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<GetApimDiagnosticsHandler>();
-        services.TryAddSingleton<GetApimDiagnostics>(provider => provider.GetRequiredService<GetApimDiagnosticsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetGetApimDiagnostics);
     }
 
-    private static void ConfigureGetFileDiagnostics(IServiceCollection services)
+    private static GetApimDiagnostics GetGetApimDiagnostics(IServiceProvider provider)
     {
-        services.TryAddSingleton<GetFileDiagnosticsHandler>();
-        services.TryAddSingleton<GetFileDiagnostics>(provider => provider.GetRequiredService<GetFileDiagnosticsHandler>().Handle);
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (serviceName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(GetApimDiagnostics));
+
+            logger.LogInformation("Getting diagnostics from {ServiceName}...", serviceName);
+
+            var serviceUri = getServiceUri(serviceName);
+
+            return await DiagnosticsUri.From(serviceUri)
+                                       .List(pipeline, cancellationToken)
+                                       .ToFrozenDictionary(cancellationToken);
+        };
     }
 
-    public static void ConfigureWriteDiagnosticModels(IServiceCollection services)
+    public static void ConfigureGetFileDiagnostics(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<WriteDiagnosticModelsHandler>();
-        services.TryAddSingleton<WriteDiagnosticModels>(provider => provider.GetRequiredService<WriteDiagnosticModelsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetGetFileDiagnostics);
     }
 
-    public static void ConfigureValidatePublishedDiagnostics(IServiceCollection services)
+    private static GetFileDiagnostics GetGetFileDiagnostics(IServiceProvider provider)
     {
-        ConfigureGetFileDiagnostics(services);
-        ConfigureGetApimDiagnostics(services);
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidatePublishedDiagnosticsHandler>();
-        services.TryAddSingleton<ValidatePublishedDiagnostics>(provider => provider.GetRequiredService<ValidatePublishedDiagnosticsHandler>().Handle);
+        return async (serviceDirectory, commitIdOption, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileDiagnostics));
+
+            return await commitIdOption.Map(commitId => getWithCommit(serviceDirectory, commitId, cancellationToken))
+                                       .IfNone(() => getWithoutCommit(serviceDirectory, cancellationToken));
+        };
+
+        async ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> getWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileDiagnostics));
+
+            logger.LogInformation("Getting diagnostics from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
+
+            return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
+                            .ToAsyncEnumerable()
+                            .Choose(file => DiagnosticInformationFile.TryParse(file, serviceDirectory))
+                            .Choose(async file => await tryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
+                            .ToFrozenDictionary(cancellationToken);
+        }
+
+        static async ValueTask<Option<(DiagnosticName name, DiagnosticDto dto)>> tryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, DiagnosticInformationFile file, CancellationToken cancellationToken)
+        {
+            var name = file.Parent.Name;
+            var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
+
+            return await contentsOption.MapTask(async contents =>
+            {
+                using (contents)
+                {
+                    var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
+                    var dto = data.ToObjectFromJson<DiagnosticDto>();
+                    return (name, dto);
+                }
+            });
+        }
+
+        async ValueTask<FrozenDictionary<DiagnosticName, DiagnosticDto>> getWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            logger.LogInformation("Getting diagnostics from {ServiceDirectory}...", serviceDirectory);
+
+            return await common.DiagnosticModule.ListInformationFiles(serviceDirectory)
+                                             .ToAsyncEnumerable()
+                                             .SelectAwait(async file => (file.Parent.Name,
+                                                                         await file.ReadDto(cancellationToken)))
+                                             .ToFrozenDictionary(cancellationToken);
+        }
     }
-}
 
-internal static class Diagnostic
-{
+    public static void ConfigureWriteDiagnosticModels(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetWriteDiagnosticModels);
+    }
+
+    private static WriteDiagnosticModels GetWriteDiagnosticModels(IServiceProvider provider)
+    {
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(WriteDiagnosticModels));
+
+            logger.LogInformation("Writing diagnostic models to {ServiceDirectory}...", serviceDirectory);
+
+            await models.IterParallel(async model =>
+            {
+                await writeInformationFile(model, serviceDirectory, cancellationToken);
+            }, cancellationToken);
+        };
+
+        static async ValueTask writeInformationFile(DiagnosticModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var informationFile = DiagnosticInformationFile.From(model.Name, serviceDirectory);
+            var dto = getDto(model);
+
+            await informationFile.WriteDto(dto, cancellationToken);
+        }
+
+        static DiagnosticDto getDto(DiagnosticModel model) =>
+            new()
+            {
+                Properties = new DiagnosticDto.DiagnosticContract
+                {
+                    LoggerId = $"/loggers/{model.LoggerName}",
+                    AlwaysLog = model.AlwaysLog.ValueUnsafe(),
+                    Sampling = model.Sampling.Map(sampling => new DiagnosticDto.SamplingSettings
+                    {
+                        SamplingType = sampling.Type,
+                        Percentage = sampling.Percentage
+                    }).ValueUnsafe()
+                }
+            };
+    }
+
+    public static void ConfigureValidatePublishedDiagnostics(IHostApplicationBuilder builder)
+    {
+        ConfigureGetFileDiagnostics(builder);
+        ConfigureGetApimDiagnostics(builder);
+
+        builder.Services.TryAddSingleton(GetValidatePublishedDiagnostics);
+    }
+
+    private static ValidatePublishedDiagnostics GetValidatePublishedDiagnostics(IServiceProvider provider)
+    {
+        var getFileResources = provider.GetRequiredService<GetFileDiagnostics>();
+        var getApimResources = provider.GetRequiredService<GetApimDiagnostics>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (overrides, commitIdOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidatePublishedDiagnostics));
+
+            logger.LogInformation("Validating published diagnostics in {ServiceDirectory}...", serviceDirectory);
+
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
+
+            var expected = PublisherOptions.Override(fileResources, overrides)
+                                           .MapValue(normalizeDto)
+                                           .ToFrozenDictionary();
+
+            var actual = apimResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        };
+
+        static string normalizeDto(DiagnosticDto dto) =>
+            new
+            {
+                LoggerId = string.Join('/', dto.Properties.LoggerId?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
+                AlwaysLog = dto.Properties.AlwaysLog ?? string.Empty,
+                Sampling = new
+                {
+                    Type = dto.Properties.Sampling?.SamplingType ?? string.Empty,
+                    Percentage = dto.Properties.Sampling?.Percentage ?? 0
+                }
+            }.ToString()!;
+    }
+
     public static Gen<DiagnosticModel> GenerateUpdate(DiagnosticModel original) =>
         from alwaysLog in Gen.Const("allErrors").OptionOf()
         from sampling in DiagnosticSampling.Generate().OptionOf()

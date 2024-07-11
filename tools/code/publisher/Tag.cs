@@ -1,271 +1,254 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindTagAction(FileInfo file);
+public delegate ValueTask PutTags(CancellationToken cancellationToken);
+public delegate Option<TagName> TryParseTagName(FileInfo file);
+public delegate bool IsTagNameInSourceControl(TagName name);
+public delegate ValueTask PutTag(TagName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<TagDto>> FindTagDto(TagName name, CancellationToken cancellationToken);
+public delegate ValueTask PutTagInApim(TagName name, TagDto dto, CancellationToken cancellationToken);
+public delegate ValueTask DeleteTags(CancellationToken cancellationToken);
+public delegate ValueTask DeleteTag(TagName name, CancellationToken cancellationToken);
+public delegate ValueTask DeleteTagFromApim(TagName name, CancellationToken cancellationToken);
 
-file delegate Option<TagName> TryParseTagName(FileInfo file);
-
-file delegate ValueTask ProcessTag(TagName name, CancellationToken cancellationToken);
-
-file delegate bool IsTagNameInSourceControl(TagName name);
-
-file delegate ValueTask<Option<TagDto>> FindTagDto(TagName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutTag(TagName name, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteTag(TagName name, CancellationToken cancellationToken);
-
-file delegate ValueTask PutTagInApim(TagName name, TagDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteTagFromApim(TagName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask OnDeletingTag(TagName name, CancellationToken cancellationToken);
-
-file sealed class FindTagActionHandler(TryParseTagName tryParseName, ProcessTag processTag)
+public static class TagModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from name in tryParseName(file)
-        select GetAction(name);
-
-    private PublisherAction GetAction(TagName name) =>
-        async cancellationToken => await processTag(name, cancellationToken);
-}
-
-file sealed class TryParseTagNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<TagName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file);
-
-    private Option<TagName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in TagInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class TagSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<TagName> locker = new();
-    private ImmutableHashSet<TagName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(TagName name, Func<TagName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutTags(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseTagName(builder);
+        ConfigureIsTagNameInSourceControl(builder);
+        ConfigurePutTag(builder);
 
-        // Only process each name once
-        if (processedNames.Contains(name))
-        {
-            return;
-        }
-
-        await action(name, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+        builder.Services.TryAddSingleton(GetPutTags);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessTagHandler(IsTagNameInSourceControl isNameInSourceControl, PutTag put, DeleteTag delete) : IDisposable
-{
-    private readonly TagSemaphore semaphore = new();
-
-    public async ValueTask Handle(TagName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(TagName name, CancellationToken cancellationToken)
+    private static PutTags GetPutTags(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseTagName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsTagNameInSourceControl>();
+        var put = provider.GetRequiredService<PutTag>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutTags));
+
+            logger.LogInformation("Putting tags...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParseTagName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseTagName);
+    }
+
+    private static TryParseTagName GetTryParseTagName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in TagInformationFile.TryParse(file, serviceDirectory)
+                       select informationFile.Parent.Name;
+    }
+
+    private static void ConfigureIsTagNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsTagNameInSourceControl);
+    }
+
+    private static IsTagNameInSourceControl GetIsTagNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(TagName name)
         {
-            await delete(name, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var informationFile = TagInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsTagNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(TagName name) =>
-        DoesInformationFileExist(name);
-
-    private bool DoesInformationFileExist(TagName name)
+    private static void ConfigurePutTag(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = TagInformationFile.From(name, serviceDirectory);
+        ConfigureFindTagDto(builder);
+        ConfigurePutTagInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutTagHandler(FindTagDto findDto, PutTagInApim putInApim) : IDisposable
-{
-    private readonly TagSemaphore semaphore = new();
-
-    public async ValueTask Handle(TagName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(TagName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutTag);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindTagDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
-{
-    public async ValueTask<Option<TagDto>> Handle(TagName name, CancellationToken cancellationToken)
+    private static PutTag GetPutTag(IServiceProvider provider)
     {
-        var informationFile = TagInformationFile.From(name, serviceDirectory);
-        var informationFileInfo = informationFile.ToFileInfo();
+        var findDto = provider.GetRequiredService<FindTagDto>();
+        var putInApim = provider.GetRequiredService<PutTagInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutTag))
+                                       ?.AddTag("tag.name", name);
 
-        return from contents in contentsOption
-               let dto = contents.ToObjectFromJson<TagDto>()
-               let overrideDto = overrideFactory.Create<TagName, TagDto>()
-               select overrideDto(name, dto);
-    }
-}
-
-file sealed class PutTagInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(TagName name, TagDto dto, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting tag {TagName}...", name);
-        await TagUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteTagHandler(IEnumerable<OnDeletingTag> onDeletingHandlers, DeleteTagFromApim deleteFromApim) : IDisposable
-{
-    private readonly TagSemaphore semaphore = new();
-
-    public async ValueTask Handle(TagName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(TagName name, CancellationToken cancellationToken)
-    {
-        await onDeletingHandlers.IterParallel(async handler => await handler(name, cancellationToken), cancellationToken);
-        await deleteFromApim(name, cancellationToken);
+            var dtoOption = await findDto(name, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteTagFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(TagName name, CancellationToken cancellationToken)
+    private static void ConfigureFindTagDto(IHostApplicationBuilder builder)
     {
-        logger.LogInformation("Deleting tag {TagName}...", name);
-        await TagUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
 
-internal static class TagServices
-{
-    public static void ConfigureFindTagAction(IServiceCollection services)
-    {
-        ConfigureTryParseTagName(services);
-        ConfigureProcessTag(services);
-
-        services.TryAddSingleton<FindTagActionHandler>();
-        services.TryAddSingleton<FindTagAction>(provider => provider.GetRequiredService<FindTagActionHandler>().Handle);
+        builder.Services.TryAddSingleton(GetFindTagDto);
     }
 
-    private static void ConfigureTryParseTagName(IServiceCollection services)
+    private static FindTagDto GetFindTagDto(IServiceProvider provider)
     {
-        services.TryAddSingleton<TryParseTagNameHandler>();
-        services.TryAddSingleton<TryParseTagName>(provider => provider.GetRequiredService<TryParseTagNameHandler>().Handle);
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+
+        var overrideDto = overrideFactory.Create<TagName, TagDto>();
+
+        return async (name, cancellationToken) =>
+        {
+            var informationFile = TagInformationFile.From(name, serviceDirectory);
+            var informationFileInfo = informationFile.ToFileInfo();
+
+            var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+
+            return from contents in contentsOption
+                   let dto = contents.ToObjectFromJson<TagDto>()
+                   select overrideDto(name, dto);
+        };
     }
 
-    private static void ConfigureProcessTag(IServiceCollection services)
+    private static void ConfigurePutTagInApim(IHostApplicationBuilder builder)
     {
-        ConfigureIsTagNameInSourceControl(services);
-        ConfigurePutTag(services);
-        ConfigureDeleteTag(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<ProcessTagHandler>();
-        services.TryAddSingleton<ProcessTag>(provider => provider.GetRequiredService<ProcessTagHandler>().Handle);
+        builder.Services.TryAddSingleton(GetPutTagInApim);
     }
 
-    private static void ConfigureIsTagNameInSourceControl(IServiceCollection services)
+    private static PutTagInApim GetPutTagInApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<IsTagNameInSourceControlHandler>();
-        services.TryAddSingleton<IsTagNameInSourceControl>(provider => provider.GetRequiredService<IsTagNameInSourceControlHandler>().Handle);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            logger.LogInformation("Putting tag {TagName}...", name);
+
+            await TagUri.From(name, serviceUri)
+                        .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    public static void ConfigurePutTag(IServiceCollection services)
+    public static void ConfigureDeleteTags(IHostApplicationBuilder builder)
     {
-        ConfigureFindTagDto(services);
-        ConfigurePutTagInApim(services);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseTagName(builder);
+        ConfigureIsTagNameInSourceControl(builder);
+        ConfigureDeleteTag(builder);
 
-        services.TryAddSingleton<PutTagHandler>();
-        services.TryAddSingleton<PutTag>(provider => provider.GetRequiredService<PutTagHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteTags);
     }
 
-    private static void ConfigureFindTagDto(IServiceCollection services)
+    private static DeleteTags GetDeleteTags(IServiceProvider provider)
     {
-        services.TryAddSingleton<FindTagDtoHandler>();
-        services.TryAddSingleton<FindTagDto>(provider => provider.GetRequiredService<FindTagDtoHandler>().Handle);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseTagName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsTagNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteTag>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteTags));
+
+            logger.LogInformation("Deleting tags...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigurePutTagInApim(IServiceCollection services)
+    private static void ConfigureDeleteTag(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<PutTagInApimHandler>();
-        services.TryAddSingleton<PutTagInApim>(provider => provider.GetRequiredService<PutTagInApimHandler>().Handle);
+        ConfigureDeleteTagFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteTag);
     }
 
-    private static void ConfigureDeleteTag(IServiceCollection services)
+    private static DeleteTag GetDeleteTag(IServiceProvider provider)
     {
-        ConfigureOnDeletingTag(services);
-        ConfigureDeleteTagFromApim(services);
+        var deleteFromApim = provider.GetRequiredService<DeleteTagFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        services.TryAddSingleton<DeleteTagHandler>();
-        services.TryAddSingleton<DeleteTag>(provider => provider.GetRequiredService<DeleteTagHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteTag))
+                                       ?.AddTag("tag.name", name);
+
+            await deleteFromApim(name, cancellationToken);
+        };
     }
 
-    private static void ConfigureOnDeletingTag(IServiceCollection services)
+    private static void ConfigureDeleteTagFromApim(IHostApplicationBuilder builder)
     {
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteTagFromApim);
     }
 
-    private static void ConfigureDeleteTagFromApim(IServiceCollection services)
+    private static DeleteTagFromApim GetDeleteTagFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteTagFromApimHandler>();
-        services.TryAddSingleton<DeleteTagFromApim>(provider => provider.GetRequiredService<DeleteTagFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("TagPublisher");
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting tag {TagName}...", name);
+
+            await TagUri.From(name, serviceUri)
+                        .Delete(pipeline, cancellationToken);
+        };
+    }
 }

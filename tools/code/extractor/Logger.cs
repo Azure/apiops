@@ -3,110 +3,122 @@ using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractLoggers(CancellationToken cancellationToken);
+public delegate ValueTask ExtractLoggers(CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(LoggerName Name, LoggerDto Dto)> ListLoggers(CancellationToken cancellationToken);
+public delegate bool ShouldExtractLogger(LoggerName name);
+public delegate ValueTask WriteLoggerArtifacts(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
+public delegate ValueTask WriteLoggerInformationFile(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
 
-file delegate IAsyncEnumerable<(LoggerName Name, LoggerDto Dto)> ListLoggers(CancellationToken cancellationToken);
-
-internal delegate bool ShouldExtractLogger(LoggerName name);
-
-file delegate ValueTask WriteLoggerArtifacts(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteLoggerInformationFile(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
-
-file sealed class ExtractLoggersHandler(ListLoggers list, ShouldExtractLogger shouldExtract, WriteLoggerArtifacts writeArtifacts)
+internal static class LoggerModule
 {
-    public async ValueTask Handle(CancellationToken cancellationToken) =>
-        await list(cancellationToken)
-                .Where(logger => shouldExtract(logger.Name))
-                .IterParallel(async logger => await writeArtifacts(logger.Name, logger.Dto, cancellationToken),
-                              cancellationToken);
-}
-
-file sealed class ListLoggersHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    public IAsyncEnumerable<(LoggerName, LoggerDto)> Handle(CancellationToken cancellationToken) =>
-        LoggersUri.From(serviceUri).List(pipeline, cancellationToken);
-}
-
-file sealed class ShouldExtractLoggerHandler(ShouldExtractFactory shouldExtractFactory)
-{
-    public bool Handle(LoggerName name)
+    public static void ConfigureExtractLoggers(IHostApplicationBuilder builder)
     {
+        ConfigureListLoggers(builder);
+        ConfigureShouldExtractLogger(builder);
+        ConfigureWriteLoggerArtifacts(builder);
+
+        builder.Services.TryAddSingleton(GetExtractLoggers);
+    }
+
+    private static ExtractLoggers GetExtractLoggers(IServiceProvider provider)
+    {
+        var list = provider.GetRequiredService<ListLoggers>();
+        var shouldExtract = provider.GetRequiredService<ShouldExtractLogger>();
+        var writeArtifacts = provider.GetRequiredService<WriteLoggerArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractLoggers));
+
+            logger.LogInformation("Extracting loggers...");
+
+            await list(cancellationToken)
+                    .Where(logger => shouldExtract(logger.Name))
+                    .IterParallel(async logger => await writeArtifacts(logger.Name, logger.Dto, cancellationToken),
+                                  cancellationToken);
+        };
+    }
+
+    private static void ConfigureListLoggers(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetListLoggers);
+    }
+
+    private static ListLoggers GetListLoggers(IServiceProvider provider)
+    {
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+
+        return cancellationToken =>
+            LoggersUri.From(serviceUri)
+                      .List(pipeline, cancellationToken);
+    }
+
+    public static void ConfigureShouldExtractLogger(IHostApplicationBuilder builder)
+    {
+        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+
+        builder.Services.TryAddSingleton(GetShouldExtractLogger);
+    }
+
+    private static ShouldExtractLogger GetShouldExtractLogger(IServiceProvider provider)
+    {
+        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
+
         var shouldExtract = shouldExtractFactory.Create<LoggerName>();
-        return shouldExtract(name);
-    }
-}
 
-file sealed class WriteLoggerArtifactsHandler(WriteLoggerInformationFile writeInformationFile)
-{
-    public async ValueTask Handle(LoggerName name, LoggerDto dto, CancellationToken cancellationToken)
+        return name => shouldExtract(name);
+    }
+
+    private static void ConfigureWriteLoggerArtifacts(IHostApplicationBuilder builder)
     {
-        await writeInformationFile(name, dto, cancellationToken);
+        ConfigureWriteLoggerInformationFile(builder);
+
+        builder.Services.TryAddSingleton(GetWriteLoggerArtifacts);
     }
-}
 
-file sealed class WriteLoggerInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(LoggerName name, LoggerDto dto, CancellationToken cancellationToken)
+    private static WriteLoggerArtifacts GetWriteLoggerArtifacts(IServiceProvider provider)
     {
-        var informationFile = LoggerInformationFile.From(name, serviceDirectory);
+        var writeInformationFile = provider.GetRequiredService<WriteLoggerInformationFile>();
 
-        logger.LogInformation("Writing logger information file {InformationFile}", informationFile);
-        await informationFile.WriteDto(dto, cancellationToken);
+        return async (name, dto, cancellationToken) =>
+            await writeInformationFile(name, dto, cancellationToken);
     }
-}
 
-internal static class LoggerServices
-{
-    public static void ConfigureExtractLoggers(IServiceCollection services)
+    private static void ConfigureWriteLoggerInformationFile(IHostApplicationBuilder builder)
     {
-        ConfigureListLoggers(services);
-        ConfigureShouldExtractLogger(services);
-        ConfigureWriteLoggerArtifacts(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        services.TryAddSingleton<ExtractLoggersHandler>();
-        services.TryAddSingleton<ExtractLoggers>(provider => provider.GetRequiredService<ExtractLoggersHandler>().Handle);
+        builder.Services.TryAddSingleton(GetWriteLoggerInformationFile);
     }
 
-    private static void ConfigureListLoggers(IServiceCollection services)
+    private static WriteLoggerInformationFile GetWriteLoggerInformationFile(IServiceProvider provider)
     {
-        services.TryAddSingleton<ListLoggersHandler>();
-        services.TryAddSingleton<ListLoggers>(provider => provider.GetRequiredService<ListLoggersHandler>().Handle);
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            var informationFile = LoggerInformationFile.From(name, serviceDirectory);
+
+            logger.LogInformation("Writing logger information file {LoggerInformationFile}...", informationFile);
+            await informationFile.WriteDto(dto, cancellationToken);
+        };
     }
-
-    public static void ConfigureShouldExtractLogger(IServiceCollection services)
-    {
-        services.TryAddSingleton<ShouldExtractLoggerHandler>();
-        services.TryAddSingleton<ShouldExtractLogger>(provider => provider.GetRequiredService<ShouldExtractLoggerHandler>().Handle);
-    }
-
-    private static void ConfigureWriteLoggerArtifacts(IServiceCollection services)
-    {
-        ConfigureWriteLoggerInformationFile(services);
-
-        services.TryAddSingleton<WriteLoggerArtifactsHandler>();
-        services.TryAddSingleton<WriteLoggerArtifacts>(provider => provider.GetRequiredService<WriteLoggerArtifactsHandler>().Handle);
-    }
-
-    private static void ConfigureWriteLoggerInformationFile(IServiceCollection services)
-    {
-        services.TryAddSingleton<WriteLoggerInformationFileHandler>();
-        services.TryAddSingleton<WriteLoggerInformationFile>(provider => provider.GetRequiredService<WriteLoggerInformationFileHandler>().Handle);
-    }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("LoggerExtractor");
 }

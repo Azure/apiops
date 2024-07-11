@@ -1,272 +1,254 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindVersionSetAction(FileInfo file);
+public delegate ValueTask PutVersionSets(CancellationToken cancellationToken);
+public delegate Option<VersionSetName> TryParseVersionSetName(FileInfo file);
+public delegate bool IsVersionSetNameInSourceControl(VersionSetName name);
+public delegate ValueTask PutVersionSet(VersionSetName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<VersionSetDto>> FindVersionSetDto(VersionSetName name, CancellationToken cancellationToken);
+public delegate ValueTask PutVersionSetInApim(VersionSetName name, VersionSetDto dto, CancellationToken cancellationToken);
+public delegate ValueTask DeleteVersionSets(CancellationToken cancellationToken);
+public delegate ValueTask DeleteVersionSet(VersionSetName name, CancellationToken cancellationToken);
+public delegate ValueTask DeleteVersionSetFromApim(VersionSetName name, CancellationToken cancellationToken);
 
-file delegate Option<VersionSetName> TryParseVersionSetName(FileInfo file);
-
-file delegate ValueTask ProcessVersionSet(VersionSetName name, CancellationToken cancellationToken);
-
-file delegate bool IsVersionSetNameInSourceControl(VersionSetName name);
-
-file delegate ValueTask<Option<VersionSetDto>> FindVersionSetDto(VersionSetName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutVersionSet(VersionSetName name, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteVersionSet(VersionSetName name, CancellationToken cancellationToken);
-
-file delegate ValueTask PutVersionSetInApim(VersionSetName name, VersionSetDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteVersionSetFromApim(VersionSetName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask OnDeletingVersionSet(VersionSetName name, CancellationToken cancellationToken);
-
-file sealed class FindVersionSetActionHandler(TryParseVersionSetName tryParseName, ProcessVersionSet processVersionSet)
+public static class VersionSetModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from name in tryParseName(file)
-        select GetAction(name);
-
-    private PublisherAction GetAction(VersionSetName name) =>
-        async cancellationToken => await processVersionSet(name, cancellationToken);
-}
-
-file sealed class TryParseVersionSetNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<VersionSetName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file);
-
-    private Option<VersionSetName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in VersionSetInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class VersionSetSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<VersionSetName> locker = new();
-    private ImmutableHashSet<VersionSetName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(VersionSetName name, Func<VersionSetName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutVersionSets(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseVersionSetName(builder);
+        ConfigureIsVersionSetNameInSourceControl(builder);
+        ConfigurePutVersionSet(builder);
 
-        // Only process each name once
-        if (processedNames.Contains(name))
-        {
-            return;
-        }
-
-        await action(name, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+        builder.Services.TryAddSingleton(GetPutVersionSets);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessVersionSetHandler(IsVersionSetNameInSourceControl isNameInSourceControl, PutVersionSet put, DeleteVersionSet delete) : IDisposable
-{
-    private readonly VersionSetSemaphore semaphore = new();
-
-    public async ValueTask Handle(VersionSetName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(VersionSetName name, CancellationToken cancellationToken)
+    private static PutVersionSets GetPutVersionSets(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseVersionSetName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsVersionSetNameInSourceControl>();
+        var put = provider.GetRequiredService<PutVersionSet>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutVersionSets));
+
+            logger.LogInformation("Putting version sets...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParseVersionSetName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseVersionSetName);
+    }
+
+    private static TryParseVersionSetName GetTryParseVersionSetName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in VersionSetInformationFile.TryParse(file, serviceDirectory)
+                       select informationFile.Parent.Name;
+    }
+
+    private static void ConfigureIsVersionSetNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsVersionSetNameInSourceControl);
+    }
+
+    private static IsVersionSetNameInSourceControl GetIsVersionSetNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(VersionSetName name)
         {
-            await delete(name, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var informationFile = VersionSetInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsVersionSetNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(VersionSetName name) =>
-        DoesInformationFileExist(name);
-
-    private bool DoesInformationFileExist(VersionSetName name)
+    private static void ConfigurePutVersionSet(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = VersionSetInformationFile.From(name, serviceDirectory);
+        ConfigureFindVersionSetDto(builder);
+        ConfigurePutVersionSetInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutVersionSetHandler(FindVersionSetDto findDto, PutVersionSetInApim putInApim) : IDisposable
-{
-    private readonly VersionSetSemaphore semaphore = new();
-
-    public async ValueTask Handle(VersionSetName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(VersionSetName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutVersionSet);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindVersionSetDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
-{
-    public async ValueTask<Option<VersionSetDto>> Handle(VersionSetName name, CancellationToken cancellationToken)
+    private static PutVersionSet GetPutVersionSet(IServiceProvider provider)
     {
-        var informationFile = VersionSetInformationFile.From(name, serviceDirectory);
-        var informationFileInfo = informationFile.ToFileInfo();
+        var findDto = provider.GetRequiredService<FindVersionSetDto>();
+        var putInApim = provider.GetRequiredService<PutVersionSetInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutVersionSet))
+                                       ?.AddTag("version_set.name", name);
 
-        return from contents in contentsOption
-               let dto = contents.ToObjectFromJson<VersionSetDto>()
-               let overrideDto = overrideFactory.Create<VersionSetName, VersionSetDto>()
-               select overrideDto(name, dto);
-    }
-}
-
-file sealed class PutVersionSetInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(VersionSetName name, VersionSetDto dto, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting version set {VersionSetName}...", name);
-        await VersionSetUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteVersionSetHandler(IEnumerable<OnDeletingVersionSet> onDeletingHandlers, DeleteVersionSetFromApim deleteFromApim) : IDisposable
-{
-    private readonly VersionSetSemaphore semaphore = new();
-
-    public async ValueTask Handle(VersionSetName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(VersionSetName name, CancellationToken cancellationToken)
-    {
-        await onDeletingHandlers.IterParallel(async handler => await handler(name, cancellationToken), cancellationToken);
-        await deleteFromApim(name, cancellationToken);
+            var dtoOption = await findDto(name, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteVersionSetFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(VersionSetName name, CancellationToken cancellationToken)
+    private static void ConfigureFindVersionSetDto(IHostApplicationBuilder builder)
     {
-        logger.LogInformation("Deleting version set {VersionSetName}...", name);
-        await VersionSetUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
 
-internal static class VersionSetServices
-{
-    public static void ConfigureFindVersionSetAction(IServiceCollection services)
-    {
-        ConfigureTryParseVersionSetName(services);
-        ConfigureProcessVersionSet(services);
-
-        services.TryAddSingleton<FindVersionSetActionHandler>();
-        services.TryAddSingleton<FindVersionSetAction>(provider => provider.GetRequiredService<FindVersionSetActionHandler>().Handle);
+        builder.Services.TryAddSingleton(GetFindVersionSetDto);
     }
 
-    private static void ConfigureTryParseVersionSetName(IServiceCollection services)
+    private static FindVersionSetDto GetFindVersionSetDto(IServiceProvider provider)
     {
-        services.TryAddSingleton<TryParseVersionSetNameHandler>();
-        services.TryAddSingleton<TryParseVersionSetName>(provider => provider.GetRequiredService<TryParseVersionSetNameHandler>().Handle);
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+
+        var overrideDto = overrideFactory.Create<VersionSetName, VersionSetDto>();
+
+        return async (name, cancellationToken) =>
+        {
+            var informationFile = VersionSetInformationFile.From(name, serviceDirectory);
+            var informationFileInfo = informationFile.ToFileInfo();
+
+            var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+
+            return from contents in contentsOption
+                   let dto = contents.ToObjectFromJson<VersionSetDto>()
+                   select overrideDto(name, dto);
+        };
     }
 
-    private static void ConfigureProcessVersionSet(IServiceCollection services)
+    private static void ConfigurePutVersionSetInApim(IHostApplicationBuilder builder)
     {
-        ConfigureIsVersionSetNameInSourceControl(services);
-        ConfigurePutVersionSet(services);
-        ConfigureDeleteVersionSet(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<ProcessVersionSetHandler>();
-        services.TryAddSingleton<ProcessVersionSet>(provider => provider.GetRequiredService<ProcessVersionSetHandler>().Handle);
+        builder.Services.TryAddSingleton(GetPutVersionSetInApim);
     }
 
-    private static void ConfigureIsVersionSetNameInSourceControl(IServiceCollection services)
+    private static PutVersionSetInApim GetPutVersionSetInApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<IsVersionSetNameInSourceControlHandler>();
-        services.TryAddSingleton<IsVersionSetNameInSourceControl>(provider => provider.GetRequiredService<IsVersionSetNameInSourceControlHandler>().Handle);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            logger.LogInformation("Putting version set {VersionSetName}...", name);
+
+            await VersionSetUri.From(name, serviceUri)
+                               .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    public static void ConfigurePutVersionSet(IServiceCollection services)
+    public static void ConfigureDeleteVersionSets(IHostApplicationBuilder builder)
     {
-        ConfigureFindVersionSetDto(services);
-        ConfigurePutVersionSetInApim(services);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseVersionSetName(builder);
+        ConfigureIsVersionSetNameInSourceControl(builder);
+        ConfigureDeleteVersionSet(builder);
 
-        services.TryAddSingleton<PutVersionSetHandler>();
-        services.TryAddSingleton<PutVersionSet>(provider => provider.GetRequiredService<PutVersionSetHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteVersionSets);
     }
 
-    private static void ConfigureFindVersionSetDto(IServiceCollection services)
+    private static DeleteVersionSets GetDeleteVersionSets(IServiceProvider provider)
     {
-        services.TryAddSingleton<FindVersionSetDtoHandler>();
-        services.TryAddSingleton<FindVersionSetDto>(provider => provider.GetRequiredService<FindVersionSetDtoHandler>().Handle);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseVersionSetName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsVersionSetNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteVersionSet>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteVersionSets));
+
+            logger.LogInformation("Deleting version sets...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigurePutVersionSetInApim(IServiceCollection services)
+    private static void ConfigureDeleteVersionSet(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<PutVersionSetInApimHandler>();
-        services.TryAddSingleton<PutVersionSetInApim>(provider => provider.GetRequiredService<PutVersionSetInApimHandler>().Handle);
+        ConfigureDeleteVersionSetFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteVersionSet);
     }
 
-    private static void ConfigureDeleteVersionSet(IServiceCollection services)
+    private static DeleteVersionSet GetDeleteVersionSet(IServiceProvider provider)
     {
-        ConfigureOnDeletingVersionSet(services);
-        ConfigureDeleteVersionSetFromApim(services);
+        var deleteFromApim = provider.GetRequiredService<DeleteVersionSetFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        services.TryAddSingleton<DeleteVersionSetHandler>();
-        services.TryAddSingleton<DeleteVersionSet>(provider => provider.GetRequiredService<DeleteVersionSetHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteVersionSet))
+                                       ?.AddTag("version_set.name", name);
+
+            await deleteFromApim(name, cancellationToken);
+        };
     }
 
-    private static void ConfigureOnDeletingVersionSet(IServiceCollection services)
+    private static void ConfigureDeleteVersionSetFromApim(IHostApplicationBuilder builder)
     {
-        ApiServices.ConfigureOnDeletingVersionSet(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteVersionSetFromApim);
     }
 
-    private static void ConfigureDeleteVersionSetFromApim(IServiceCollection services)
+    private static DeleteVersionSetFromApim GetDeleteVersionSetFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteVersionSetFromApimHandler>();
-        services.TryAddSingleton<DeleteVersionSetFromApim>(provider => provider.GetRequiredService<DeleteVersionSetFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("VersionSetPublisher");
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting version set {VersionSetName}...", name);
+
+            await VersionSetUri.From(name, serviceUri)
+                               .Delete(pipeline, cancellationToken);
+        };
+    }
 }

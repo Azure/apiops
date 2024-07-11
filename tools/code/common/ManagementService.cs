@@ -19,6 +19,15 @@ public sealed record ManagementServiceDirectory : ResourceDirectory
     public static ManagementServiceDirectory From(DirectoryInfo value) => new(value);
 }
 
+public sealed record ManagementServiceProviderUri : ResourceUri
+{
+    private ManagementServiceProviderUri(Uri value) => Value = value;
+
+    protected override Uri Value { get; }
+
+    public static ManagementServiceProviderUri From(Uri value) => new(value);
+}
+
 public sealed record ManagementServiceUri : ResourceUri
 {
     private ManagementServiceUri(Uri value) => Value = value;

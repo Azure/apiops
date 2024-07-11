@@ -8,12 +8,12 @@ using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using publisher;
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
@@ -21,496 +21,526 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal delegate ValueTask DeleteAllApis(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteAllApis(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask PutApiModels(IEnumerable<ApiModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask ValidateExtractedApis(Option<FrozenSet<ApiName>> apiNamesOption, Option<ApiSpecification> defaultApiSpecification, Option<FrozenSet<VersionSetName>> versionSetNamesOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<ApiName, ApiDto>> GetApimApis(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<BinaryData>> TryGetApimGraphQlSchema(ApiName name, ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<ApiName, ApiDto>> GetFileApis(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
+public delegate ValueTask WriteApiModels(IEnumerable<ApiModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask ValidatePublishedApis(IDictionary<ApiName, ApiDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 
-internal delegate ValueTask PutApiModels(IEnumerable<ApiModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidateExtractedApis(Option<FrozenSet<ApiName>> apiNamesOption, Option<ApiSpecification> defaultApiSpecification, Option<FrozenSet<VersionSetName>> versionSetNamesOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<ApiName, ApiDto>> GetApimApis(ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-file delegate ValueTask<Option<BinaryData>> TryGetApimGraphQlSchema(ApiName name, ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<ApiName, ApiDto>> GetFileApis(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteApiModels(IEnumerable<ApiModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidatePublishedApis(IDictionary<ApiName, ApiDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file sealed class DeleteAllApisHandler(ILogger<DeleteAllApis> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+public static class ApiModule
 {
-    public async ValueTask Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    public static void ConfigureDeleteAllApis(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(DeleteAllApis));
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        logger.LogInformation("Deleting all APIs in {ServiceName}...", serviceName);
-        var serviceUri = getServiceUri(serviceName);
-        await ApisUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+        builder.Services.TryAddSingleton(GetDeleteAllApis);
     }
-}
 
-file sealed class PutApiModelsHandler(ILogger<PutApiModels> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<ApiModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken)
+    private static DeleteAllApis GetDeleteAllApis(IServiceProvider provider)
     {
-        using var _ = activitySource.StartActivity(nameof(PutApiModels));
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        logger.LogInformation("Putting API models in {ServiceName}...", serviceName);
-        await models.IterParallel(async model =>
+        return async (serviceName, cancellationToken) =>
         {
+            using var _ = activitySource.StartActivity(nameof(DeleteAllApis));
+
+            logger.LogInformation("Deleting all APIs in {ServiceName}...", serviceName);
+
             var serviceUri = getServiceUri(serviceName);
-            async ValueTask putRevision(ApiRevision revision) => await Put(model.Name, model.Type, model.Path, model.Version, revision, serviceUri, cancellationToken);
 
-            // Put first revision to make sure it's the current revision.
-            await model.Revisions.HeadOrNone().IterTask(putRevision);
-
-            // Put other revisions
-            await model.Revisions.Skip(1).IterParallel(putRevision, cancellationToken);
-        }, cancellationToken);
-    }
-
-    private async ValueTask Put(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision, ManagementServiceUri serviceUri, CancellationToken cancellationToken)
-    {
-        var rootName = ApiName.GetRootName(name);
-        var dto = GetDto(rootName, type, path, version, revision);
-        var revisionedName = ApiName.GetRevisionedName(rootName, revision.Number);
-
-        var uri = ApiUri.From(revisionedName, serviceUri);
-        await uri.PutDto(dto, pipeline, cancellationToken);
-
-        if (type is ApiType.GraphQl)
-        {
-            await revision.Specification.IterTask(async specification => await uri.PutGraphQlSchema(specification, pipeline, cancellationToken));
-        }
-
-        await ApiPolicy.Put(revision.Policies, revisionedName, serviceUri, pipeline, cancellationToken);
-        await ApiTag.Put(revision.Tags, revisionedName, serviceUri, pipeline, cancellationToken);
-    }
-
-    private static ApiDto GetDto(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision) =>
-        new ApiDto()
-        {
-            Properties = new ApiDto.ApiCreateOrUpdateProperties
-            {
-                // APIM sets the description to null when it imports for SOAP APIs.
-                DisplayName = name.ToString(),
-                Path = path,
-                ApiType = type switch
-                {
-                    ApiType.Http => null,
-                    ApiType.Soap => "soap",
-                    ApiType.GraphQl => null,
-                    ApiType.WebSocket => null,
-                    _ => throw new NotSupportedException()
-                },
-                Type = type switch
-                {
-                    ApiType.Http => "http",
-                    ApiType.Soap => "soap",
-                    ApiType.GraphQl => "graphql",
-                    ApiType.WebSocket => "websocket",
-                    _ => throw new NotSupportedException()
-                },
-                Protocols = type switch
-                {
-                    ApiType.Http => ["http", "https"],
-                    ApiType.Soap => ["http", "https"],
-                    ApiType.GraphQl => ["http", "https"],
-                    ApiType.WebSocket => ["ws", "wss"],
-                    _ => throw new NotSupportedException()
-                },
-                ServiceUrl = revision.ServiceUri.ValueUnsafe()?.ToString(),
-                ApiRevisionDescription = revision.Description.ValueUnsafe(),
-                ApiRevision = $"{revision.Number.ToInt()}",
-                ApiVersion = version.Map(version => version.Version).ValueUnsafe(),
-                ApiVersionSetId = version.Map(version => $"/apiVersionSets/{version.VersionSetName}").ValueUnsafe()
-            }
+            await ApisUri.From(serviceUri)
+                         .DeleteAll(pipeline, cancellationToken);
         };
-}
-
-file sealed class ValidateExtractedApisHandler(ILogger<ValidateExtractedApis> logger, GetApimApis getApimResources, TryGetApimGraphQlSchema tryGetApimGraphQlSchema, GetFileApis getFileResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(Option<FrozenSet<ApiName>> apiNamesOption, Option<ApiSpecification> defaultApiSpecification, Option<FrozenSet<VersionSetName>> versionSetNamesOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidateExtractedApis));
-
-        logger.LogInformation("Validating extracted APIs in {ServiceName}...", serviceName);
-
-        var expected = await GetExpectedResources(apiNamesOption, versionSetNamesOption, serviceName, cancellationToken);
-
-        await ValidateExtractedInformationFiles(expected, serviceDirectory, cancellationToken);
-        await ValidateExtractedSpecificationFiles(expected, defaultApiSpecification, serviceName, serviceDirectory, cancellationToken);
     }
 
-    private async ValueTask<ImmutableDictionary<ApiName, ApiDto>> GetExpectedResources(Option<FrozenSet<ApiName>> apiNamesOption, Option<FrozenSet<VersionSetName>> versionSetNamesOption, ManagementServiceName serviceName, CancellationToken cancellationToken)
+    public static void ConfigurePutApiModels(IHostApplicationBuilder builder)
     {
-        var apimResources = await getApimResources(serviceName, cancellationToken);
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        return apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, apiNamesOption))
-                            .WhereValue(dto => ApiModule.TryGetVersionSetName(dto)
-                                                        .Map(name => ExtractorOptions.ShouldExtract(name, versionSetNamesOption))
-                                                        .IfNone(true));
+        builder.Services.TryAddSingleton(GetPutApiModels);
     }
 
-    private async ValueTask ValidateExtractedInformationFiles(IDictionary<ApiName, ApiDto> expectedResources, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    private static PutApiModels GetPutApiModels(IServiceProvider provider)
     {
-        var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        var expected = expectedResources.MapValue(NormalizeDto);
-        var actual = fileResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
-    }
-    private static string NormalizeDto(ApiDto dto) =>
-        new
+        return async (models, serviceName, cancellationToken) =>
         {
-            DisplayName = dto.Properties.DisplayName ?? string.Empty,
-            Path = dto.Properties.Path ?? string.Empty,
-            RevisionDescription = dto.Properties.ApiRevisionDescription ?? string.Empty,
-            Revision = dto.Properties.ApiRevision ?? string.Empty,
-            ServiceUrl = Uri.TryCreate(dto.Properties.ServiceUrl, UriKind.Absolute, out var uri)
-                            ? uri.RemovePath().ToString()
-                            : string.Empty
-        }.ToString()!;
+            using var _ = activitySource.StartActivity(nameof(PutApiModels));
 
-    private async ValueTask ValidateExtractedSpecificationFiles(IDictionary<ApiName, ApiDto> expectedResources, Option<ApiSpecification> defaultApiSpecification, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        var expected = await expectedResources.ToAsyncEnumerable()
-                                              .Choose(async kvp =>
-                                              {
-                                                  var name = kvp.Key;
-                                                  return from specification in await GetExpectedApiSpecification(name, kvp.Value, defaultApiSpecification, serviceName, cancellationToken)
-                                                             // Skip XML specification files. Sometimes they get extracted, other times they fail.
-                                                         where specification is not (ApiSpecification.Wsdl or ApiSpecification.Wadl)
-                                                         select (name, specification);
-                                              })
-                                              .ToFrozenDictionary(cancellationToken);
+            logger.LogInformation("Putting API models in {ServiceName}...", serviceName);
 
-        var actual = await ApiModule.ListSpecificationFiles(serviceDirectory, cancellationToken)
-                                    .Select(file => (file.Parent.Name, file.Specification))
-                                    // Skip XML specification files. Sometimes they get extracted, other times they fail.
-                                    .Where(file => file.Specification is not (ApiSpecification.Wsdl or ApiSpecification.Wadl))
-                                    .ToFrozenDictionary(cancellationToken);
+            await models.IterParallel(async model =>
+            {
+                async ValueTask putRevision(ApiRevision revision) => await put(model.Name, model.Type, model.Path, model.Version, revision, serviceName, cancellationToken);
 
-        actual.Should().BeEquivalentTo(expected);
-    }
+                // Put first revision to make sure it's the current revision.
+                await model.Revisions.HeadOrNone().IterTask(putRevision);
 
-    private async ValueTask<Option<ApiSpecification>> GetExpectedApiSpecification(ApiName name, ApiDto dto, Option<ApiSpecification> defaultApiSpecification, ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        switch (dto.Properties.ApiType ?? dto.Properties.Type)
+                // Put other revisions
+                await model.Revisions.Skip(1).IterParallel(putRevision, cancellationToken);
+            }, cancellationToken);
+        };
+
+        async ValueTask put(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision, ManagementServiceName serviceName, CancellationToken cancellationToken)
         {
-            case "graphql":
-                var specificationContents = await tryGetApimGraphQlSchema(name, serviceName, cancellationToken);
-                return specificationContents.Map(contents => new ApiSpecification.GraphQl() as ApiSpecification);
-            case "soap":
-                return new ApiSpecification.Wsdl();
-            case "websocket":
-                return Option<ApiSpecification>.None;
-            default:
-#pragma warning disable CA1849 // Call async methods when in an async method
-                return defaultApiSpecification.IfNone(() => new ApiSpecification.OpenApi
+            var rootName = ApiName.GetRootName(name);
+            var dto = getDto(rootName, type, path, version, revision);
+            var revisionedName = ApiName.GetRevisionedName(rootName, revision.Number);
+
+            var serviceUri = getServiceUri(serviceName);
+            var uri = ApiUri.From(revisionedName, serviceUri);
+            await uri.PutDto(dto, pipeline, cancellationToken);
+
+            if (type is ApiType.GraphQl)
+            {
+                await revision.Specification.IterTask(async specification => await uri.PutGraphQlSchema(BinaryData.FromString(specification), pipeline, cancellationToken));
+            }
+
+            await ApiPolicyModule.Put(revision.Policies, revisionedName, serviceUri, pipeline, cancellationToken);
+            await ApiTagModule.Put(revision.Tags, revisionedName, serviceUri, pipeline, cancellationToken);
+        }
+
+        static ApiDto getDto(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision) =>
+            new ApiDto()
+            {
+                Properties = new ApiDto.ApiCreateOrUpdateProperties
                 {
-                    Format = new OpenApiFormat.Yaml(),
-                    Version = new OpenApiVersion.V3()
-                });
-#pragma warning restore CA1849 // Call async methods when in an async method
+                    // APIM sets the description to null when it imports for SOAP APIs.
+                    DisplayName = name.ToString(),
+                    Path = path,
+                    ApiType = type switch
+                    {
+                        ApiType.Http => null,
+                        ApiType.Soap => "soap",
+                        ApiType.GraphQl => null,
+                        ApiType.WebSocket => null,
+                        _ => throw new NotSupportedException()
+                    },
+                    Type = type switch
+                    {
+                        ApiType.Http => "http",
+                        ApiType.Soap => "soap",
+                        ApiType.GraphQl => "graphql",
+                        ApiType.WebSocket => "websocket",
+                        _ => throw new NotSupportedException()
+                    },
+                    Protocols = type switch
+                    {
+                        ApiType.Http => ["http", "https"],
+                        ApiType.Soap => ["http", "https"],
+                        ApiType.GraphQl => ["http", "https"],
+                        ApiType.WebSocket => ["ws", "wss"],
+                        _ => throw new NotSupportedException()
+                    },
+                    ServiceUrl = revision.ServiceUri.ValueUnsafe()?.ToString(),
+                    ApiRevisionDescription = revision.Description.ValueUnsafe(),
+                    ApiRevision = $"{revision.Number.ToInt()}",
+                    ApiVersion = version.Map(version => version.Version).ValueUnsafe(),
+                    ApiVersionSetId = version.Map(version => $"/apiVersionSets/{version.VersionSetName}").ValueUnsafe()
+                }
+            };
+    }
+
+    public static void ConfigureValidateExtractedApis(IHostApplicationBuilder builder)
+    {
+        ConfigureGetApimApis(builder);
+        ConfigureTryGetApimGraphQlSchema(builder);
+        ConfigureGetFileApis(builder);
+
+        builder.Services.TryAddSingleton(GetValidateExtractedApis);
+    }
+
+    private static ValidateExtractedApis GetValidateExtractedApis(IServiceProvider provider)
+    {
+        var getApimResources = provider.GetRequiredService<GetApimApis>();
+        var tryGetApimGraphQlSchema = provider.GetRequiredService<TryGetApimGraphQlSchema>();
+        var getFileResources = provider.GetRequiredService<GetFileApis>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (apiNamesOption, defaultApiSpecification, versionSetNamesOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidateExtractedApis));
+
+            logger.LogInformation("Validating extracted APIs in {ServiceName}...", serviceName);
+
+            var expected = await getExpectedResources(apiNamesOption, versionSetNamesOption, serviceName, cancellationToken);
+
+            await validateExtractedInformationFiles(expected, serviceDirectory, cancellationToken);
+            await validateExtractedSpecificationFiles(expected, defaultApiSpecification, serviceName, serviceDirectory, cancellationToken);
+        };
+
+        async ValueTask<FrozenDictionary<ApiName, ApiDto>> getExpectedResources(Option<FrozenSet<ApiName>> apiNamesOption, Option<FrozenSet<VersionSetName>> versionSetNamesOption, ManagementServiceName serviceName, CancellationToken cancellationToken)
+        {
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+
+            return apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, apiNamesOption))
+                                .WhereValue(dto => common.ApiModule.TryGetVersionSetName(dto)
+                                                                   .Map(name => ExtractorOptions.ShouldExtract(name, versionSetNamesOption))
+                                                                   .IfNone(true))
+                                .ToFrozenDictionary();
+        }
+
+        async ValueTask validateExtractedInformationFiles(IDictionary<ApiName, ApiDto> expectedResources, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
+
+            var expected = expectedResources.MapValue(normalizeDto)
+                                            .ToFrozenDictionary();
+
+            var actual = fileResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        }
+
+        static string normalizeDto(ApiDto dto) =>
+            new
+            {
+                DisplayName = dto.Properties.DisplayName ?? string.Empty,
+                Path = dto.Properties.Path ?? string.Empty,
+                RevisionDescription = dto.Properties.ApiRevisionDescription ?? string.Empty,
+                Revision = dto.Properties.ApiRevision ?? string.Empty,
+                ServiceUrl = Uri.TryCreate(dto.Properties.ServiceUrl, UriKind.Absolute, out var uri)
+                                ? uri.RemovePath().ToString()
+                                : string.Empty
+            }.ToString()!;
+
+        async ValueTask validateExtractedSpecificationFiles(IDictionary<ApiName, ApiDto> expectedResources, Option<ApiSpecification> defaultApiSpecification, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var expected = await expectedResources.ToAsyncEnumerable()
+                                                  .Choose(async kvp =>
+                                                  {
+                                                      var name = kvp.Key;
+                                                      return from specification in await getExpectedApiSpecification(name, kvp.Value, defaultApiSpecification, serviceName, cancellationToken)
+                                                                 // Skip XML specification files. Sometimes they get extracted, other times they fail.
+                                                             where specification is not (ApiSpecification.Wsdl or ApiSpecification.Wadl)
+                                                             select (name, specification);
+                                                  })
+                                                  .ToFrozenDictionary(cancellationToken);
+
+            var actual = await common.ApiModule.ListSpecificationFiles(serviceDirectory)
+                                               .Select(file => (file.Parent.Name, file.Specification))
+                                               // Skip XML specification files. Sometimes they get extracted, other times they fail.
+                                               .Where(file => file.Specification is not (ApiSpecification.Wsdl or ApiSpecification.Wadl))
+                                               .ToFrozenDictionary(cancellationToken);
+
+            actual.Should().BeEquivalentTo(expected);
+        }
+
+        async ValueTask<Option<ApiSpecification>> getExpectedApiSpecification(ApiName name, ApiDto dto, Option<ApiSpecification> defaultApiSpecification, ManagementServiceName serviceName, CancellationToken cancellationToken)
+        {
+            switch (dto.Properties.ApiType ?? dto.Properties.Type)
+            {
+                case "graphql":
+                    var specificationContents = await tryGetApimGraphQlSchema(name, serviceName, cancellationToken);
+                    return specificationContents.Map(contents => new ApiSpecification.GraphQl() as ApiSpecification);
+                case "soap":
+                    return new ApiSpecification.Wsdl();
+                case "websocket":
+                    return Option<ApiSpecification>.None;
+                default:
+                    return defaultApiSpecification.IfNone(() => new ApiSpecification.OpenApi
+                    {
+                        Format = new OpenApiFormat.Yaml(),
+                        Version = new OpenApiVersion.V3()
+                    });
+            }
         }
     }
-}
 
-file sealed class GetApimApisHandler(ILogger<GetApimApis> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<ApiName, ApiDto>> Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    public static void ConfigureGetApimApis(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(GetApimApis));
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        logger.LogInformation("Getting APIs from {ServiceName}...", serviceName);
-
-        var serviceUri = getServiceUri(serviceName);
-        var uri = ApisUri.From(serviceUri);
-
-        return await uri.List(pipeline, cancellationToken)
-                        .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class TryGetApimGraphQlSchemaHandler(ILogger<TryGetApimGraphQlSchema> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask<Option<BinaryData>> Handle(ApiName name, ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(TryGetApimGraphQlSchema));
-
-        logger.LogInformation("Getting GraphQL schema for {ApiName} from {ServiceName}...", name, serviceName);
-
-        var serviceUri = getServiceUri(serviceName);
-        var uri = ApiUri.From(name, serviceUri);
-
-        return await uri.TryGetGraphQlSchema(pipeline, cancellationToken);
-    }
-}
-
-file sealed class GetFileApisHandler(ILogger<GetFileApis> logger, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<ApiName, ApiDto>> Handle(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken) =>
-        await commitIdOption.Map(commitId => GetWithCommit(serviceDirectory, commitId, cancellationToken))
-                           .IfNone(() => GetWithoutCommit(serviceDirectory, cancellationToken));
-
-    private async ValueTask<FrozenDictionary<ApiName, ApiDto>> GetWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileApis));
-
-        logger.LogInformation("Getting apis from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
-
-        return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
-                        .ToAsyncEnumerable()
-                        .Choose(file => ApiInformationFile.TryParse(file, serviceDirectory))
-                        .Choose(async file => await TryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
-                        .ToFrozenDictionary(cancellationToken);
+        builder.Services.TryAddSingleton(GetGetApimApis);
     }
 
-    private static async ValueTask<Option<(ApiName name, ApiDto dto)>> TryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, ApiInformationFile file, CancellationToken cancellationToken)
+    private static GetApimApis GetGetApimApis(IServiceProvider provider)
     {
-        var name = file.Parent.Name;
-        var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        return await contentsOption.MapTask(async contents =>
+        return async (serviceName, cancellationToken) =>
         {
-            using (contents)
+            using var _ = activitySource.StartActivity(nameof(GetApimApis));
+
+            logger.LogInformation("Getting APIs from {ServiceName}...", serviceName);
+
+            var serviceUri = getServiceUri(serviceName);
+
+            return await ApisUri.From(serviceUri)
+                                .List(pipeline, cancellationToken)
+                                .ToFrozenDictionary(cancellationToken);
+        };
+    }
+
+    public static void ConfigureTryGetApimGraphQlSchema(IHostApplicationBuilder builder)
+    {
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetTryGetApimGraphQlSchema);
+    }
+
+    private static TryGetApimGraphQlSchema GetTryGetApimGraphQlSchema(IServiceProvider provider)
+    {
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, serviceName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(TryGetApimGraphQlSchema));
+
+            logger.LogInformation("Getting GraphQL schema for {ApiName} from {ServiceName}...", name, serviceName);
+
+            var serviceUri = getServiceUri(serviceName);
+
+            return await ApiUri.From(name, serviceUri)
+                               .TryGetGraphQlSchema(pipeline, cancellationToken);
+        };
+    }
+
+    public static void ConfigureGetFileApis(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetGetFileApis);
+    }
+
+    private static GetFileApis GetGetFileApis(IServiceProvider provider)
+    {
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (serviceDirectory, commitIdOption, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileApis));
+
+            return await commitIdOption.Map(commitId => getWithCommit(serviceDirectory, commitId, cancellationToken))
+                                       .IfNone(() => getWithoutCommit(serviceDirectory, cancellationToken));
+        };
+
+        async ValueTask<FrozenDictionary<ApiName, ApiDto>> getWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileApis));
+
+            logger.LogInformation("Getting apis from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
+
+            return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
+                            .ToAsyncEnumerable()
+                            .Choose(file => ApiInformationFile.TryParse(file, serviceDirectory))
+                            .Choose(async file => await tryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
+                            .ToFrozenDictionary(cancellationToken);
+        }
+
+        static async ValueTask<Option<(ApiName name, ApiDto dto)>> tryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, ApiInformationFile file, CancellationToken cancellationToken)
+        {
+            var name = file.Parent.Name;
+            var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
+
+            return await contentsOption.MapTask(async contents =>
             {
-                var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
-                var dto = data.ToObjectFromJson<ApiDto>();
-                return (name, dto);
-            }
-        });
-    }
+                using (contents)
+                {
+                    var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
+                    var dto = data.ToObjectFromJson<ApiDto>();
+                    return (name, dto);
+                }
+            });
+        }
 
-    private async ValueTask<FrozenDictionary<ApiName, ApiDto>> GetWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileApis));
-
-        logger.LogInformation("Getting apis from {ServiceDirectory}...", serviceDirectory);
-
-        return await ApiModule.ListInformationFiles(serviceDirectory)
-                              .ToAsyncEnumerable()
-                              .SelectAwait(async file => (file.Parent.Name,
-                                                          await file.ReadDto(cancellationToken)))
-                              .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class WriteApiModelsHandler(ILogger<WriteApiModels> logger, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<ApiModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(WriteApiModels));
-
-        logger.LogInformation("Writing api models to {ServiceDirectory}...", serviceDirectory);
-        await models.IterParallel(async model =>
+        async ValueTask<FrozenDictionary<ApiName, ApiDto>> getWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
         {
-            await WriteRevisionArtifacts(model, serviceDirectory, cancellationToken);
-        }, cancellationToken);
+            logger.LogInformation("Getting APIs from {ServiceDirectory}...", serviceDirectory);
+
+            return await common.ApiModule.ListInformationFiles(serviceDirectory)
+                                         .ToAsyncEnumerable()
+                                         .SelectAwait(async file => (file.Parent.Name,
+                                                                     await file.ReadDto(cancellationToken)))
+                                         .ToFrozenDictionary(cancellationToken);
+        }
     }
 
-    public static async ValueTask WriteArtifacts(IEnumerable<ApiModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await models.IterParallel(async model =>
+    public static void ConfigureWriteApiModels(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetWriteApiModels);
+    }
+
+    private static WriteApiModels GetWriteApiModels(IServiceProvider provider)
+    {
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceDirectory, cancellationToken) =>
         {
-            await WriteRevisionArtifacts(model, serviceDirectory, cancellationToken);
-        }, cancellationToken);
+            using var _ = activitySource.StartActivity(nameof(WriteApiModels));
 
-    public static async ValueTask WriteRevisionArtifacts(ApiModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await model.Revisions
-                   .Select((revision, index) => (revision, index))
-                   .IterParallel(async x =>
-                   {
-                       var (name, type, path, version, (revision, index)) = (model.Name, model.Type, model.Path, model.Version, x);
+            logger.LogInformation("Writing api models to {ServiceDirectory}...", serviceDirectory);
 
-                       await WriteInformationFile(name, type, path, version, revision, index, serviceDirectory, cancellationToken);
-                       await WriteSpecificationFile(name, type, revision, index, serviceDirectory, cancellationToken);
-                   }, cancellationToken);
+            await models.IterParallel(async model =>
+            {
+                await writeRevisionArtifacts(model, serviceDirectory, cancellationToken);
+            }, cancellationToken);
+        };
 
-    private static async ValueTask WriteInformationFile(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision, int index, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        var apiName = GetApiName(name, revision, index);
-        var informationFile = ApiInformationFile.From(apiName, serviceDirectory);
-        var rootApiName = ApiName.GetRootName(name);
-        var dto = GetDto(rootApiName, type, path, version, revision);
+        static async ValueTask writeRevisionArtifacts(ApiModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+            await model.Revisions
+                       .Select((revision, index) => (revision, index))
+                       .IterParallel(async x =>
+                       {
+                           var (name, type, path, version, (revision, index)) = (model.Name, model.Type, model.Path, model.Version, x);
 
-        await informationFile.WriteDto(dto, cancellationToken);
-    }
+                           await writeInformationFile(name, type, path, version, revision, index, serviceDirectory, cancellationToken);
+                           await writeSpecificationFile(name, type, revision, index, serviceDirectory, cancellationToken);
+                       }, cancellationToken);
 
-    private static ApiName GetApiName(ApiName name, ApiRevision revision, int index)
-    {
-        var rootApiName = ApiName.GetRootName(name);
+        static async ValueTask writeInformationFile(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision, int index, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var apiName = getApiName(name, revision, index);
+            var informationFile = ApiInformationFile.From(apiName, serviceDirectory);
+            var rootApiName = ApiName.GetRootName(name);
+            var dto = getDto(rootApiName, type, path, version, revision);
 
-        return index == 0 ? rootApiName : ApiName.GetRevisionedName(rootApiName, revision.Number);
-    }
+            await informationFile.WriteDto(dto, cancellationToken);
+        }
 
-    private static async ValueTask WriteSpecificationFile(ApiName name, ApiType type, ApiRevision revision, int index, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        var specificationOption = from contents in revision.Specification
-                                  from specification in type switch
-                                  {
-                                      ApiType.Http => Option<ApiSpecification>.Some(new ApiSpecification.OpenApi
+        static ApiName getApiName(ApiName name, ApiRevision revision, int index)
+        {
+            var rootApiName = ApiName.GetRootName(name);
+
+            return index == 0 ? rootApiName : ApiName.GetRevisionedName(rootApiName, revision.Number);
+        }
+
+        static async ValueTask writeSpecificationFile(ApiName name, ApiType type, ApiRevision revision, int index, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var specificationOption = from contents in revision.Specification
+                                      from specification in type switch
                                       {
-                                          Format = new OpenApiFormat.Json(),
-                                          Version = new OpenApiVersion.V3()
-                                      }),
-                                      ApiType.GraphQl => new ApiSpecification.GraphQl(),
-                                      ApiType.Soap => new ApiSpecification.Wsdl(),
-                                      _ => Option<ApiSpecification>.None
-                                  }
-                                  select (specification, contents);
+                                          ApiType.Http => Option<ApiSpecification>.Some(new ApiSpecification.OpenApi
+                                          {
+                                              Format = new OpenApiFormat.Json(),
+                                              Version = new OpenApiVersion.V3()
+                                          }),
+                                          ApiType.GraphQl => new ApiSpecification.GraphQl(),
+                                          ApiType.Soap => new ApiSpecification.Wsdl(),
+                                          _ => Option<ApiSpecification>.None
+                                      }
+                                      select (specification, contents);
 
-        await specificationOption.IterTask(async x =>
-        {
-            var (specification, contents) = x;
-            var apiName = GetApiName(name, revision, index);
-            var specificationFile = ApiSpecificationFile.From(specification, apiName, serviceDirectory);
-            await specificationFile.WriteSpecification(BinaryData.FromString(contents), cancellationToken);
-        });
-    }
-
-    private static ApiDto GetDto(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision) =>
-        new ApiDto()
-        {
-            Properties = new ApiDto.ApiCreateOrUpdateProperties
+            await specificationOption.IterTask(async x =>
             {
-                // APIM sets the description to null when it imports for SOAP APIs.
-                DisplayName = name.ToString(),
-                Path = path,
-                ApiType = type switch
+                var (specification, contents) = x;
+                var apiName = getApiName(name, revision, index);
+                var specificationFile = ApiSpecificationFile.From(specification, apiName, serviceDirectory);
+                await specificationFile.WriteSpecification(BinaryData.FromString(contents), cancellationToken);
+            });
+        }
+
+        static ApiDto getDto(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision) =>
+            new ApiDto()
+            {
+                Properties = new ApiDto.ApiCreateOrUpdateProperties
                 {
-                    ApiType.Http => null,
-                    ApiType.Soap => "soap",
-                    ApiType.GraphQl => null,
-                    ApiType.WebSocket => null,
-                    _ => throw new NotSupportedException()
-                },
-                Type = type switch
-                {
-                    ApiType.Http => "http",
-                    ApiType.Soap => "soap",
-                    ApiType.GraphQl => "graphql",
-                    ApiType.WebSocket => "websocket",
-                    _ => throw new NotSupportedException()
-                },
-                Protocols = type switch
-                {
-                    ApiType.Http => ["http", "https"],
-                    ApiType.Soap => ["http", "https"],
-                    ApiType.GraphQl => ["http", "https"],
-                    ApiType.WebSocket => ["ws", "wss"],
-                    _ => throw new NotSupportedException()
-                },
-                ServiceUrl = revision.ServiceUri.ValueUnsafe()?.ToString(),
-                ApiRevisionDescription = revision.Description.ValueUnsafe(),
-                ApiRevision = $"{revision.Number.ToInt()}",
-                ApiVersion = version.Map(version => version.Version).ValueUnsafe(),
-                ApiVersionSetId = version.Map(version => $"/apiVersionSets/{version.VersionSetName}").ValueUnsafe()
-            }
-        };
-}
-
-file sealed class ValidatePublishedApisHandler(ILogger<ValidatePublishedApis> logger, GetFileApis getFileResources, GetApimApis getApimResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IDictionary<ApiName, ApiDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidatePublishedApis));
-
-        logger.LogInformation("Validating published apis in {ServiceDirectory}...", serviceDirectory);
-
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
-
-        var expected = PublisherOptions.Override(fileResources, overrides)
-                                       .MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
+                    // APIM sets the description to null when it imports for SOAP APIs.
+                    DisplayName = name.ToString(),
+                    Path = path,
+                    ApiType = type switch
+                    {
+                        ApiType.Http => null,
+                        ApiType.Soap => "soap",
+                        ApiType.GraphQl => null,
+                        ApiType.WebSocket => null,
+                        _ => throw new NotSupportedException()
+                    },
+                    Type = type switch
+                    {
+                        ApiType.Http => "http",
+                        ApiType.Soap => "soap",
+                        ApiType.GraphQl => "graphql",
+                        ApiType.WebSocket => "websocket",
+                        _ => throw new NotSupportedException()
+                    },
+                    Protocols = type switch
+                    {
+                        ApiType.Http => ["http", "https"],
+                        ApiType.Soap => ["http", "https"],
+                        ApiType.GraphQl => ["http", "https"],
+                        ApiType.WebSocket => ["ws", "wss"],
+                        _ => throw new NotSupportedException()
+                    },
+                    ServiceUrl = revision.ServiceUri.ValueUnsafe()?.ToString(),
+                    ApiRevisionDescription = revision.Description.ValueUnsafe(),
+                    ApiRevision = $"{revision.Number.ToInt()}",
+                    ApiVersion = version.Map(version => version.Version).ValueUnsafe(),
+                    ApiVersionSetId = version.Map(version => $"/apiVersionSets/{version.VersionSetName}").ValueUnsafe()
+                }
+            };
     }
 
-    private static string NormalizeDto(ApiDto dto) =>
-        new
+    public static void ConfigureValidatePublishedApis(IHostApplicationBuilder builder)
+    {
+        ConfigureGetFileApis(builder);
+        ConfigureGetApimApis(builder);
+
+        builder.Services.TryAddSingleton(GetValidatePublishedApis);
+    }
+
+    private static ValidatePublishedApis GetValidatePublishedApis(IServiceProvider provider)
+    {
+        var getFileResources = provider.GetRequiredService<GetFileApis>();
+        var getApimResources = provider.GetRequiredService<GetApimApis>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (overrides, commitIdOption, serviceName, serviceDirectory, cancellationToken) =>
         {
-            DisplayName = dto.Properties.DisplayName ?? string.Empty,
-            Path = dto.Properties.Path ?? string.Empty,
-            RevisionDescription = dto.Properties.ApiRevisionDescription ?? string.Empty,
-            Revision = dto.Properties.ApiRevision ?? string.Empty,
-            // Disabling this check because there are too many edge cases //TODO - Investigate
-            //ServiceUrl = Uri.TryCreate(dto.Properties.ServiceUrl, UriKind.Absolute, out var uri)
-            //                ? uri.RemovePath().ToString()
-            //                : string.Empty
-        }.ToString()!;
-}
+            using var _ = activitySource.StartActivity(nameof(ValidatePublishedApis));
 
-internal static class ApiServices
-{
-    public static void ConfigureDeleteAllApis(IServiceCollection services)
-    {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+            logger.LogInformation("Validating published apis in {ServiceDirectory}...", serviceDirectory);
 
-        services.TryAddSingleton<DeleteAllApisHandler>();
-        services.TryAddSingleton<DeleteAllApis>(provider => provider.GetRequiredService<DeleteAllApisHandler>().Handle);
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
+
+            var expected = PublisherOptions.Override(fileResources, overrides)
+                                           .MapValue(normalizeDto)
+                                           .ToFrozenDictionary();
+
+            var actual = apimResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        };
+
+        static string normalizeDto(ApiDto dto) =>
+            new
+            {
+                DisplayName = dto.Properties.DisplayName ?? string.Empty,
+                Path = dto.Properties.Path ?? string.Empty,
+                RevisionDescription = dto.Properties.ApiRevisionDescription ?? string.Empty,
+                Revision = dto.Properties.ApiRevision ?? string.Empty,
+                // Disabling this check because there are too many edge cases //TODO - Investigate
+                //ServiceUrl = Uri.TryCreate(dto.Properties.ServiceUrl, UriKind.Absolute, out var uri)
+                //                ? uri.RemovePath().ToString()
+                //                : string.Empty
+            }.ToString()!;
     }
 
-    public static void ConfigurePutApiModels(IServiceCollection services)
-    {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
-
-        services.TryAddSingleton<PutApiModelsHandler>();
-        services.TryAddSingleton<PutApiModels>(provider => provider.GetRequiredService<PutApiModelsHandler>().Handle);
-    }
-
-    public static void ConfigureValidateExtractedApis(IServiceCollection services)
-    {
-        ConfigureGetApimApis(services);
-        ConfigureTryGetApimGraphQlSchema(services);
-        ConfigureGetFileApis(services);
-
-        services.TryAddSingleton<ValidateExtractedApisHandler>();
-        services.TryAddSingleton<ValidateExtractedApis>(provider => provider.GetRequiredService<ValidateExtractedApisHandler>().Handle);
-    }
-
-    private static void ConfigureGetApimApis(IServiceCollection services)
-    {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
-
-        services.TryAddSingleton<GetApimApisHandler>();
-        services.TryAddSingleton<GetApimApis>(provider => provider.GetRequiredService<GetApimApisHandler>().Handle);
-    }
-
-    private static void ConfigureTryGetApimGraphQlSchema(IServiceCollection services)
-    {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
-
-        services.TryAddSingleton<TryGetApimGraphQlSchemaHandler>();
-        services.TryAddSingleton<TryGetApimGraphQlSchema>(provider => provider.GetRequiredService<TryGetApimGraphQlSchemaHandler>().Handle);
-    }
-
-    private static void ConfigureGetFileApis(IServiceCollection services)
-    {
-        services.TryAddSingleton<GetFileApisHandler>();
-        services.TryAddSingleton<GetFileApis>(provider => provider.GetRequiredService<GetFileApisHandler>().Handle);
-    }
-
-    public static void ConfigureWriteApiModels(IServiceCollection services)
-    {
-        services.TryAddSingleton<WriteApiModelsHandler>();
-        services.TryAddSingleton<WriteApiModels>(provider => provider.GetRequiredService<WriteApiModelsHandler>().Handle);
-    }
-
-    public static void ConfigureValidatePublishedApis(IServiceCollection services)
-    {
-        ConfigureGetFileApis(services);
-        ConfigureGetApimApis(services);
-
-        services.TryAddSingleton<ValidatePublishedApisHandler>();
-        services.TryAddSingleton<ValidatePublishedApis>(provider => provider.GetRequiredService<ValidatePublishedApisHandler>().Handle);
-    }
-}
-
-internal static class Api
-{
     public static Gen<ApiModel> GenerateUpdate(ApiModel original) =>
         from revisions in GenerateRevisionUpdates(original.Revisions, original.Type, original.Name)
         select original with
@@ -523,7 +553,7 @@ internal static class Api
         var newGen = ApiRevision.GenerateSet(type, name);
         var updateGen = (ApiRevision revision) => GenerateRevisionUpdate(revision, type);
 
-        return Fixture.GenerateNewSet(revisions, newGen, updateGen);
+        return Generator.GenerateNewSet(revisions, newGen, updateGen);
     }
 
     private static Gen<ApiRevision> GenerateRevisionUpdate(ApiRevision revision, ApiType type) =>
