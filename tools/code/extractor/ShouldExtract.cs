@@ -35,6 +35,7 @@ public sealed class ShouldExtractFactory(ConfigurationJson configurationJson, IL
             [typeof(GroupName)] = "groupNames",
             [typeof(SubscriptionName)] = "subscriptionNames",
             [typeof(ApiName)] = "apiNames",
+            [typeof(WorkspaceName)] = "workspaceNames",
         }
         .ToFrozenDictionary();
 
@@ -85,7 +86,7 @@ public sealed class ShouldExtractFactory(ConfigurationJson configurationJson, IL
     }
 }
 
-public static class ShouldExtractModule
+internal static class ShouldExtractModule
 {
     public static void ConfigureShouldExtractFactory(IHostApplicationBuilder builder)
     {

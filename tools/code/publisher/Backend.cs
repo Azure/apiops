@@ -15,16 +15,16 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutBackends(CancellationToken cancellationToken);
+public delegate ValueTask DeleteBackends(CancellationToken cancellationToken);
 public delegate Option<BackendName> TryParseBackendName(FileInfo file);
 public delegate bool IsBackendNameInSourceControl(BackendName name);
 public delegate ValueTask PutBackend(BackendName name, CancellationToken cancellationToken);
 public delegate ValueTask<Option<BackendDto>> FindBackendDto(BackendName name, CancellationToken cancellationToken);
 public delegate ValueTask PutBackendInApim(BackendName name, BackendDto dto, CancellationToken cancellationToken);
-public delegate ValueTask DeleteBackends(CancellationToken cancellationToken);
 public delegate ValueTask DeleteBackend(BackendName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteBackendFromApim(BackendName name, CancellationToken cancellationToken);
 
-public static class BackendModule
+internal static class BackendModule
 {
     public static void ConfigurePutBackends(IHostApplicationBuilder builder)
     {
@@ -142,9 +142,7 @@ public static class BackendModule
         return async (name, cancellationToken) =>
         {
             var informationFile = BackendInformationFile.From(name, serviceDirectory);
-            var informationFileInfo = informationFile.ToFileInfo();
-
-            var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+            var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
                    let dto = contents.ToObjectFromJson<BackendDto>()
@@ -170,8 +168,8 @@ public static class BackendModule
         {
             logger.LogInformation("Putting backend {BackendName}...", name);
 
-            await BackendUri.From(name, serviceUri)
-                            .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = BackendUri.From(name, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
@@ -247,8 +245,8 @@ public static class BackendModule
         {
             logger.LogInformation("Deleting backend {BackendName}...", name);
 
-            await BackendUri.From(name, serviceUri)
-                            .Delete(pipeline, cancellationToken);
+            var resourceUri = BackendUri.From(name, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

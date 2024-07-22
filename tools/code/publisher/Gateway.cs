@@ -24,7 +24,7 @@ public delegate ValueTask DeleteGateways(CancellationToken cancellationToken);
 public delegate ValueTask DeleteGateway(GatewayName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteGatewayFromApim(GatewayName name, CancellationToken cancellationToken);
 
-public static class GatewayModule
+internal static class GatewayModule
 {
     public static void ConfigurePutGateways(IHostApplicationBuilder builder)
     {

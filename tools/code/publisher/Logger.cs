@@ -24,7 +24,7 @@ public delegate ValueTask DeleteLoggers(CancellationToken cancellationToken);
 public delegate ValueTask DeleteLogger(LoggerName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteLoggerFromApim(LoggerName name, CancellationToken cancellationToken);
 
-public static class LoggerModule
+internal static class LoggerModule
 {
     public static void ConfigurePutLoggers(IHostApplicationBuilder builder)
     {

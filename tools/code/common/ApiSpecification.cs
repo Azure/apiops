@@ -4,7 +4,6 @@ using Microsoft.OpenApi.Readers;
 using System;
 using System.Collections.Immutable;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -93,7 +92,6 @@ public abstract record ApiSpecificationFile : ResourceFile
                                           select specificationFile as ApiSpecificationFile;
 
         return await ImmutableArray.Create(tryParseGraphQl, tryParseWadl, tryParseWsdl, tryParseOpenApi)
-                                   .ToAsyncEnumerable()
                                    .Pick(async (f, cancellationToken) => await f(), cancellationToken);
     }
 }
@@ -116,7 +114,7 @@ public sealed record GraphQlSpecificationFile : ApiSpecificationFile
             : Option<GraphQlSpecificationFile>.None;
 }
 
-public sealed record class WadlSpecificationFile : ApiSpecificationFile
+public sealed record WadlSpecificationFile : ApiSpecificationFile
 {
     public override ApiSpecification Specification { get; } = new ApiSpecification.Wadl();
 
@@ -180,7 +178,6 @@ public abstract record OpenApiSpecificationFile : ApiSpecificationFile
                                        select json as OpenApiSpecificationFile;
 
         return await ImmutableArray.Create(tryParseYaml, tryParseJson)
-                                   .ToAsyncEnumerable()
                                    .Pick(async (f, cancellationToken) => await f(), cancellationToken);
     }
 }

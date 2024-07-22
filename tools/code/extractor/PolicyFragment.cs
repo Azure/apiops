@@ -124,7 +124,10 @@ internal static class PolicyFragmentModule
             var informationFile = PolicyFragmentInformationFile.From(name, serviceDirectory);
 
             logger.LogInformation("Writing policy fragment information file {PolicyFragmentInformationFile}...", informationFile);
-            await informationFile.WriteDto(dto, cancellationToken);
+
+            // Remove policy contents from DTO, as these will be written to the policy file
+            var updatedDto = dto with { Properties = dto.Properties with { Format = null, Value = null } };
+            await informationFile.WriteDto(updatedDto, cancellationToken);
         };
     }
 

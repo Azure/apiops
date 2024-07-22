@@ -24,7 +24,7 @@ public delegate ValueTask DeleteProducts(CancellationToken cancellationToken);
 public delegate ValueTask DeleteProduct(ProductName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteProductFromApim(ProductName name, CancellationToken cancellationToken);
 
-public static class ProductModule
+internal static class ProductModule
 {
     public static void ConfigurePutProducts(IHostApplicationBuilder builder)
     {

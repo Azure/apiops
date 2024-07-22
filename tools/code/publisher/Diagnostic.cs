@@ -24,7 +24,7 @@ public delegate ValueTask DeleteDiagnostics(CancellationToken cancellationToken)
 public delegate ValueTask DeleteDiagnostic(DiagnosticName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteDiagnosticFromApim(DiagnosticName name, CancellationToken cancellationToken);
 
-public static class DiagnosticModule
+internal static class DiagnosticModule
 {
     public static void ConfigurePutDiagnostics(IHostApplicationBuilder builder)
     {

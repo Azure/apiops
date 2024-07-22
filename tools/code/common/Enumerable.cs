@@ -79,6 +79,25 @@ public static class IEnumerableExtensions
     }
 
     /// <summary>
+    /// Applies <paramref name="f"/> to each element of <paramref name="enumerable"/> and returns the first Option of <typeparamref name="T2"/>
+    /// that is Some. If all options are None, returns a None.
+    /// </summary>
+    public static async ValueTask<Option<T2>> Pick<T, T2>(this IEnumerable<T> enumerable, Func<T, CancellationToken, ValueTask<Option<T2>>> f, CancellationToken cancellationToken)
+    {
+        foreach (var item in enumerable)
+        {
+            var option = await f(item, cancellationToken);
+
+            if (option.IsSome)
+            {
+                return option;
+            }
+        }
+
+        return Option<T2>.None;
+    }
+
+    /// <summary>
     /// Returns the first item in the enumerable. If the enumerable is empty, returns <seealso cref="Option.None"/>.
     /// </summary>
     public static Option<T> HeadOrNone<T>(this IEnumerable<T> enumerable)

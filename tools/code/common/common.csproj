@@ -10,7 +10,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Core" Version="1.40.0" />
+		<PackageReference Include="Azure.Core" Version="1.41.0" />
 		<PackageReference Include="Azure.Identity" Version="1.12.0" />
     <PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.2.0" />
     <PackageReference Include="Azure.ResourceManager" Version="1.12.0" />
@@ -20,7 +20,7 @@
 		<PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="8.7.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
-		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="7.6.3" />
+		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.0.0" />
 		<PackageReference Include="Microsoft.OpenApi.Readers" Version="1.6.15" />
     <PackageReference Include="NetEscapades.Configuration.Yaml" Version="3.1.0" />
 		<PackageReference Include="Nito.Comparers" Version="6.2.2" />

@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -46,8 +45,8 @@ internal static class BackendModule
             logger.LogInformation("Extracting backends...");
 
             await list(cancellationToken)
-                    .Where(backend => shouldExtract(backend.Name))
-                    .IterParallel(async backend => await writeArtifacts(backend.Name, backend.Dto, cancellationToken),
+                    .Where(resource => shouldExtract(resource.Name))
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
     }
@@ -66,8 +65,10 @@ internal static class BackendModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return cancellationToken =>
-            BackendsUri.From(serviceUri)
-                       .List(pipeline, cancellationToken);
+        {
+            var backendsUri = BackendsUri.From(serviceUri);
+            return backendsUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureShouldExtractBackend(IHostApplicationBuilder builder)

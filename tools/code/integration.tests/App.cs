@@ -15,6 +15,7 @@ internal static class AppModule
         TestModule.ConfigureTestExtractThenPublish(builder);
         TestModule.ConfigureTestPublisher(builder);
         TestModule.ConfigureCleanUpTests(builder);
+        TestModule.ConfigureTestWorkspaces(builder);
 
         builder.Services.TryAddSingleton(GetRunApplication);
     }
@@ -24,6 +25,7 @@ internal static class AppModule
         var testExtractor = provider.GetRequiredService<TestExtractor>();
         var testExtractThenPublish = provider.GetRequiredService<TestExtractThenPublish>();
         var testPublisher = provider.GetRequiredService<TestPublisher>();
+        var testWorkspaces = provider.GetRequiredService<TestWorkspaces>();
         var cleanUpTests = provider.GetRequiredService<CleanUpTests>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
@@ -33,8 +35,9 @@ internal static class AppModule
 
             //await testExtractor(cancellationToken);
             //await testExtractThenPublish(cancellationToken);
-            await testPublisher(cancellationToken);
-            await cleanUpTests(cancellationToken);
+            //await testPublisher(cancellationToken);
+            //await cleanUpTests(cancellationToken);
+            await testWorkspaces(cancellationToken);
         };
     }
 }

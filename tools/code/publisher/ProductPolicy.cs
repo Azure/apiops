@@ -24,7 +24,7 @@ public delegate ValueTask DeleteProductPolicies(CancellationToken cancellationTo
 public delegate ValueTask DeleteProductPolicy(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteProductPolicyFromApim(ProductPolicyName name, ProductName productName, CancellationToken cancellationToken);
 
-public static class ProductPolicyModule
+internal static class ProductPolicyModule
 {
     public static void ConfigurePutProductPolicies(IHostApplicationBuilder builder)
     {

@@ -8,7 +8,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Nito.Comparers;
 using publisher;
 using System;
 using System.Collections.Generic;
@@ -25,6 +24,7 @@ public delegate ValueTask TestExtractor(CancellationToken cancellationToken);
 public delegate ValueTask TestExtractThenPublish(CancellationToken cancellationToken);
 public delegate ValueTask TestPublisher(CancellationToken cancellationToken);
 public delegate ValueTask CleanUpTests(CancellationToken cancellationToken);
+public delegate ValueTask TestWorkspaces(CancellationToken cancellationToken);
 
 public static class TestModule
 {
@@ -322,29 +322,71 @@ public static class TestModule
                     .IterParallel(deleteApimService.Invoke, cancellationToken);
         };
     }
-}
 
-file sealed record ChangeParameters
-{
-    public required bool Add { get; init; }
-    public required bool Modify { get; init; }
-    public required bool Remove { get; init; }
-
-    public static ChangeParameters None { get; } = new()
+    public static void ConfigureTestWorkspaces(IHostApplicationBuilder builder)
     {
-        Add = false,
-        Modify = false,
-        Remove = false
-    };
+        WorkspaceModule.ConfigureDeleteAllWorkspaces(builder);
+        WorkspaceModule.ConfigurePutWorkspaceModels(builder);
+        ExtractorModule.ConfigureRunExtractor(builder);
+        WorkspaceModule.ConfigureValidateExtractedWorkspaces(builder);
+        WorkspaceModule.ConfigureWriteWorkspaceModels(builder);
+        PublisherModule.ConfigureRunPublisher(builder);
+        WorkspaceModule.ConfigureValidatePublishedWorkspaces(builder);
 
-    public static ChangeParameters All { get; } = new()
+        builder.Services.TryAddSingleton(GetTestWorkspaces);
+    }
+
+    private static TestWorkspaces GetTestWorkspaces(IServiceProvider provider)
     {
-        Add = true,
-        Modify = true,
-        Remove = true
-    };
+        var deleteWorkspaces = provider.GetRequiredService<DeleteAllWorkspaces>();
+        var putWorkspaces = provider.GetRequiredService<PutWorkspaceModels>();
+        var runExtractor = provider.GetRequiredService<RunExtractor>();
+        var validateExtractor = provider.GetRequiredService<ValidateExtractedWorkspaces>();
+        var writeWorkspaces = provider.GetRequiredService<WriteWorkspaceModels>();
+        var runPublisher = provider.GetRequiredService<RunPublisher>();
+        var validatePublisher = provider.GetRequiredService<ValidatePublishedWorkspaces>();
+        var configuration = provider.GetRequiredService<IConfiguration>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-    public Option<int> MaxSize { get; init; } = Option<int>.None;
+        var firstServiceName = ManagementServiceName.From(configuration.GetValue("FIRST_SERVICE_NAME"));
+        var secondServiceName = ManagementServiceName.From(configuration.GetValue("SECOND_SERVICE_NAME"));
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(TestWorkspaces));
+
+            await testExtractor(cancellationToken);
+        };
+
+        async ValueTask testExtractor(CancellationToken cancellationToken)
+        {
+            using var _ = activitySource.StartActivity("TestWorkspaceExtractor");
+
+            logger.LogInformation("Testing workspace extractor...");
+
+            var generator = from workspaces in WorkspaceModel.GenerateSet()
+                            from optionalNamesToExport in ExtractorOptions.GenerateOptionalNamesToExport<WorkspaceName, WorkspaceModel>(workspaces)
+                            from serviceDirectory in Common.GenerateManagementServiceDirectory()
+                            select (workspaces, optionalNamesToExport, serviceDirectory);
+
+            await generator.SampleAsync(async fixture =>
+            {
+                var (workspaces, optionalNamesToExport, serviceDirectory) = fixture;
+
+                await deleteWorkspaces(firstServiceName, cancellationToken);
+                await putWorkspaces(workspaces, firstServiceName, cancellationToken);
+
+                var extractorOptions = ExtractorOptions.NoFilter with { WorkspaceNamesToExport = optionalNamesToExport };
+                await runExtractor(extractorOptions, firstServiceName, serviceDirectory, cancellationToken);
+
+                await validateExtractor(optionalNamesToExport, firstServiceName, serviceDirectory, cancellationToken);
+
+                await deleteWorkspaces(firstServiceName, cancellationToken);
+                serviceDirectory.ToDirectoryInfo().ForceDelete();
+            }, iter: 1);
+        }
+    }
 }
 
 file static class Common

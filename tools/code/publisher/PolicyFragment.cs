@@ -24,7 +24,7 @@ public delegate ValueTask DeletePolicyFragments(CancellationToken cancellationTo
 public delegate ValueTask DeletePolicyFragment(PolicyFragmentName name, CancellationToken cancellationToken);
 public delegate ValueTask DeletePolicyFragmentFromApim(PolicyFragmentName name, CancellationToken cancellationToken);
 
-public static class PolicyFragmentModule
+internal static class PolicyFragmentModule
 {
     public static void ConfigurePutPolicyFragments(IHostApplicationBuilder builder)
     {

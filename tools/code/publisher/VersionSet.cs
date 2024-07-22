@@ -24,7 +24,7 @@ public delegate ValueTask DeleteVersionSets(CancellationToken cancellationToken)
 public delegate ValueTask DeleteVersionSet(VersionSetName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteVersionSetFromApim(VersionSetName name, CancellationToken cancellationToken);
 
-public static class VersionSetModule
+internal static class VersionSetModule
 {
     public static void ConfigurePutVersionSets(IHostApplicationBuilder builder)
     {

@@ -24,7 +24,7 @@ public delegate ValueTask DeleteProductApis(CancellationToken cancellationToken)
 public delegate ValueTask DeleteProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteProductApiFromApim(ApiName name, ProductName productName, CancellationToken cancellationToken);
 
-public static class ProductApiModule
+internal static class ProductApiModule
 {
     public static void ConfigurePutProductApis(IHostApplicationBuilder builder)
     {

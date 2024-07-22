@@ -730,24 +730,6 @@ public static class ApiModule
     public static async ValueTask WriteSpecification(this ApiSpecificationFile file, BinaryData contents, CancellationToken cancellationToken) =>
         await file.ToFileInfo().OverwriteWithBinaryData(contents, cancellationToken);
 
-    public static FileInfo ToFileInfo(this ApiSpecificationFile file) =>
-        file switch
-        {
-            GraphQlSpecificationFile graphQl => graphQl.ToFileInfo(),
-            WadlSpecificationFile wadl => wadl.ToFileInfo(),
-            WsdlSpecificationFile wsdl => wsdl.ToFileInfo(),
-            OpenApiSpecificationFile openApi => openApi switch
-            {
-                YamlOpenApiSpecificationFile yaml => yaml.ToFileInfo(),
-                JsonOpenApiSpecificationFile json => json.ToFileInfo(),
-                _ => throw new NotSupportedException()
-            },
-            _ => throw new NotSupportedException()
-        };
-
-    public static async ValueTask<BinaryData> ReadContents(this ApiSpecificationFile file, CancellationToken cancellationToken) =>
-        await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
-
     public static Option<VersionSetName> TryGetVersionSetName(ApiDto dto) =>
         from versionSetId in Prelude.Optional(dto.Properties.ApiVersionSetId)
         from versionSetNameString in versionSetId.Split('/')

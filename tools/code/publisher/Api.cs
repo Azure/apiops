@@ -39,7 +39,7 @@ public delegate ValueTask DeleteApis(CancellationToken cancellationToken);
 public delegate ValueTask DeleteApi(ApiName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteApiFromApim(ApiName name, CancellationToken cancellationToken);
 
-public static class ApiModule
+internal static class ApiModule
 {
     public static void ConfigurePutApis(IHostApplicationBuilder builder)
     {
@@ -317,7 +317,6 @@ public static class ApiModule
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
         CommonModule.ConfigureTryGetFileContents(builder);
-        CommonModule.ConfigureGetArtifactFiles(builder);
 
         builder.Services.TryAddSingleton(GetFindApiInformationFileDto);
     }
@@ -326,7 +325,6 @@ public static class ApiModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
-        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
 
         return async (name, cancellationToken) =>
         {

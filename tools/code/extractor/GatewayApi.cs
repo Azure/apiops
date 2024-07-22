@@ -18,7 +18,7 @@ public delegate IAsyncEnumerable<(ApiName Name, GatewayApiDto Dto)> ListGatewayA
 public delegate ValueTask WriteGatewayApiArtifacts(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
 public delegate ValueTask WriteGatewayApiInformationFile(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
 
-public static class GatewayApiModule
+internal static class GatewayApiModule
 {
     public static void ConfigureExtractGatewayApis(IHostApplicationBuilder builder)
     {
@@ -63,8 +63,8 @@ public static class GatewayApiModule
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-        return (gatewyName, cancellationToken) =>
-            GatewayApisUri.From(gatewyName, serviceUri)
+        return (gatewayName, cancellationToken) =>
+            GatewayApisUri.From(gatewayName, serviceUri)
                           .List(pipeline, cancellationToken);
     }
 

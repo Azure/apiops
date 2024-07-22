@@ -52,7 +52,7 @@ public delegate Option<CommitId> TryGetCommitId();
 
 public delegate ValueTask<Option<BinaryData>> TryGetFileContentsInCommit(FileInfo fileInfo, CommitId commitId, CancellationToken cancellationToken);
 
-public static class CommonModule
+internal static class CommonModule
 {
     public static void ConfigureGetPublisherFiles(IHostApplicationBuilder builder)
     {

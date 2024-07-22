@@ -24,7 +24,7 @@ public delegate ValueTask DeleteApiOperationPolicies(CancellationToken cancellat
 public delegate ValueTask DeleteApiOperationPolicy(ApiOperationPolicyName name, ApiOperationName operationName, ApiName apiName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteApiOperationPolicyFromApim(ApiOperationPolicyName name, ApiOperationName operationName, ApiName apiName, CancellationToken cancellationToken);
 
-public static class ApiOperationPolicyModule
+internal static class ApiOperationPolicyModule
 {
     public static void ConfigurePutApiOperationPolicies(IHostApplicationBuilder builder)
     {

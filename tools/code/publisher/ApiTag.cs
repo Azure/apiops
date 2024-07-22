@@ -24,7 +24,7 @@ public delegate ValueTask DeleteApiTags(CancellationToken cancellationToken);
 public delegate ValueTask DeleteApiTag(TagName name, ApiName apiName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteApiTagFromApim(TagName name, ApiName apiName, CancellationToken cancellationToken);
 
-public static class ApiTagModule
+internal static class ApiTagModule
 {
     public static void ConfigurePutApiTags(IHostApplicationBuilder builder)
     {

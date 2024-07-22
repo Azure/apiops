@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -73,7 +72,7 @@ public sealed record SubscriptionDirectory : ResourceDirectory
     public required SubscriptionName Name { get; init; }
 
     protected override DirectoryInfo Value =>
-        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.Value);
 
     public static SubscriptionDirectory From(SubscriptionName name, ManagementServiceDirectory serviceDirectory) =>
         new()
@@ -94,7 +93,8 @@ public sealed record SubscriptionDirectory : ResourceDirectory
 public sealed record SubscriptionInformationFile : ResourceFile
 {
     public required SubscriptionDirectory Parent { get; init; }
-    private static string Name { get; } = "subscriptionInformation.json";
+
+    public static string Name { get; } = "subscriptionInformation.json";
 
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile(Name);
@@ -102,17 +102,14 @@ public sealed record SubscriptionInformationFile : ResourceFile
     public static SubscriptionInformationFile From(SubscriptionName name, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = new SubscriptionDirectory
-            {
-                Parent = SubscriptionsDirectory.From(serviceDirectory),
-                Name = name
-            }
+            Parent = SubscriptionDirectory.From(name, serviceDirectory)
         };
 
     public static Option<SubscriptionInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
-        file is not null && file.Name == Name
+        file is not null &&
+        file.Name == Name
             ? from parent in SubscriptionDirectory.TryParse(file.Directory, serviceDirectory)
-              select new SubscriptionInformationFile { Parent = parent }
+              select From(parent.Name, serviceDirectory)
             : Option<SubscriptionInformationFile>.None;
 }
 
@@ -158,23 +155,25 @@ public static class SubscriptionModule
 {
     public static async ValueTask DeleteAll(this SubscriptionsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await uri.ListNames(pipeline, cancellationToken)
-                 .IterParallel(async name => await SubscriptionUri.From(name, uri.ServiceUri)
-                                                                .Delete(pipeline, cancellationToken),
-                               cancellationToken);
+                 .IterParallel(async name =>
+                 {
+                     var resourceUri = SubscriptionUri.From(name, uri.ServiceUri);
+                     await resourceUri.Delete(pipeline, cancellationToken);
+                 }, cancellationToken);
 
     public static IAsyncEnumerable<SubscriptionName> ListNames(this SubscriptionsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
                 .Select(SubscriptionName.From);
 
-    public static IAsyncEnumerable<(SubscriptionName Name, SubscriptionDto Dto)> List(this SubscriptionsUri subscriptionsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        subscriptionsUri.ListNames(pipeline, cancellationToken)
-                        .SelectAwait(async name =>
-                        {
-                            var uri = new SubscriptionUri { Parent = subscriptionsUri, Name = name };
-                            var dto = await uri.GetDto(pipeline, cancellationToken);
-                            return (name, dto);
-                        });
+    public static IAsyncEnumerable<(SubscriptionName Name, SubscriptionDto Dto)> List(this SubscriptionsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        uri.ListNames(pipeline, cancellationToken)
+           .SelectAwait(async name =>
+           {
+               var resourceUri = new SubscriptionUri { Parent = uri, Name = name };
+               var dto = await resourceUri.GetDto(pipeline, cancellationToken);
+               return (name, dto);
+           });
 
     public static async ValueTask<SubscriptionDto> GetDto(this SubscriptionUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

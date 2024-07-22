@@ -24,7 +24,7 @@ public delegate ValueTask DeleteSubscriptions(CancellationToken cancellationToke
 public delegate ValueTask DeleteSubscription(SubscriptionName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteSubscriptionFromApim(SubscriptionName name, CancellationToken cancellationToken);
 
-public static class SubscriptionModule
+internal static class SubscriptionModule
 {
     public static void ConfigurePutSubscriptions(IHostApplicationBuilder builder)
     {

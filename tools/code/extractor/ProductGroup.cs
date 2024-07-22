@@ -18,7 +18,7 @@ public delegate IAsyncEnumerable<(GroupName Name, ProductGroupDto Dto)> ListProd
 public delegate ValueTask WriteProductGroupArtifacts(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
 public delegate ValueTask WriteProductGroupInformationFile(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
 
-public static class ProductGroupModule
+internal static class ProductGroupModule
 {
     public static void ConfigureExtractProductGroups(IHostApplicationBuilder builder)
     {
@@ -63,8 +63,8 @@ public static class ProductGroupModule
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-        return (gatewyName, cancellationToken) =>
-            ProductGroupsUri.From(gatewyName, serviceUri)
+        return (productName, cancellationToken) =>
+            ProductGroupsUri.From(productName, serviceUri)
                           .List(pipeline, cancellationToken);
     }
 

@@ -18,7 +18,7 @@ public delegate IAsyncEnumerable<(TagName Name, ProductTagDto Dto)> ListProductT
 public delegate ValueTask WriteProductTagArtifacts(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken);
 public delegate ValueTask WriteProductTagInformationFile(TagName name, ProductTagDto dto, ProductName productName, CancellationToken cancellationToken);
 
-public static class ProductTagModule
+internal static class ProductTagModule
 {
     public static void ConfigureExtractProductTags(IHostApplicationBuilder builder)
     {
@@ -63,8 +63,8 @@ public static class ProductTagModule
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-        return (gatewyName, cancellationToken) =>
-            ProductTagsUri.From(gatewyName, serviceUri)
+        return (productName, cancellationToken) =>
+            ProductTagsUri.From(productName, serviceUri)
                           .List(pipeline, cancellationToken);
     }
 

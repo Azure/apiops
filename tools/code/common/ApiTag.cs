@@ -143,20 +143,21 @@ public static class ApiTagModule
     public static IEnumerable<ApiTagInformationFile> ListInformationFiles(ApiName apiName, ManagementServiceDirectory serviceDirectory) =>
         ListApiTagsDirectories(apiName, serviceDirectory)
             .SelectMany(ListApiTagDirectories)
-            .Select(directory => ApiTagInformationFile.From(directory.Name, apiName, serviceDirectory));
+            .Select(directory => ApiTagInformationFile.From(directory.Name, apiName, serviceDirectory))
+            .Where(informationFile => informationFile.ToFileInfo().Exists());
 
     private static IEnumerable<ApiTagsDirectory> ListApiTagsDirectories(ApiName apiName, ManagementServiceDirectory serviceDirectory) =>
         ApiDirectory.From(apiName, serviceDirectory)
-                        .ToDirectoryInfo()
-                        .ListDirectories("*")
-                        .Where(ApiTagsDirectory.IsDirectoryNameValid)
-                        .Select(_ => ApiTagsDirectory.From(apiName, serviceDirectory));
+                    .ToDirectoryInfo()
+                    .ListDirectories("*")
+                    .Where(ApiTagsDirectory.IsDirectoryNameValid)
+                    .Select(_ => ApiTagsDirectory.From(apiName, serviceDirectory));
 
     private static IEnumerable<ApiTagDirectory> ListApiTagDirectories(ApiTagsDirectory apiTagsDirectory) =>
         apiTagsDirectory.ToDirectoryInfo()
-                              .ListDirectories("*")
-                              .Choose(directory => from name in ApiTagDirectory.TryParseApiTagName(directory)
-                                                   select new ApiTagDirectory { Name = name, Parent = apiTagsDirectory });
+                        .ListDirectories("*")
+                        .Choose(directory => from name in ApiTagDirectory.TryParseApiTagName(directory)
+                                             select new ApiTagDirectory { Name = name, Parent = apiTagsDirectory });
 
     public static async ValueTask WriteDto(this ApiTagInformationFile file, ApiTagDto dto, CancellationToken cancellationToken)
     {

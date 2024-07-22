@@ -7,7 +7,8 @@ internal static class Program
     {
         var builder = DistributedApplication.CreateBuilder(args);
 
-        builder.AddProject<integration_tests>("integration-tests");
+        //builder.AddProject<extractor>("extractor");
+        builder.AddProject<publisher>("publisher");
 
         builder.Build().Run();
     }

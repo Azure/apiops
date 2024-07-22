@@ -25,6 +25,7 @@ internal static class AppModule
         GroupModule.ConfigureExtractGroups(builder);
         SubscriptionModule.ConfigureExtractSubscriptions(builder);
         ApiModule.ConfigureExtractApis(builder);
+        WorkspaceModule.ConfigureExtractWorkspaces(builder);
 
         builder.Services.TryAddSingleton(GetRunApplication);
     }
@@ -44,6 +45,7 @@ internal static class AppModule
         var extractGroups = provider.GetRequiredService<ExtractGroups>();
         var extractSubscriptions = provider.GetRequiredService<ExtractSubscriptions>();
         var extractApis = provider.GetRequiredService<ExtractApis>();
+        var extractWorkspaces = provider.GetRequiredService<ExtractWorkspaces>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -66,6 +68,7 @@ internal static class AppModule
             await extractGroups(cancellationToken);
             await extractSubscriptions(cancellationToken);
             await extractApis(cancellationToken);
+            await extractWorkspaces(cancellationToken);
 
             logger.LogInformation("Extractor completed.");
         };

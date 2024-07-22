@@ -24,7 +24,7 @@ public delegate ValueTask DeleteGroups(CancellationToken cancellationToken);
 public delegate ValueTask DeleteGroup(GroupName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteGroupFromApim(GroupName name, CancellationToken cancellationToken);
 
-public static class GroupModule
+internal static class GroupModule
 {
     public static void ConfigurePutGroups(IHostApplicationBuilder builder)
     {

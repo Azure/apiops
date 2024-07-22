@@ -18,7 +18,7 @@ public delegate IAsyncEnumerable<(ApiName Name, ProductApiDto Dto)> ListProductA
 public delegate ValueTask WriteProductApiArtifacts(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken);
 public delegate ValueTask WriteProductApiInformationFile(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken);
 
-public static class ProductApiModule
+internal static class ProductApiModule
 {
     public static void ConfigureExtractProductApis(IHostApplicationBuilder builder)
     {
@@ -63,8 +63,8 @@ public static class ProductApiModule
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-        return (gatewyName, cancellationToken) =>
-            ProductApisUri.From(gatewyName, serviceUri)
+        return (productName, cancellationToken) =>
+            ProductApisUri.From(productName, serviceUri)
                           .List(pipeline, cancellationToken);
     }
 

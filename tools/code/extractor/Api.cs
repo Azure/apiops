@@ -78,6 +78,7 @@ internal static class ApiModule
 
     private static void ConfigureListApis(IHostApplicationBuilder builder)
     {
+        ApiSpecificationModule.ConfigureDefaultApiSpecification(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -86,12 +87,9 @@ internal static class ApiModule
 
     private static ListApis GetListApis(IServiceProvider provider)
     {
+        var defaultApiSpecification = provider.GetRequiredService<DefaultApiSpecification>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
-        var configuration = provider.GetRequiredService<IConfiguration>();
-        var activitySource = provider.GetRequiredService<ActivitySource>();
-
-        var defaultApiSpecification = getDefaultApiSpecification(configuration);
 
         return cancellationToken =>
             ApisUri.From(serviceUri)
@@ -102,52 +100,6 @@ internal static class ApiModule
                        var specificationContentsOption = await tryGetSpecificationContents(name, dto, cancellationToken);
                        return (name, dto, specificationContentsOption);
                    });
-
-        static ApiSpecification getDefaultApiSpecification(IConfiguration configuration)
-        {
-            var formatOption = configuration.TryGetValue("API_SPECIFICATION_FORMAT")
-                                | configuration.TryGetValue("apiSpecificationFormat");
-
-            return formatOption.Map(format => format switch
-            {
-                var value when "Wadl".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.Wadl() as ApiSpecification,
-                var value when "JSON".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
-                {
-                    Format = new OpenApiFormat.Json(),
-                    Version = new OpenApiVersion.V3()
-                },
-                var value when "YAML".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
-                {
-                    Format = new OpenApiFormat.Yaml(),
-                    Version = new OpenApiVersion.V3()
-                },
-                var value when "OpenApiV2Json".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
-                {
-                    Format = new OpenApiFormat.Json(),
-                    Version = new OpenApiVersion.V2()
-                },
-                var value when "OpenApiV2Yaml".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
-                {
-                    Format = new OpenApiFormat.Yaml(),
-                    Version = new OpenApiVersion.V2()
-                },
-                var value when "OpenApiV3Json".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
-                {
-                    Format = new OpenApiFormat.Json(),
-                    Version = new OpenApiVersion.V3()
-                },
-                var value when "OpenApiV3Yaml".Equals(value, StringComparison.OrdinalIgnoreCase) => new ApiSpecification.OpenApi
-                {
-                    Format = new OpenApiFormat.Yaml(),
-                    Version = new OpenApiVersion.V3()
-                },
-                var value => throw new NotSupportedException($"API specification format '{value}' defined in configuration is not supported.")
-            }).IfNone(() => new ApiSpecification.OpenApi
-            {
-                Format = new OpenApiFormat.Yaml(),
-                Version = new OpenApiVersion.V3()
-            });
-        }
 
         async ValueTask<Option<(ApiSpecification, BinaryData)>> tryGetSpecificationContents(ApiName name, ApiDto dto, CancellationToken cancellationToken)
         {
@@ -168,8 +120,8 @@ internal static class ApiModule
             {
                 "graphql" => new ApiSpecification.GraphQl(),
                 "soap" => new ApiSpecification.Wsdl(),
-                "http" => defaultApiSpecification,
-                null => defaultApiSpecification,
+                "http" => defaultApiSpecification.Value,
+                null => defaultApiSpecification.Value,
                 _ => Option<ApiSpecification>.None
             };
     }

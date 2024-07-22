@@ -39,6 +39,7 @@ public sealed record ExtractorOptions
     public required Option<FrozenSet<ApiName>> ApiNamesToExport { get; init; }
     public required Option<ApiSpecification> DefaultApiSpecification { get; init; }
     public required Option<FrozenSet<SubscriptionName>> SubscriptionNamesToExport { get; init; }
+    public required Option<FrozenSet<WorkspaceName>> WorkspaceNamesToExport { get; init; }
 
     public static ExtractorOptions NoFilter { get; } = new()
     {
@@ -54,7 +55,8 @@ public sealed record ExtractorOptions
         ProductNamesToExport = Option<FrozenSet<ProductName>>.None,
         SubscriptionNamesToExport = Option<FrozenSet<SubscriptionName>>.None,
         TagNamesToExport = Option<FrozenSet<TagName>>.None,
-        VersionSetNamesToExport = Option<FrozenSet<VersionSetName>>.None
+        VersionSetNamesToExport = Option<FrozenSet<VersionSetName>>.None,
+        WorkspaceNamesToExport = Option<FrozenSet<WorkspaceName>>.None
     };
 
     public static Gen<ExtractorOptions> Generate(ServiceModel service) =>
@@ -85,10 +87,11 @@ public sealed record ExtractorOptions
             GroupNamesToExport = groups,
             ApiNamesToExport = apis,
             DefaultApiSpecification = defaultApiSpecification,
-            SubscriptionNamesToExport = subscriptions
+            SubscriptionNamesToExport = subscriptions,
+            WorkspaceNamesToExport = Option<FrozenSet<WorkspaceName>>.None
         };
 
-    private static Gen<Option<FrozenSet<TName>>> GenerateOptionalNamesToExport<TName, TModel>(IEnumerable<TModel> models) =>
+    public static Gen<Option<FrozenSet<TName>>> GenerateOptionalNamesToExport<TName, TModel>(IEnumerable<TModel> models) =>
         GenerateNamesToExport<TName, TModel>(models).OptionOf();
 
     private static Gen<FrozenSet<TName>> GenerateNamesToExport<TName, TModel>(IEnumerable<TModel> models)

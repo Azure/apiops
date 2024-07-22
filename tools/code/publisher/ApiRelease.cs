@@ -13,7 +13,7 @@ namespace publisher;
 public delegate ValueTask PutApiReleaseInApim(ApiReleaseName name, ApiReleaseDto dto, ApiName apiName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteApiReleaseFromApim(ApiReleaseName name, ApiName apiName, CancellationToken cancellationToken);
 
-public static class ApiReleaseModule
+internal static class ApiReleaseModule
 {
     public static void ConfigurePutApiReleaseInApim(IHostApplicationBuilder builder)
     {

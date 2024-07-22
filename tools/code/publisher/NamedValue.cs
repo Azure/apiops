@@ -24,7 +24,7 @@ public delegate ValueTask DeleteNamedValues(CancellationToken cancellationToken)
 public delegate ValueTask DeleteNamedValue(NamedValueName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteNamedValueFromApim(NamedValueName name, CancellationToken cancellationToken);
 
-public static class NamedValueModule
+internal static class NamedValueModule
 {
     public static void ConfigurePutNamedValues(IHostApplicationBuilder builder)
     {

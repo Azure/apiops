@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -16,12 +15,6 @@ namespace common;
 public sealed record LoggerName : ResourceName
 {
     private LoggerName(string value) : base(value) { }
-
-    /// <summary>
-    /// Logger names with revisions have the format 'loggerName;revision'
-    /// </summary>
-    public LoggerName ToNonRevisionedName() =>
-        new(Value.Split(';').First());
 
     public static LoggerName From(string value) => new(value);
 }

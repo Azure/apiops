@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -27,7 +26,8 @@ public sealed record BackendsUri : ResourceUri
 
     private static string PathSegment { get; } = "backends";
 
-    protected override Uri Value => ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
+    protected override Uri Value =>
+        ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
 
     public static BackendsUri From(ManagementServiceUri serviceUri) =>
         new() { ServiceUri = serviceUri };
@@ -36,9 +36,11 @@ public sealed record BackendsUri : ResourceUri
 public sealed record BackendUri : ResourceUri
 {
     public required BackendsUri Parent { get; init; }
+
     public required BackendName Name { get; init; }
 
-    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+    protected override Uri Value =>
+        Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
 
     public static BackendUri From(BackendName name, ManagementServiceUri serviceUri) =>
         new()
@@ -61,9 +63,8 @@ public sealed record BackendsDirectory : ResourceDirectory
         new() { ServiceDirectory = serviceDirectory };
 
     public static Option<BackendsDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        directory is not null &&
-        directory.Name == Name &&
-        directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
+        directory?.Name == Name &&
+        directory?.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
             ? new BackendsDirectory { ServiceDirectory = serviceDirectory }
             : Option<BackendsDirectory>.None;
 }
@@ -75,7 +76,7 @@ public sealed record BackendDirectory : ResourceDirectory
     public required BackendName Name { get; init; }
 
     protected override DirectoryInfo Value =>
-        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.Value);
 
     public static BackendDirectory From(BackendName name, ManagementServiceDirectory serviceDirectory) =>
         new()
@@ -86,17 +87,19 @@ public sealed record BackendDirectory : ResourceDirectory
 
     public static Option<BackendDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
         from parent in BackendsDirectory.TryParse(directory?.Parent, serviceDirectory)
+        let name = BackendName.From(directory!.Name)
         select new BackendDirectory
         {
             Parent = parent,
-            Name = BackendName.From(directory!.Name)
+            Name = name
         };
 }
 
 public sealed record BackendInformationFile : ResourceFile
 {
     public required BackendDirectory Parent { get; init; }
-    private static string Name { get; } = "backendInformation.json";
+
+    public static string Name { get; } = "backendInformation.json";
 
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile(Name);
@@ -104,17 +107,17 @@ public sealed record BackendInformationFile : ResourceFile
     public static BackendInformationFile From(BackendName name, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = new BackendDirectory
-            {
-                Parent = BackendsDirectory.From(serviceDirectory),
-                Name = name
-            }
+            Parent = BackendDirectory.From(name, serviceDirectory)
         };
 
     public static Option<BackendInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
-        file is not null && file.Name == Name
+        file is not null &&
+        file.Name == Name
             ? from parent in BackendDirectory.TryParse(file.Directory, serviceDirectory)
-              select new BackendInformationFile { Parent = parent }
+              select new BackendInformationFile
+              {
+                  Parent = parent
+              }
             : Option<BackendInformationFile>.None;
 }
 
@@ -277,23 +280,25 @@ public static class BackendModule
 {
     public static async ValueTask DeleteAll(this BackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await uri.ListNames(pipeline, cancellationToken)
-                 .IterParallel(async name => await BackendUri.From(name, uri.ServiceUri)
-                                                                .Delete(pipeline, cancellationToken),
-                               cancellationToken);
+                 .IterParallel(async name =>
+                 {
+                     var backendUri = new BackendUri { Parent = uri, Name = name };
+                     await backendUri.Delete(pipeline, cancellationToken);
+                 }, cancellationToken);
 
     public static IAsyncEnumerable<BackendName> ListNames(this BackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
                 .Select(BackendName.From);
 
-    public static IAsyncEnumerable<(BackendName Name, BackendDto Dto)> List(this BackendsUri backendsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        backendsUri.ListNames(pipeline, cancellationToken)
-                      .SelectAwait(async name =>
-                      {
-                          var uri = new BackendUri { Parent = backendsUri, Name = name };
-                          var dto = await uri.GetDto(pipeline, cancellationToken);
-                          return (name, dto);
-                      });
+    public static IAsyncEnumerable<(BackendName Name, BackendDto Dto)> List(this BackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        uri.ListNames(pipeline, cancellationToken)
+           .SelectAwait(async name =>
+           {
+               var backendUri = new BackendUri { Parent = uri, Name = name };
+               var dto = await backendUri.GetDto(pipeline, cancellationToken);
+               return (name, dto);
+           });
 
     public static async ValueTask<BackendDto> GetDto(this BackendUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
@@ -314,16 +319,20 @@ public static class BackendModule
     {
         var backendsDirectory = BackendsDirectory.From(serviceDirectory);
 
-        return backendsDirectory.ToDirectoryInfo()
-                                .ListDirectories("*")
-                                .Select(directoryInfo => BackendName.From(directoryInfo.Name))
-                                .Select(name => new BackendDirectory { Parent = backendsDirectory, Name = name });
+        return from backendsDirectoryInfo in backendsDirectory.ToDirectoryInfo().ListDirectories("*")
+               let name = BackendName.From(backendsDirectoryInfo.Name)
+               select new BackendDirectory
+               {
+                   Parent = backendsDirectory,
+                   Name = name
+               };
     }
 
     public static IEnumerable<BackendInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
-        ListDirectories(serviceDirectory)
-            .Select(directory => new BackendInformationFile { Parent = directory })
-            .Where(informationFile => informationFile.ToFileInfo().Exists());
+        from backendDirectory in ListDirectories(serviceDirectory)
+        let informationFile = new BackendInformationFile { Parent = backendDirectory }
+        where informationFile.ToFileInfo().Exists()
+        select informationFile;
 
     public static async ValueTask WriteDto(this BackendInformationFile file, BackendDto dto, CancellationToken cancellationToken)
     {

@@ -24,7 +24,7 @@ public delegate ValueTask DeleteTags(CancellationToken cancellationToken);
 public delegate ValueTask DeleteTag(TagName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteTagFromApim(TagName name, CancellationToken cancellationToken);
 
-public static class TagModule
+internal static class TagModule
 {
     public static void ConfigurePutTags(IHostApplicationBuilder builder)
     {

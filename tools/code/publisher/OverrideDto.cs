@@ -118,7 +118,7 @@ public sealed class OverrideDtoFactory(ConfigurationJson configurationJson)
     }
 }
 
-public static class OverrideDtoModule
+internal static class OverrideDtoModule
 {
     public static void ConfigureOverrideDtoFactory(IHostApplicationBuilder builder)
     {

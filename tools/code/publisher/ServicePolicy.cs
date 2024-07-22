@@ -24,7 +24,7 @@ public delegate ValueTask DeleteServicePolicies(CancellationToken cancellationTo
 public delegate ValueTask DeleteServicePolicy(ServicePolicyName name, CancellationToken cancellationToken);
 public delegate ValueTask DeleteServicePolicyFromApim(ServicePolicyName name, CancellationToken cancellationToken);
 
-public static class ServicePolicyModule
+internal static class ServicePolicyModule
 {
     public static void ConfigurePutServicePolicies(IHostApplicationBuilder builder)
     {
