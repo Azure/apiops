@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -149,10 +150,19 @@ public static class WorkspaceModule
                      await resourceUri.Delete(pipeline, cancellationToken);
                  }, cancellationToken);
 
-    public static IAsyncEnumerable<WorkspaceName> ListNames(this WorkspacesUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
-                .Select(jsonObject => jsonObject.GetStringProperty("name"))
-                .Select(WorkspaceName.From);
+    public static IAsyncEnumerable<WorkspaceName> ListNames(this WorkspacesUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var exceptionHandler = (HttpRequestException exception) =>
+            exception.StatusCode == HttpStatusCode.BadRequest
+             && exception.Message.Contains("MethodNotAllowedInPricingTier", StringComparison.OrdinalIgnoreCase)
+            ? AsyncEnumerable.Empty<WorkspaceName>()
+            : throw exception;
+
+        return pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+                       .Select(jsonObject => jsonObject.GetStringProperty("name"))
+                       .Select(WorkspaceName.From)
+                       .Catch(exceptionHandler);
+    }
 
     public static IAsyncEnumerable<(WorkspaceName Name, WorkspaceDto Dto)> List(this WorkspacesUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         uri.ListNames(pipeline, cancellationToken)
