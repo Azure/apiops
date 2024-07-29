@@ -242,17 +242,9 @@ public sealed record WorkspaceApiDto
             [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
             public OAuth2AuthenticationSettingsContract? OAuth2 { get; init; }
 
-            [JsonPropertyName("oAuth2AuthenticationSettings")]
-            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-            public ImmutableArray<OAuth2AuthenticationSettingsContract>? OAuth2AuthenticationSettings { get; init; }
-
             [JsonPropertyName("openid")]
             [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
             public OpenIdAuthenticationSettingsContract? OpenId { get; init; }
-
-            [JsonPropertyName("openidAuthenticationSettings")]
-            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-            public ImmutableArray<OpenIdAuthenticationSettingsContract>? OpenIdAuthenticationSettings { get; init; }
         }
 
         public record OAuth2AuthenticationSettingsContract
