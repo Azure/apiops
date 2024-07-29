@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.FeatureManagement;
 using System;
 using System.Diagnostics;
 
@@ -76,6 +77,7 @@ internal static class AppModule
         BackendModule.ConfigureDeleteBackends(builder);
         GatewayModule.ConfigureDeleteGateways(builder);
         NamedValueModule.ConfigureDeleteNamedValues(builder);
+        builder.Services.AddFeatureManagement();
 
         builder.Services.TryAddSingleton(GetRunApplication);
     }
@@ -146,6 +148,7 @@ internal static class AppModule
         var deleteBackends = provider.GetRequiredService<DeleteBackends>();
         var deleteGateways = provider.GetRequiredService<DeleteGateways>();
         var deleteNamedValues = provider.GetRequiredService<DeleteNamedValues>();
+        var featureManager = provider.GetRequiredService<IFeatureManager>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -176,28 +179,33 @@ internal static class AppModule
             await putProductTags(cancellationToken);
             await putProductApis(cancellationToken);
             await putApiOperationPolicies(cancellationToken);
-            await putWorkspaceNamedValues(cancellationToken);
-            await putWorkspaceBackends(cancellationToken);
-            await putWorkspaceTags(cancellationToken);
-            await putWorkspaceVersionSets(cancellationToken);
-            await putWorkspaceLoggers(cancellationToken);
-            await putWorkspaceDiagnostics(cancellationToken);
-            await putWorkspacePolicyFragments(cancellationToken);
-            await putWorkspacePolicies(cancellationToken);
-            await putWorkspaceProducts(cancellationToken);
-            await putWorkspaceGroups(cancellationToken);
-            await putWorkspaceApis(cancellationToken);
-            await deleteWorkspaceApis(cancellationToken);
-            await deleteWorkspaceGroups(cancellationToken);
-            await deleteWorkspaceProducts(cancellationToken);
-            await deleteWorkspacePolicies(cancellationToken);
-            await deleteWorkspacePolicyFragments(cancellationToken);
-            await deleteWorkspaceDiagnostics(cancellationToken);
-            await deleteWorkspaceLoggers(cancellationToken);
-            await deleteWorkspaceVersionSets(cancellationToken);
-            await deleteWorkspaceTags(cancellationToken);
-            await deleteWorkspaceBackends(cancellationToken);
-            await deleteWorkspaceNamedValues(cancellationToken);
+
+            if (await featureManager.IsEnabledAsync("Workspaces"))
+            {
+                await putWorkspaceNamedValues(cancellationToken);
+                await putWorkspaceBackends(cancellationToken);
+                await putWorkspaceTags(cancellationToken);
+                await putWorkspaceVersionSets(cancellationToken);
+                await putWorkspaceLoggers(cancellationToken);
+                await putWorkspaceDiagnostics(cancellationToken);
+                await putWorkspacePolicyFragments(cancellationToken);
+                await putWorkspacePolicies(cancellationToken);
+                await putWorkspaceProducts(cancellationToken);
+                await putWorkspaceGroups(cancellationToken);
+                await putWorkspaceApis(cancellationToken);
+                await deleteWorkspaceApis(cancellationToken);
+                await deleteWorkspaceGroups(cancellationToken);
+                await deleteWorkspaceProducts(cancellationToken);
+                await deleteWorkspacePolicies(cancellationToken);
+                await deleteWorkspacePolicyFragments(cancellationToken);
+                await deleteWorkspaceDiagnostics(cancellationToken);
+                await deleteWorkspaceLoggers(cancellationToken);
+                await deleteWorkspaceVersionSets(cancellationToken);
+                await deleteWorkspaceTags(cancellationToken);
+                await deleteWorkspaceBackends(cancellationToken);
+                await deleteWorkspaceNamedValues(cancellationToken);
+            }
+
             await deleteApiOperationPolicies(cancellationToken);
             await deleteProductApis(cancellationToken);
             await deleteProductTags(cancellationToken);

@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.FeatureManagement;
 using System;
 using System.Diagnostics;
 
@@ -26,6 +27,7 @@ internal static class AppModule
         SubscriptionModule.ConfigureExtractSubscriptions(builder);
         ApiModule.ConfigureExtractApis(builder);
         WorkspaceModule.ConfigureExtractWorkspaces(builder);
+        builder.Services.AddFeatureManagement();
 
         builder.Services.TryAddSingleton(GetRunApplication);
     }
@@ -46,6 +48,7 @@ internal static class AppModule
         var extractSubscriptions = provider.GetRequiredService<ExtractSubscriptions>();
         var extractApis = provider.GetRequiredService<ExtractApis>();
         var extractWorkspaces = provider.GetRequiredService<ExtractWorkspaces>();
+        var featureManager = provider.GetRequiredService<IFeatureManager>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -68,7 +71,11 @@ internal static class AppModule
             await extractGroups(cancellationToken);
             await extractSubscriptions(cancellationToken);
             await extractApis(cancellationToken);
-            await extractWorkspaces(cancellationToken);
+
+            if (await featureManager.IsEnabledAsync("Workspaces"))
+            {
+                await extractWorkspaces(cancellationToken);
+            }
 
             logger.LogInformation("Extractor completed.");
         };
