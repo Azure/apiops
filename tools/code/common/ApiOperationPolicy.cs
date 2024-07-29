@@ -123,17 +123,6 @@ public static class ApiOperationPolicyModule
         return content.ToObjectFromJson<ApiOperationPolicyDto>();
     }
 
-    public static async ValueTask<Option<ApiOperationPolicyDto>> TryGetDto(this ApiOperationPolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<ApiOperationPolicyDto>())
-                     .Match(Option<ApiOperationPolicyDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<ApiOperationPolicyDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this ApiOperationPolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

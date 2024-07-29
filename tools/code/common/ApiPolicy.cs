@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -125,13 +124,9 @@ public static class ApiPolicyModule
 
     public static async ValueTask<Option<ApiPolicyDto>> TryGetDto(this ApiPolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
+        var option = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
 
-        return either.Map(content => content.ToObjectFromJson<ApiPolicyDto>())
-                     .Match(Option<ApiPolicyDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<ApiPolicyDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
+        return option.Map(content => content.ToObjectFromJson<ApiPolicyDto>());
     }
 
     public static async ValueTask Delete(this ApiPolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>

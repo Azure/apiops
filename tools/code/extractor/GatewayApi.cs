@@ -2,93 +2,105 @@
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractGatewayApis(GatewayName gatewayName, CancellationToken cancellationToken);
+public delegate ValueTask ExtractGatewayApis(GatewayName gatewayName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(ApiName Name, GatewayApiDto Dto)> ListGatewayApis(GatewayName gatewayName, CancellationToken cancellationToken);
+public delegate ValueTask WriteGatewayApiArtifacts(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
+public delegate ValueTask WriteGatewayApiInformationFile(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
 
-file delegate IAsyncEnumerable<(ApiName Name, GatewayApiDto Dto)> ListGatewayApis(GatewayName gatewayName, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteGatewayApiArtifacts(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteGatewayApiInformationFile(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken);
-
-file sealed class ExtractGatewayApisHandler(ListGatewayApis list, ShouldExtractApiName shouldExtractApi, WriteGatewayApiArtifacts writeArtifacts)
+internal static class GatewayApiModule
 {
-    public async ValueTask Handle(GatewayName gatewayName, CancellationToken cancellationToken) =>
-        await list(gatewayName, cancellationToken)
-                .Where(api => shouldExtractApi(api.Name))
-                .IterParallel(async gatewayapi => await writeArtifacts(gatewayapi.Name, gatewayapi.Dto, gatewayName, cancellationToken),
-                              cancellationToken);
-}
-
-file sealed class ListGatewayApisHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    public IAsyncEnumerable<(ApiName, GatewayApiDto)> Handle(GatewayName gatewayName, CancellationToken cancellationToken) =>
-        GatewayApisUri.From(gatewayName, serviceUri).List(pipeline, cancellationToken);
-}
-
-file sealed class WriteGatewayApiArtifactsHandler(WriteGatewayApiInformationFile writeApiFile)
-{
-    public async ValueTask Handle(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken)
+    public static void ConfigureExtractGatewayApis(IHostApplicationBuilder builder)
     {
-        await writeApiFile(name, dto, gatewayName, cancellationToken);
-    }
-}
+        ConfigureListGatewayApis(builder);
+        ApiModule.ConfigureShouldExtractApiName(builder);
+        ConfigureWriteGatewayApiArtifacts(builder);
 
-file sealed class WriteGatewayApiInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(ApiName name, GatewayApiDto dto, GatewayName gatewayName, CancellationToken cancellationToken)
-    {
-        var informationFile = GatewayApiInformationFile.From(name, gatewayName, serviceDirectory);
-
-        logger.LogInformation("Writing gateway api information file {GatewayApiInformationFile}...", informationFile);
-        await informationFile.WriteDto(dto, cancellationToken);
-    }
-}
-
-internal static class GatewayApiServices
-{
-    public static void ConfigureExtractGatewayApis(IServiceCollection services)
-    {
-        ConfigureListGatewayApis(services);
-        ApiServices.ConfigureShouldExtractApiName(services);
-        ConfigureWriteGatewayApiArtifacts(services);
-
-        services.TryAddSingleton<ExtractGatewayApisHandler>();
-        services.TryAddSingleton<ExtractGatewayApis>(provider => provider.GetRequiredService<ExtractGatewayApisHandler>().Handle);
+        builder.Services.TryAddSingleton(GetExtractGatewayApis);
     }
 
-    private static void ConfigureListGatewayApis(IServiceCollection services)
+    private static ExtractGatewayApis GetExtractGatewayApis(IServiceProvider provider)
     {
-        services.TryAddSingleton<ListGatewayApisHandler>();
-        services.TryAddSingleton<ListGatewayApis>(provider => provider.GetRequiredService<ListGatewayApisHandler>().Handle);
+        var list = provider.GetRequiredService<ListGatewayApis>();
+        var shouldExtractApi = provider.GetRequiredService<ShouldExtractApiName>();
+        var writeArtifacts = provider.GetRequiredService<WriteGatewayApiArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (gatewayName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractGatewayApis));
+
+            logger.LogInformation("Extracting APIs for gateway {GatewayName}...", gatewayName);
+
+            await list(gatewayName, cancellationToken)
+                    .Where(api => shouldExtractApi(api.Name))
+                    .IterParallel(async gatewayapi => await writeArtifacts(gatewayapi.Name, gatewayapi.Dto, gatewayName, cancellationToken),
+                                  cancellationToken);
+        };
     }
 
-    private static void ConfigureWriteGatewayApiArtifacts(IServiceCollection services)
+    private static void ConfigureListGatewayApis(IHostApplicationBuilder builder)
     {
-        ConfigureWriteGatewayApiInformationFile(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<WriteGatewayApiArtifactsHandler>();
-        services.TryAddSingleton<WriteGatewayApiArtifacts>(provider => provider.GetRequiredService<WriteGatewayApiArtifactsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetListGatewayApis);
     }
 
-    private static void ConfigureWriteGatewayApiInformationFile(IServiceCollection services)
+    private static ListGatewayApis GetListGatewayApis(IServiceProvider provider)
     {
-        services.TryAddSingleton<WriteGatewayApiInformationFileHandler>();
-        services.TryAddSingleton<WriteGatewayApiInformationFile>(provider => provider.GetRequiredService<WriteGatewayApiInformationFileHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("GatewayApiExtractor");
+        return (gatewayName, cancellationToken) =>
+            GatewayApisUri.From(gatewayName, serviceUri)
+                          .List(pipeline, cancellationToken);
+    }
+
+    private static void ConfigureWriteGatewayApiArtifacts(IHostApplicationBuilder builder)
+    {
+        ConfigureWriteGatewayApiInformationFile(builder);
+
+        builder.Services.TryAddSingleton(GetWriteGatewayApiArtifacts);
+    }
+
+    private static WriteGatewayApiArtifacts GetWriteGatewayApiArtifacts(IServiceProvider provider)
+    {
+        var writeInformationFile = provider.GetRequiredService<WriteGatewayApiInformationFile>();
+
+        return async (name, dto, gatewayName, cancellationToken) =>
+        {
+            await writeInformationFile(name, dto, gatewayName, cancellationToken);
+        };
+    }
+
+    public static void ConfigureWriteGatewayApiInformationFile(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetWriteGatewayApiInformationFile);
+    }
+
+    private static WriteGatewayApiInformationFile GetWriteGatewayApiInformationFile(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, gatewayName, cancellationToken) =>
+        {
+            var informationFile = GatewayApiInformationFile.From(name, gatewayName, serviceDirectory);
+
+            logger.LogInformation("Writing gateway API information file {GatewayApiInformationFile}...", informationFile);
+            await informationFile.WriteDto(dto, cancellationToken);
+        };
+    }
 }

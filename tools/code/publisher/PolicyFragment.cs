@@ -1,13 +1,12 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -15,352 +14,290 @@ using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate ValueTask ProcessPolicyFragmentsToPut(CancellationToken cancellationToken);
-internal delegate ValueTask ProcessDeletedPolicyFragments(CancellationToken cancellationToken);
+public delegate ValueTask PutPolicyFragments(CancellationToken cancellationToken);
+public delegate Option<PolicyFragmentName> TryParsePolicyFragmentName(FileInfo file);
+public delegate bool IsPolicyFragmentNameInSourceControl(PolicyFragmentName name);
+public delegate ValueTask PutPolicyFragment(PolicyFragmentName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<PolicyFragmentDto>> FindPolicyFragmentDto(PolicyFragmentName name, CancellationToken cancellationToken);
+public delegate ValueTask PutPolicyFragmentInApim(PolicyFragmentName name, PolicyFragmentDto dto, CancellationToken cancellationToken);
+public delegate ValueTask DeletePolicyFragments(CancellationToken cancellationToken);
+public delegate ValueTask DeletePolicyFragment(PolicyFragmentName name, CancellationToken cancellationToken);
+public delegate ValueTask DeletePolicyFragmentFromApim(PolicyFragmentName name, CancellationToken cancellationToken);
 
-internal delegate Option<PublisherAction> FindPolicyFragmentAction(FileInfo file);
-
-file delegate Option<PolicyFragmentName> TryParsePolicyFragmentName(FileInfo file);
-
-file delegate ValueTask ProcessPolicyFragment(PolicyFragmentName name, CancellationToken cancellationToken);
-
-file delegate bool IsPolicyFragmentNameInSourceControl(PolicyFragmentName name);
-
-file delegate ValueTask<Option<PolicyFragmentDto>> FindPolicyFragmentDto(PolicyFragmentName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutPolicyFragment(PolicyFragmentName name, CancellationToken cancellationToken);
-
-file delegate ValueTask DeletePolicyFragment(PolicyFragmentName name, CancellationToken cancellationToken);
-
-file delegate ValueTask PutPolicyFragmentInApim(PolicyFragmentName name, PolicyFragmentDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeletePolicyFragmentFromApim(PolicyFragmentName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask OnDeletingPolicyFragment(PolicyFragmentName name, CancellationToken cancellationToken);
-
-file sealed class ProcessPolicyFragmentsToPutHandler(GetPublisherFiles getPublisherFiles,
-                                                     TryParsePolicyFragmentName tryParsePolicyFragmentName,
-                                                     IsPolicyFragmentNameInSourceControl isNameInSourceControl,
-                                                     PutPolicyFragment putPolicyFragment)
+internal static class PolicyFragmentModule
 {
-    public async ValueTask Handle(CancellationToken cancellationToken) =>
-        await getPublisherFiles()
-                .Choose(tryParsePolicyFragmentName.Invoke)
-                .Where(isNameInSourceControl.Invoke)
-                .IterParallel(putPolicyFragment.Invoke, cancellationToken);
-}
-
-file sealed class ProcessDeletedPolicyFragmentsHandler(GetPublisherFiles getPublisherFiles,
-                                                       TryParsePolicyFragmentName tryParsePolicyFragmentName,
-                                                       IsPolicyFragmentNameInSourceControl isNameInSourceControl,
-                                                       DeletePolicyFragment deletePolicyFragment)
-{
-    public async ValueTask Handle(CancellationToken cancellationToken) =>
-        await getPublisherFiles()
-                .Choose(tryParsePolicyFragmentName.Invoke)
-                .Where(name => isNameInSourceControl.Invoke(name) is false)
-                .IterParallel(deletePolicyFragment.Invoke, cancellationToken);
-}
-
-file sealed class FindPolicyFragmentActionHandler(TryParsePolicyFragmentName tryParseName, ProcessPolicyFragment processPolicyFragment)
-{
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from name in tryParseName(file)
-        select GetAction(name);
-
-    private PublisherAction GetAction(PolicyFragmentName name) =>
-        async cancellationToken => await processPolicyFragment(name, cancellationToken);
-}
-
-file sealed class TryParsePolicyFragmentNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<PolicyFragmentName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file)
-        | TryParseNameFromPolicyFile(file);
-
-    private Option<PolicyFragmentName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in PolicyFragmentInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-
-    private Option<PolicyFragmentName> TryParseNameFromPolicyFile(FileInfo file) =>
-        from policyFile in PolicyFragmentPolicyFile.TryParse(file, serviceDirectory)
-        select policyFile.Parent.Name;
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class PolicyFragmentSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<PolicyFragmentName> locker = new(LockOptions.Default);
-    private ImmutableHashSet<PolicyFragmentName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(PolicyFragmentName name, Func<PolicyFragmentName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutPolicyFragments(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParsePolicyFragmentName(builder);
+        ConfigureIsPolicyFragmentNameInSourceControl(builder);
+        ConfigurePutPolicyFragment(builder);
 
-        // Only process each name once
-        if (processedNames.Contains(name))
-        {
-            return;
-        }
-
-        await action(name, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+        builder.Services.TryAddSingleton(GetPutPolicyFragments);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessPolicyFragmentHandler(IsPolicyFragmentNameInSourceControl isNameInSourceControl, PutPolicyFragment put, DeletePolicyFragment delete) : IDisposable
-{
-    private readonly PolicyFragmentSemaphore semaphore = new();
-
-    public async ValueTask Handle(PolicyFragmentName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(PolicyFragmentName name, CancellationToken cancellationToken)
+    private static PutPolicyFragments GetPutPolicyFragments(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParsePolicyFragmentName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsPolicyFragmentNameInSourceControl>();
+        var put = provider.GetRequiredService<PutPolicyFragment>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, cancellationToken);
+            using var _ = activitySource.StartActivity(nameof(PutPolicyFragments));
+
+            logger.LogInformation("Putting policy fragments...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParsePolicyFragmentName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParsePolicyFragmentName);
+    }
+
+    private static TryParsePolicyFragmentName GetTryParsePolicyFragmentName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => tryParseFromInformationFile(file) | tryParseFromPolicyFile(file);
+
+        Option<PolicyFragmentName> tryParseFromInformationFile(FileInfo file) =>
+            from informationFile in PolicyFragmentInformationFile.TryParse(file, serviceDirectory)
+            select informationFile.Parent.Name;
+
+        Option<PolicyFragmentName> tryParseFromPolicyFile(FileInfo file) =>
+            from policyFile in PolicyFragmentPolicyFile.TryParse(file, serviceDirectory)
+            select policyFile.Parent.Name;
+    }
+
+    private static void ConfigureIsPolicyFragmentNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsPolicyFragmentNameInSourceControl);
+    }
+
+    private static IsPolicyFragmentNameInSourceControl GetIsPolicyFragmentNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return name =>
+            doesInformationFileExist(name)
+            || doesPolicyFileExist(name);
+
+        bool doesInformationFileExist(PolicyFragmentName name)
+        {
+            var artifactFiles = getArtifactFiles();
+            var informationFile = PolicyFragmentInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
-        else
+
+        bool doesPolicyFileExist(PolicyFragmentName name)
         {
-            await delete(name, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var policyFile = PolicyFragmentPolicyFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(policyFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsPolicyFragmentNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(PolicyFragmentName name) =>
-        DoesInformationFileExist(name)
-        || DoesPolicyFileExist(name);
-
-    private bool DoesInformationFileExist(PolicyFragmentName name)
+    private static void ConfigurePutPolicyFragment(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = PolicyFragmentInformationFile.From(name, serviceDirectory);
+        ConfigureFindPolicyFragmentDto(builder);
+        ConfigurePutPolicyFragmentInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
+        builder.Services.TryAddSingleton(GetPutPolicyFragment);
     }
 
-    private bool DoesPolicyFileExist(PolicyFragmentName name)
+    private static PutPolicyFragment GetPutPolicyFragment(IServiceProvider provider)
     {
-        var artifactFiles = getArtifactFiles();
-        var policyFile = PolicyFragmentPolicyFile.From(name, serviceDirectory);
+        var findDto = provider.GetRequiredService<FindPolicyFragmentDto>();
+        var putInApim = provider.GetRequiredService<PutPolicyFragmentInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return artifactFiles.Contains(policyFile.ToFileInfo());
-    }
-}
-
-file sealed class PutPolicyFragmentHandler(FindPolicyFragmentDto findDto, PutPolicyFragmentInApim putInApim) : IDisposable
-{
-    private readonly PolicyFragmentSemaphore semaphore = new();
-
-    public async ValueTask Handle(PolicyFragmentName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(PolicyFragmentName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
-    }
-
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindPolicyFragmentDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
-{
-    public async ValueTask<Option<PolicyFragmentDto>> Handle(PolicyFragmentName name, CancellationToken cancellationToken)
-    {
-        var informationFileDtoOption = await TryGetInformationFileDto(name, cancellationToken);
-        var policyContentsOption = await TryGetPolicyContents(name, cancellationToken);
-
-        return TryGetDto(name, informationFileDtoOption, policyContentsOption);
-    }
-
-    private async ValueTask<Option<PolicyFragmentDto>> TryGetInformationFileDto(PolicyFragmentName name, CancellationToken cancellationToken)
-    {
-        var informationFile = PolicyFragmentInformationFile.From(name, serviceDirectory);
-        var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
-
-        return from contents in contentsOption
-               select contents.ToObjectFromJson<PolicyFragmentDto>();
-    }
-
-    private async ValueTask<Option<BinaryData>> TryGetPolicyContents(PolicyFragmentName name, CancellationToken cancellationToken)
-    {
-        var policyFile = PolicyFragmentPolicyFile.From(name, serviceDirectory);
-
-        return await tryGetFileContents(policyFile.ToFileInfo(), cancellationToken);
-    }
-
-    private Option<PolicyFragmentDto> TryGetDto(PolicyFragmentName name, Option<PolicyFragmentDto> informationFileDtoOption, Option<BinaryData> policyContentsOption)
-    {
-        if (informationFileDtoOption.IsNone && policyContentsOption.IsNone)
+        return async (name, cancellationToken) =>
         {
-            return Option<PolicyFragmentDto>.None;
-        }
+            using var _ = activitySource.StartActivity(nameof(PutPolicyFragment))
+                                       ?.AddTag("policy_fragment.name", name);
 
-        var dto = informationFileDtoOption.IfNone(() => new PolicyFragmentDto { Properties = new PolicyFragmentDto.PolicyFragmentContract() });
-        policyContentsOption.Iter(contents => dto = dto with
-        {
-            Properties = dto.Properties with
-            {
-                Format = "rawxml",
-                Value = contents.ToString()
-            }
-        });
+            var dtoOption = await findDto(name, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        };
+    }
+
+    private static void ConfigureFindPolicyFragmentDto(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
+
+        builder.Services.TryAddSingleton(GetFindPolicyFragmentDto);
+    }
+
+    private static FindPolicyFragmentDto GetFindPolicyFragmentDto(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
 
         var overrideDto = overrideFactory.Create<PolicyFragmentName, PolicyFragmentDto>();
 
-        return overrideDto(name, dto);
+        return async (name, cancellationToken) =>
+        {
+            var informationFileDtoOption = await tryGetInformationFileDto(name, cancellationToken);
+            var policyContentsOption = await tryGetPolicyContents(name, cancellationToken);
+
+            return tryGetDto(name, informationFileDtoOption, policyContentsOption);
+        };
+
+        async ValueTask<Option<PolicyFragmentDto>> tryGetInformationFileDto(PolicyFragmentName name, CancellationToken cancellationToken)
+        {
+            var informationFile = PolicyFragmentInformationFile.From(name, serviceDirectory);
+            var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
+
+            return from contents in contentsOption
+                   select contents.ToObjectFromJson<PolicyFragmentDto>();
+        }
+
+        async ValueTask<Option<BinaryData>> tryGetPolicyContents(PolicyFragmentName name, CancellationToken cancellationToken)
+        {
+            var policyFile = PolicyFragmentPolicyFile.From(name, serviceDirectory);
+
+            return await tryGetFileContents(policyFile.ToFileInfo(), cancellationToken);
+        }
+
+        Option<PolicyFragmentDto> tryGetDto(PolicyFragmentName name, Option<PolicyFragmentDto> informationFileDtoOption, Option<BinaryData> policyContentsOption)
+        {
+            if (informationFileDtoOption.IsNone && policyContentsOption.IsNone)
+            {
+                return Option<PolicyFragmentDto>.None;
+            }
+
+            var dto = informationFileDtoOption.IfNone(() => new PolicyFragmentDto { Properties = new PolicyFragmentDto.PolicyFragmentContract() });
+            policyContentsOption.Iter(contents => dto = dto with
+            {
+                Properties = dto.Properties with
+                {
+                    Format = "rawxml",
+                    Value = contents.ToString()
+                }
+            });
+
+            return overrideDto(name, dto);
+        }
     }
-}
 
-file sealed class PutPolicyFragmentInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(PolicyFragmentName name, PolicyFragmentDto dto, CancellationToken cancellationToken)
+    private static void ConfigurePutPolicyFragmentInApim(IHostApplicationBuilder builder)
     {
-        logger.LogInformation("Putting policy fragment {PolicyFragmentName}...", name);
-        await PolicyFragmentUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutPolicyFragmentInApim);
     }
-}
 
-file sealed class DeletePolicyFragmentHandler(IEnumerable<OnDeletingPolicyFragment> onDeletingHandlers, DeletePolicyFragmentFromApim deleteFromApim) : IDisposable
-{
-    private readonly PolicyFragmentSemaphore semaphore = new();
-
-    public async ValueTask Handle(PolicyFragmentName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(PolicyFragmentName name, CancellationToken cancellationToken)
+    private static PutPolicyFragmentInApim GetPutPolicyFragmentInApim(IServiceProvider provider)
     {
-        await onDeletingHandlers.IterParallel(async handler => await handler(name, cancellationToken), cancellationToken);
-        await deleteFromApim(name, cancellationToken);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            logger.LogInformation("Putting policy fragment {PolicyFragmentName}...", name);
+
+            await PolicyFragmentUri.From(name, serviceUri)
+                                   .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeletePolicyFragmentFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(PolicyFragmentName name, CancellationToken cancellationToken)
+    public static void ConfigureDeletePolicyFragments(IHostApplicationBuilder builder)
     {
-        logger.LogInformation("Deleting policy fragment {PolicyFragmentName}...", name);
-        await PolicyFragmentUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParsePolicyFragmentName(builder);
+        ConfigureIsPolicyFragmentNameInSourceControl(builder);
+        ConfigureDeletePolicyFragment(builder);
 
-internal static class PolicyFragmentServices
-{
-    public static void ConfigureProcessPolicyFragmentsToPut(IServiceCollection services)
+        builder.Services.TryAddSingleton(GetDeletePolicyFragments);
+    }
+
+    private static DeletePolicyFragments GetDeletePolicyFragments(IServiceProvider provider)
     {
-        ConfigureTryParsePolicyFragmentName(services);
-        ConfigureIsPolicyFragmentNameInSourceControl(services);
-        ConfigurePutPolicyFragment(services);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParsePolicyFragmentName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsPolicyFragmentNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeletePolicyFragment>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ProcessPolicyFragmentsToPutHandler>();
-        services.TryAddSingleton<ProcessPolicyFragmentsToPut>(provider => provider.GetRequiredService<ProcessPolicyFragmentsToPutHandler>().Handle);
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeletePolicyFragments));
+
+            logger.LogInformation("Deleting policy fragments...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    public static void ConfigureProcessDeletedPolicyFragments(IServiceCollection services)
+    private static void ConfigureDeletePolicyFragment(IHostApplicationBuilder builder)
     {
-        ConfigureTryParsePolicyFragmentName(services);
-        ConfigureIsPolicyFragmentNameInSourceControl(services);
-        ConfigureDeletePolicyFragment(services);
+        ConfigureDeletePolicyFragmentFromApim(builder);
 
-        services.TryAddSingleton<ProcessDeletedPolicyFragmentsHandler>();
-        services.TryAddSingleton<ProcessDeletedPolicyFragments>(provider => provider.GetRequiredService<ProcessDeletedPolicyFragmentsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeletePolicyFragment);
     }
 
-    public static void ConfigureFindPolicyFragmentAction(IServiceCollection services)
+    private static DeletePolicyFragment GetDeletePolicyFragment(IServiceProvider provider)
     {
-        ConfigureTryParsePolicyFragmentName(services);
-        ConfigureProcessPolicyFragment(services);
+        var deleteFromApim = provider.GetRequiredService<DeletePolicyFragmentFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        services.TryAddSingleton<FindPolicyFragmentActionHandler>();
-        services.TryAddSingleton<FindPolicyFragmentAction>(provider => provider.GetRequiredService<FindPolicyFragmentActionHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeletePolicyFragment))
+                                       ?.AddTag("policy_fragment.name", name);
+
+            await deleteFromApim(name, cancellationToken);
+        };
     }
 
-    private static void ConfigureTryParsePolicyFragmentName(IServiceCollection services)
+    private static void ConfigureDeletePolicyFragmentFromApim(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<TryParsePolicyFragmentNameHandler>();
-        services.TryAddSingleton<TryParsePolicyFragmentName>(provider => provider.GetRequiredService<TryParsePolicyFragmentNameHandler>().Handle);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetDeletePolicyFragmentFromApim);
     }
 
-    private static void ConfigureProcessPolicyFragment(IServiceCollection services)
+    private static DeletePolicyFragmentFromApim GetDeletePolicyFragmentFromApim(IServiceProvider provider)
     {
-        ConfigureIsPolicyFragmentNameInSourceControl(services);
-        ConfigurePutPolicyFragment(services);
-        ConfigureDeletePolicyFragment(services);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ProcessPolicyFragmentHandler>();
-        services.TryAddSingleton<ProcessPolicyFragment>(provider => provider.GetRequiredService<ProcessPolicyFragmentHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting policy fragment {PolicyFragmentName}...", name);
+
+            await PolicyFragmentUri.From(name, serviceUri)
+                                   .Delete(pipeline, cancellationToken);
+        };
     }
-
-    private static void ConfigureIsPolicyFragmentNameInSourceControl(IServiceCollection services)
-    {
-        services.TryAddSingleton<IsPolicyFragmentNameInSourceControlHandler>();
-        services.TryAddSingleton<IsPolicyFragmentNameInSourceControl>(provider => provider.GetRequiredService<IsPolicyFragmentNameInSourceControlHandler>().Handle);
-    }
-
-    public static void ConfigurePutPolicyFragment(IServiceCollection services)
-    {
-        ConfigureFindPolicyFragmentDto(services);
-        ConfigurePutPolicyFragmentInApim(services);
-
-        services.TryAddSingleton<PutPolicyFragmentHandler>();
-        services.TryAddSingleton<PutPolicyFragment>(provider => provider.GetRequiredService<PutPolicyFragmentHandler>().Handle);
-    }
-
-    private static void ConfigureFindPolicyFragmentDto(IServiceCollection services)
-    {
-        services.TryAddSingleton<FindPolicyFragmentDtoHandler>();
-        services.TryAddSingleton<FindPolicyFragmentDto>(provider => provider.GetRequiredService<FindPolicyFragmentDtoHandler>().Handle);
-    }
-
-    private static void ConfigurePutPolicyFragmentInApim(IServiceCollection services)
-    {
-        services.TryAddSingleton<PutPolicyFragmentInApimHandler>();
-        services.TryAddSingleton<PutPolicyFragmentInApim>(provider => provider.GetRequiredService<PutPolicyFragmentInApimHandler>().Handle);
-    }
-
-    private static void ConfigureDeletePolicyFragment(IServiceCollection services)
-    {
-        ConfigureOnDeletingPolicyFragment(services);
-        ConfigureDeletePolicyFragmentFromApim(services);
-
-        services.TryAddSingleton<DeletePolicyFragmentHandler>();
-        services.TryAddSingleton<DeletePolicyFragment>(provider => provider.GetRequiredService<DeletePolicyFragmentHandler>().Handle);
-    }
-
-    private static void ConfigureOnDeletingPolicyFragment(IServiceCollection services)
-    {
-    }
-
-    private static void ConfigureDeletePolicyFragmentFromApim(IServiceCollection services)
-    {
-        services.TryAddSingleton<DeletePolicyFragmentFromApimHandler>();
-        services.TryAddSingleton<DeletePolicyFragmentFromApim>(provider => provider.GetRequiredService<DeletePolicyFragmentFromApimHandler>().Handle);
-    }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("PolicyFragmentPublisher");
 }

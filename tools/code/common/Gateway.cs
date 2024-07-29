@@ -191,17 +191,6 @@ public static class GatewayModule
         return content.ToObjectFromJson<GatewayDto>();
     }
 
-    public static async ValueTask<Option<GatewayDto>> TryGetDto(this GatewayUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<GatewayDto>())
-                     .Match(Option<GatewayDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<GatewayDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this GatewayUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

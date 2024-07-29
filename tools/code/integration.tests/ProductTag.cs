@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal static class ProductTag
+internal static class ProductTagModule
 {
     public static async ValueTask Put(IEnumerable<ProductTagModel> models, ProductName productName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await models.IterParallel(async model =>
@@ -42,16 +42,16 @@ internal static class ProductTag
 
     public static async ValueTask ValidateExtractedArtifacts(ManagementServiceDirectory serviceDirectory, ProductName productName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var apimResources = await GetApimResources(productName, serviceUri, pipeline, cancellationToken);
+        var productmResources = await GetProductmResources(productName, serviceUri, pipeline, cancellationToken);
         var fileResources = await GetFileResources(productName, serviceDirectory, cancellationToken);
 
-        var expected = apimResources.MapValue(NormalizeDto);
+        var expected = productmResources.MapValue(NormalizeDto);
         var actual = fileResources.MapValue(NormalizeDto);
 
         actual.Should().BeEquivalentTo(expected);
     }
 
-    private static async ValueTask<FrozenDictionary<TagName, ProductTagDto>> GetApimResources(ProductName productName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    private static async ValueTask<FrozenDictionary<TagName, ProductTagDto>> GetProductmResources(ProductName productName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var uri = ProductTagsUri.From(productName, serviceUri);
 
@@ -60,11 +60,11 @@ internal static class ProductTag
     }
 
     private static async ValueTask<FrozenDictionary<TagName, ProductTagDto>> GetFileResources(ProductName productName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await ProductTagModule.ListInformationFiles(productName, serviceDirectory)
-                                .ToAsyncEnumerable()
-                                .SelectAwait(async file => (file.Parent.Name,
-                                                            await file.ReadDto(cancellationToken)))
-                                .ToFrozenDictionary(cancellationToken);
+        await common.ProductTagModule.ListInformationFiles(productName, serviceDirectory)
+                                 .ToAsyncEnumerable()
+                                 .SelectAwait(async file => (file.Parent.Name,
+                                                             await file.ReadDto(cancellationToken)))
+                                 .ToFrozenDictionary(cancellationToken);
 
     private static string NormalizeDto(ProductTagDto dto) =>
         nameof(ProductTagDto);
@@ -77,10 +77,10 @@ internal static class ProductTag
 
     private static async ValueTask ValidatePublisherChanges(ProductName productName, IDictionary<TagName, ProductTagDto> fileResources, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var apimResources = await GetApimResources(productName, serviceUri, pipeline, cancellationToken);
+        var productmResources = await GetProductmResources(productName, serviceUri, pipeline, cancellationToken);
 
         var expected = fileResources.MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
+        var actual = productmResources.MapValue(NormalizeDto);
         actual.Should().BeEquivalentTo(expected);
     }
 

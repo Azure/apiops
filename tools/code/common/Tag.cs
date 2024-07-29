@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -59,8 +58,7 @@ public sealed record TagsDirectory : ResourceDirectory
         new() { ServiceDirectory = serviceDirectory };
 
     public static Option<TagsDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        directory is not null &&
-        directory.Name == Name &&
+        directory?.Name == Name &&
         directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
             ? new TagsDirectory { ServiceDirectory = serviceDirectory }
             : Option<TagsDirectory>.None;
@@ -102,15 +100,11 @@ public sealed record TagInformationFile : ResourceFile
     public static TagInformationFile From(TagName name, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = new TagDirectory
-            {
-                Parent = TagsDirectory.From(serviceDirectory),
-                Name = name
-            }
+            Parent = TagDirectory.From(name, serviceDirectory)
         };
 
     public static Option<TagInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
-        file is not null && file.Name == Name
+        file?.Name == Name
             ? from parent in TagDirectory.TryParse(file.Directory, serviceDirectory)
               select new TagInformationFile { Parent = parent }
             : Option<TagInformationFile>.None;
@@ -145,28 +139,17 @@ public static class TagModule
 
     public static IAsyncEnumerable<(TagName Name, TagDto Dto)> List(this TagsUri tagsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         tagsUri.ListNames(pipeline, cancellationToken)
-                      .SelectAwait(async name =>
-                      {
-                          var uri = new TagUri { Parent = tagsUri, Name = name };
-                          var dto = await uri.GetDto(pipeline, cancellationToken);
-                          return (name, dto);
-                      });
+               .SelectAwait(async name =>
+               {
+                   var uri = new TagUri { Parent = tagsUri, Name = name };
+                   var dto = await uri.GetDto(pipeline, cancellationToken);
+                   return (name, dto);
+               });
 
     public static async ValueTask<TagDto> GetDto(this TagUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
         return content.ToObjectFromJson<TagDto>();
-    }
-
-    public static async ValueTask<Option<TagDto>> TryGetDto(this TagUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<TagDto>())
-                     .Match(Option<TagDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<TagDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
     }
 
     public static async ValueTask Delete(this TagUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
@@ -183,9 +166,9 @@ public static class TagModule
         var tagsDirectory = TagsDirectory.From(serviceDirectory);
 
         return tagsDirectory.ToDirectoryInfo()
-                                   .ListDirectories("*")
-                                   .Select(directoryInfo => TagName.From(directoryInfo.Name))
-                                   .Select(name => new TagDirectory { Parent = tagsDirectory, Name = name });
+                            .ListDirectories("*")
+                            .Select(directoryInfo => TagName.From(directoryInfo.Name))
+                            .Select(name => new TagDirectory { Parent = tagsDirectory, Name = name });
     }
 
     public static IEnumerable<TagInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>

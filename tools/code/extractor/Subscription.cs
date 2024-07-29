@@ -3,122 +3,140 @@ using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractSubscriptions(CancellationToken cancellationToken);
+public delegate ValueTask ExtractSubscriptions(CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(SubscriptionName Name, SubscriptionDto Dto)> ListSubscriptions(CancellationToken cancellationToken);
+public delegate bool ShouldExtractSubscription(SubscriptionName name, SubscriptionDto dto);
+public delegate ValueTask WriteSubscriptionArtifacts(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken);
+public delegate ValueTask WriteSubscriptionInformationFile(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken);
 
-file delegate IAsyncEnumerable<(SubscriptionName Name, SubscriptionDto Dto)> ListSubscriptions(CancellationToken cancellationToken);
-
-file delegate bool ShouldExtractSubscription(SubscriptionName name, SubscriptionDto dto);
-
-file delegate ValueTask WriteSubscriptionArtifacts(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteSubscriptionInformationFile(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken);
-
-file sealed class ExtractSubscriptionsHandler(ListSubscriptions list, ShouldExtractSubscription shouldExtractSubscription, WriteSubscriptionArtifacts writeArtifacts)
+internal static class SubscriptionModule
 {
-    public async ValueTask Handle(CancellationToken cancellationToken) =>
-        await list(cancellationToken)
-                .Where(subscription => shouldExtractSubscription(subscription.Name, subscription.Dto))
-                .IterParallel(async subscription => await writeArtifacts(subscription.Name, subscription.Dto, cancellationToken),
-                              cancellationToken);
-}
-
-file sealed class ListSubscriptionsHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    public IAsyncEnumerable<(SubscriptionName, SubscriptionDto)> Handle(CancellationToken cancellationToken) =>
-        SubscriptionsUri.From(serviceUri).List(pipeline, cancellationToken);
-}
-
-file sealed class ShouldExtractSubscriptionHandler(ShouldExtractFactory shouldExtractFactory, ShouldExtractApiName shouldExtractApi, ShouldExtractProduct shouldExtractProduct)
-{
-    public bool Handle(SubscriptionName name, SubscriptionDto dto) =>
-        // Don't extract the master subscription
-        name != SubscriptionName.From("master")
-        // Check name from configuration override
-        && shouldExtractFactory.Create<SubscriptionName>().Invoke(name)
-        // Don't extract subscription if its API should not be extracted
-        && SubscriptionModule.TryGetApiName(dto)
-                             .Map(shouldExtractApi.Invoke)
-                             .IfNone(true)
-        // Don't extract subscription if its product should not be extracted
-        && SubscriptionModule.TryGetProductName(dto)
-                             .Map(shouldExtractProduct.Invoke)
-                             .IfNone(true);
-
-}
-
-file sealed class WriteSubscriptionArtifactsHandler(WriteSubscriptionInformationFile writeInformationFile)
-{
-    public async ValueTask Handle(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken)
+    public static void ConfigureExtractSubscriptions(IHostApplicationBuilder builder)
     {
-        await writeInformationFile(name, dto, cancellationToken);
-    }
-}
+        ConfigureListSubscriptions(builder);
+        ConfigureShouldExtractSubscription(builder);
+        ConfigureWriteSubscriptionArtifacts(builder);
 
-file sealed class WriteSubscriptionInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken)
-    {
-        var informationFile = SubscriptionInformationFile.From(name, serviceDirectory);
-
-        logger.LogInformation("Writing subscription information file {InformationFile}", informationFile);
-        await informationFile.WriteDto(dto, cancellationToken);
-    }
-}
-
-internal static class SubscriptionServices
-{
-    public static void ConfigureExtractSubscriptions(IServiceCollection services)
-    {
-        ConfigureListSubscriptions(services);
-        ConfigureShouldExtractSubscription(services);
-        ConfigureWriteSubscriptionArtifacts(services);
-
-        services.TryAddSingleton<ExtractSubscriptionsHandler>();
-        services.TryAddSingleton<ExtractSubscriptions>(provider => provider.GetRequiredService<ExtractSubscriptionsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetExtractSubscriptions);
     }
 
-    private static void ConfigureListSubscriptions(IServiceCollection services)
+    private static ExtractSubscriptions GetExtractSubscriptions(IServiceProvider provider)
     {
-        services.TryAddSingleton<ListSubscriptionsHandler>();
-        services.TryAddSingleton<ListSubscriptions>(provider => provider.GetRequiredService<ListSubscriptionsHandler>().Handle);
+        var list = provider.GetRequiredService<ListSubscriptions>();
+        var shouldExtract = provider.GetRequiredService<ShouldExtractSubscription>();
+        var writeArtifacts = provider.GetRequiredService<WriteSubscriptionArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractSubscriptions));
+
+            logger.LogInformation("Extracting subscriptions...");
+
+            await list(cancellationToken)
+                    .Where(subscription => shouldExtract(subscription.Name, subscription.Dto))
+                    .IterParallel(async subscription => await writeArtifacts(subscription.Name, subscription.Dto, cancellationToken),
+                                  cancellationToken);
+        };
     }
 
-    private static void ConfigureShouldExtractSubscription(IServiceCollection services)
+    private static void ConfigureListSubscriptions(IHostApplicationBuilder builder)
     {
-        ApiServices.ConfigureShouldExtractApiName(services);
-        ProductServices.ConfigureShouldExtractProduct(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<ShouldExtractSubscriptionHandler>();
-        services.TryAddSingleton<ShouldExtractSubscription>(provider => provider.GetRequiredService<ShouldExtractSubscriptionHandler>().Handle);
+        builder.Services.TryAddSingleton(GetListSubscriptions);
     }
 
-    private static void ConfigureWriteSubscriptionArtifacts(IServiceCollection services)
+    private static ListSubscriptions GetListSubscriptions(IServiceProvider provider)
     {
-        ConfigureWriteSubscriptionInformationFile(services);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-        services.TryAddSingleton<WriteSubscriptionArtifactsHandler>();
-        services.TryAddSingleton<WriteSubscriptionArtifacts>(provider => provider.GetRequiredService<WriteSubscriptionArtifactsHandler>().Handle);
+        return cancellationToken =>
+            SubscriptionsUri.From(serviceUri)
+                            .List(pipeline, cancellationToken);
     }
 
-    private static void ConfigureWriteSubscriptionInformationFile(IServiceCollection services)
+    private static void ConfigureShouldExtractSubscription(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<WriteSubscriptionInformationFileHandler>();
-        services.TryAddSingleton<WriteSubscriptionInformationFile>(provider => provider.GetRequiredService<WriteSubscriptionInformationFileHandler>().Handle);
-    }
-}
+        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        ApiModule.ConfigureShouldExtractApiName(builder);
+        ProductModule.ConfigureShouldExtractProduct(builder);
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("SubscriptionExtractor");
+        builder.Services.TryAddSingleton(GetShouldExtractSubscription);
+    }
+
+    private static ShouldExtractSubscription GetShouldExtractSubscription(IServiceProvider provider)
+    {
+        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
+        var shouldExtractApi = provider.GetRequiredService<ShouldExtractApiName>();
+        var shouldExtractProduct = provider.GetRequiredService<ShouldExtractProduct>();
+
+        var shouldExtractSubscriptionName = shouldExtractFactory.Create<SubscriptionName>();
+
+        return (name, dto) =>
+            // Don't extract the master subscription
+            name != SubscriptionName.From("master")
+            // Check name from configuration override
+            && shouldExtractSubscriptionName(name)
+            // Don't extract subscription if its API should not be extracted
+            && common.SubscriptionModule.TryGetApiName(dto)
+                                        .Map(shouldExtractApi.Invoke)
+                                        .IfNone(true)
+            // Don't extract subscription if its product should not be extracted
+            && common.SubscriptionModule.TryGetProductName(dto)
+                                        .Map(shouldExtractProduct.Invoke)
+                                        .IfNone(true);
+    }
+
+    private static void ConfigureWriteSubscriptionArtifacts(IHostApplicationBuilder builder)
+    {
+        ConfigureWriteSubscriptionInformationFile(builder);
+
+        builder.Services.TryAddSingleton(GetWriteSubscriptionArtifacts);
+    }
+
+    private static WriteSubscriptionArtifacts GetWriteSubscriptionArtifacts(IServiceProvider provider)
+    {
+        var writeInformationFile = provider.GetRequiredService<WriteSubscriptionInformationFile>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            await writeInformationFile(name, dto, cancellationToken);
+        };
+    }
+
+    private static void ConfigureWriteSubscriptionInformationFile(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetWriteSubscriptionInformationFile);
+    }
+
+    private static WriteSubscriptionInformationFile GetWriteSubscriptionInformationFile(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            var informationFile = SubscriptionInformationFile.From(name, serviceDirectory);
+
+            logger.LogInformation("Writing subscription information file {SubscriptionInformationFile}...", informationFile);
+            await informationFile.WriteDto(dto, cancellationToken);
+        };
+    }
 }

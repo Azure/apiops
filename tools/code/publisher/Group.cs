@@ -1,271 +1,254 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindGroupAction(FileInfo file);
+public delegate ValueTask PutGroups(CancellationToken cancellationToken);
+public delegate Option<GroupName> TryParseGroupName(FileInfo file);
+public delegate bool IsGroupNameInSourceControl(GroupName name);
+public delegate ValueTask PutGroup(GroupName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<GroupDto>> FindGroupDto(GroupName name, CancellationToken cancellationToken);
+public delegate ValueTask PutGroupInApim(GroupName name, GroupDto dto, CancellationToken cancellationToken);
+public delegate ValueTask DeleteGroups(CancellationToken cancellationToken);
+public delegate ValueTask DeleteGroup(GroupName name, CancellationToken cancellationToken);
+public delegate ValueTask DeleteGroupFromApim(GroupName name, CancellationToken cancellationToken);
 
-file delegate Option<GroupName> TryParseGroupName(FileInfo file);
-
-file delegate ValueTask ProcessGroup(GroupName name, CancellationToken cancellationToken);
-
-file delegate bool IsGroupNameInSourceControl(GroupName name);
-
-file delegate ValueTask<Option<GroupDto>> FindGroupDto(GroupName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutGroup(GroupName name, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteGroup(GroupName name, CancellationToken cancellationToken);
-
-file delegate ValueTask PutGroupInApim(GroupName name, GroupDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteGroupFromApim(GroupName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask OnDeletingGroup(GroupName name, CancellationToken cancellationToken);
-
-file sealed class FindGroupActionHandler(TryParseGroupName tryParseName, ProcessGroup processGroup)
+internal static class GroupModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from name in tryParseName(file)
-        select GetAction(name);
-
-    private PublisherAction GetAction(GroupName name) =>
-        async cancellationToken => await processGroup(name, cancellationToken);
-}
-
-file sealed class TryParseGroupNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<GroupName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file);
-
-    private Option<GroupName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in GroupInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class GroupSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<GroupName> locker = new(LockOptions.Default);
-    private ImmutableHashSet<GroupName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(GroupName name, Func<GroupName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutGroups(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseGroupName(builder);
+        ConfigureIsGroupNameInSourceControl(builder);
+        ConfigurePutGroup(builder);
 
-        // Only process each name once
-        if (processedNames.Contains(name))
-        {
-            return;
-        }
-
-        await action(name, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+        builder.Services.TryAddSingleton(GetPutGroups);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessGroupHandler(IsGroupNameInSourceControl isNameInSourceControl, PutGroup put, DeleteGroup delete) : IDisposable
-{
-    private readonly GroupSemaphore semaphore = new();
-
-    public async ValueTask Handle(GroupName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(GroupName name, CancellationToken cancellationToken)
+    private static PutGroups GetPutGroups(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseGroupName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsGroupNameInSourceControl>();
+        var put = provider.GetRequiredService<PutGroup>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutGroups));
+
+            logger.LogInformation("Putting groups...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParseGroupName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseGroupName);
+    }
+
+    private static TryParseGroupName GetTryParseGroupName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in GroupInformationFile.TryParse(file, serviceDirectory)
+                       select informationFile.Parent.Name;
+    }
+
+    private static void ConfigureIsGroupNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsGroupNameInSourceControl);
+    }
+
+    private static IsGroupNameInSourceControl GetIsGroupNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(GroupName name)
         {
-            await delete(name, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var informationFile = GroupInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsGroupNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(GroupName name) =>
-        DoesInformationFileExist(name);
-
-    private bool DoesInformationFileExist(GroupName name)
+    private static void ConfigurePutGroup(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = GroupInformationFile.From(name, serviceDirectory);
+        ConfigureFindGroupDto(builder);
+        ConfigurePutGroupInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutGroupHandler(FindGroupDto findDto, PutGroupInApim putInApim) : IDisposable
-{
-    private readonly GroupSemaphore semaphore = new();
-
-    public async ValueTask Handle(GroupName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(GroupName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutGroup);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindGroupDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
-{
-    public async ValueTask<Option<GroupDto>> Handle(GroupName name, CancellationToken cancellationToken)
+    private static PutGroup GetPutGroup(IServiceProvider provider)
     {
-        var informationFile = GroupInformationFile.From(name, serviceDirectory);
-        var informationFileInfo = informationFile.ToFileInfo();
+        var findDto = provider.GetRequiredService<FindGroupDto>();
+        var putInApim = provider.GetRequiredService<PutGroupInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutGroup))
+                                       ?.AddTag("group.name", name);
 
-        return from contents in contentsOption
-               let dto = contents.ToObjectFromJson<GroupDto>()
-               let overrideDto = overrideFactory.Create<GroupName, GroupDto>()
-               select overrideDto(name, dto);
-    }
-}
-
-file sealed class PutGroupInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(GroupName name, GroupDto dto, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting group {GroupName}...", name);
-        await GroupUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteGroupHandler(IEnumerable<OnDeletingGroup> onDeletingHandlers, DeleteGroupFromApim deleteFromApim) : IDisposable
-{
-    private readonly GroupSemaphore semaphore = new();
-
-    public async ValueTask Handle(GroupName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(GroupName name, CancellationToken cancellationToken)
-    {
-        await onDeletingHandlers.IterParallel(async handler => await handler(name, cancellationToken), cancellationToken);
-        await deleteFromApim(name, cancellationToken);
+            var dtoOption = await findDto(name, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteGroupFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(GroupName name, CancellationToken cancellationToken)
+    private static void ConfigureFindGroupDto(IHostApplicationBuilder builder)
     {
-        logger.LogInformation("Deleting group {GroupName}...", name);
-        await GroupUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
 
-internal static class GroupServices
-{
-    public static void ConfigureFindGroupAction(IServiceCollection services)
-    {
-        ConfigureTryParseGroupName(services);
-        ConfigureProcessGroup(services);
-
-        services.TryAddSingleton<FindGroupActionHandler>();
-        services.TryAddSingleton<FindGroupAction>(provider => provider.GetRequiredService<FindGroupActionHandler>().Handle);
+        builder.Services.TryAddSingleton(GetFindGroupDto);
     }
 
-    private static void ConfigureTryParseGroupName(IServiceCollection services)
+    private static FindGroupDto GetFindGroupDto(IServiceProvider provider)
     {
-        services.TryAddSingleton<TryParseGroupNameHandler>();
-        services.TryAddSingleton<TryParseGroupName>(provider => provider.GetRequiredService<TryParseGroupNameHandler>().Handle);
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+
+        var overrideDto = overrideFactory.Create<GroupName, GroupDto>();
+
+        return async (name, cancellationToken) =>
+        {
+            var informationFile = GroupInformationFile.From(name, serviceDirectory);
+            var informationFileInfo = informationFile.ToFileInfo();
+
+            var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+
+            return from contents in contentsOption
+                   let dto = contents.ToObjectFromJson<GroupDto>()
+                   select overrideDto(name, dto);
+        };
     }
 
-    private static void ConfigureProcessGroup(IServiceCollection services)
+    private static void ConfigurePutGroupInApim(IHostApplicationBuilder builder)
     {
-        ConfigureIsGroupNameInSourceControl(services);
-        ConfigurePutGroup(services);
-        ConfigureDeleteGroup(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<ProcessGroupHandler>();
-        services.TryAddSingleton<ProcessGroup>(provider => provider.GetRequiredService<ProcessGroupHandler>().Handle);
+        builder.Services.TryAddSingleton(GetPutGroupInApim);
     }
 
-    private static void ConfigureIsGroupNameInSourceControl(IServiceCollection services)
+    private static PutGroupInApim GetPutGroupInApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<IsGroupNameInSourceControlHandler>();
-        services.TryAddSingleton<IsGroupNameInSourceControl>(provider => provider.GetRequiredService<IsGroupNameInSourceControlHandler>().Handle);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, cancellationToken) =>
+        {
+            logger.LogInformation("Putting group {GroupName}...", name);
+
+            await GroupUri.From(name, serviceUri)
+                          .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    public static void ConfigurePutGroup(IServiceCollection services)
+    public static void ConfigureDeleteGroups(IHostApplicationBuilder builder)
     {
-        ConfigureFindGroupDto(services);
-        ConfigurePutGroupInApim(services);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseGroupName(builder);
+        ConfigureIsGroupNameInSourceControl(builder);
+        ConfigureDeleteGroup(builder);
 
-        services.TryAddSingleton<PutGroupHandler>();
-        services.TryAddSingleton<PutGroup>(provider => provider.GetRequiredService<PutGroupHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteGroups);
     }
 
-    private static void ConfigureFindGroupDto(IServiceCollection services)
+    private static DeleteGroups GetDeleteGroups(IServiceProvider provider)
     {
-        services.TryAddSingleton<FindGroupDtoHandler>();
-        services.TryAddSingleton<FindGroupDto>(provider => provider.GetRequiredService<FindGroupDtoHandler>().Handle);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseGroupName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsGroupNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteGroup>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteGroups));
+
+            logger.LogInformation("Deleting groups...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigurePutGroupInApim(IServiceCollection services)
+    private static void ConfigureDeleteGroup(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<PutGroupInApimHandler>();
-        services.TryAddSingleton<PutGroupInApim>(provider => provider.GetRequiredService<PutGroupInApimHandler>().Handle);
+        ConfigureDeleteGroupFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteGroup);
     }
 
-    private static void ConfigureDeleteGroup(IServiceCollection services)
+    private static DeleteGroup GetDeleteGroup(IServiceProvider provider)
     {
-        ConfigureOnDeletingGroup(services);
-        ConfigureDeleteGroupFromApim(services);
+        var deleteFromApim = provider.GetRequiredService<DeleteGroupFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        services.TryAddSingleton<DeleteGroupHandler>();
-        services.TryAddSingleton<DeleteGroup>(provider => provider.GetRequiredService<DeleteGroupHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteGroup))
+                                       ?.AddTag("group.name", name);
+
+            await deleteFromApim(name, cancellationToken);
+        };
     }
 
-    private static void ConfigureOnDeletingGroup(IServiceCollection services)
+    private static void ConfigureDeleteGroupFromApim(IHostApplicationBuilder builder)
     {
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteGroupFromApim);
     }
 
-    private static void ConfigureDeleteGroupFromApim(IServiceCollection services)
+    private static DeleteGroupFromApim GetDeleteGroupFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteGroupFromApimHandler>();
-        services.TryAddSingleton<DeleteGroupFromApim>(provider => provider.GetRequiredService<DeleteGroupFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("GroupPublisher");
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting group {GroupName}...", name);
+
+            await GroupUri.From(name, serviceUri)
+                          .Delete(pipeline, cancellationToken);
+        };
+    }
 }

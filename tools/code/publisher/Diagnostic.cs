@@ -1,14 +1,12 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
-using DotNext.Threading;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Frozen;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -16,348 +14,241 @@ using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindDiagnosticAction(FileInfo file);
+public delegate ValueTask PutDiagnostics(CancellationToken cancellationToken);
+public delegate Option<DiagnosticName> TryParseDiagnosticName(FileInfo file);
+public delegate bool IsDiagnosticNameInSourceControl(DiagnosticName name);
+public delegate ValueTask PutDiagnostic(DiagnosticName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<DiagnosticDto>> FindDiagnosticDto(DiagnosticName name, CancellationToken cancellationToken);
+public delegate ValueTask PutDiagnosticInApim(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken);
+public delegate ValueTask DeleteDiagnostics(CancellationToken cancellationToken);
+public delegate ValueTask DeleteDiagnostic(DiagnosticName name, CancellationToken cancellationToken);
+public delegate ValueTask DeleteDiagnosticFromApim(DiagnosticName name, CancellationToken cancellationToken);
 
-file delegate Option<DiagnosticName> TryParseDiagnosticName(FileInfo file);
-
-file delegate ValueTask ProcessDiagnostic(DiagnosticName name, CancellationToken cancellationToken);
-
-file delegate bool IsDiagnosticNameInSourceControl(DiagnosticName name);
-
-file delegate ValueTask<Option<DiagnosticDto>> FindDiagnosticDto(DiagnosticName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutDiagnostic(DiagnosticName name, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteDiagnostic(DiagnosticName name, CancellationToken cancellationToken);
-
-file delegate ValueTask PutDiagnosticInApim(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteDiagnosticFromApim(DiagnosticName name, CancellationToken cancellationToken);
-
-file delegate FrozenDictionary<DiagnosticName, Func<CancellationToken, ValueTask<Option<DiagnosticDto>>>> GetDiagnosticDtosInPreviousCommit();
-
-file sealed class FindDiagnosticActionHandler(TryParseDiagnosticName tryParseName, ProcessDiagnostic processDiagnostic)
+internal static class DiagnosticModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from name in tryParseName(file)
-        select GetAction(name);
-
-    private PublisherAction GetAction(DiagnosticName name) =>
-        async cancellationToken => await processDiagnostic(name, cancellationToken);
-}
-
-file sealed class TryParseDiagnosticNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<DiagnosticName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file);
-
-    private Option<DiagnosticName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in DiagnosticInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class DiagnosticSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<DiagnosticName> locker = new(LockOptions.Default);
-    private ImmutableHashSet<DiagnosticName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(DiagnosticName name, Func<DiagnosticName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutDiagnostics(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseDiagnosticName(builder);
+        ConfigureIsDiagnosticNameInSourceControl(builder);
+        ConfigurePutDiagnostic(builder);
 
-        // Only process each name once
-        if (processedNames.Contains(name))
-        {
-            return;
-        }
-
-        await action(name, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+        builder.Services.TryAddSingleton(GetPutDiagnostics);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessDiagnosticHandler(IsDiagnosticNameInSourceControl isNameInSourceControl, PutDiagnostic put, DeleteDiagnostic delete) : IDisposable
-{
-    private readonly DiagnosticSemaphore semaphore = new();
-
-    public async ValueTask Handle(DiagnosticName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(DiagnosticName name, CancellationToken cancellationToken)
+    private static PutDiagnostics GetPutDiagnostics(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseDiagnosticName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsDiagnosticNameInSourceControl>();
+        var put = provider.GetRequiredService<PutDiagnostic>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutDiagnostics));
+
+            logger.LogInformation("Putting diagnostics...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParseDiagnosticName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseDiagnosticName);
+    }
+
+    private static TryParseDiagnosticName GetTryParseDiagnosticName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in DiagnosticInformationFile.TryParse(file, serviceDirectory)
+                       select informationFile.Parent.Name;
+    }
+
+    private static void ConfigureIsDiagnosticNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsDiagnosticNameInSourceControl);
+    }
+
+    private static IsDiagnosticNameInSourceControl GetIsDiagnosticNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(DiagnosticName name)
         {
-            await delete(name, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var informationFile = DiagnosticInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsDiagnosticNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(DiagnosticName name) =>
-        DoesInformationFileExist(name);
-
-    private bool DoesInformationFileExist(DiagnosticName name)
+    private static void ConfigurePutDiagnostic(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = DiagnosticInformationFile.From(name, serviceDirectory);
+        ConfigureFindDiagnosticDto(builder);
+        ConfigurePutDiagnosticInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutDiagnosticHandler(FindDiagnosticDto findDto, PutLogger putLogger, PutDiagnosticInApim putInApim) : IDisposable
-{
-    private readonly DiagnosticSemaphore semaphore = new();
-
-    public async ValueTask Handle(DiagnosticName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(DiagnosticName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await Put(name, dto, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutDiagnostic);
     }
 
-    private async ValueTask Put(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken)
+    private static PutDiagnostic GetPutDiagnostic(IServiceProvider provider)
     {
-        // Put prerequisites
-        await PutLogger(dto, cancellationToken);
+        var findDto = provider.GetRequiredService<FindDiagnosticDto>();
+        var putInApim = provider.GetRequiredService<PutDiagnosticInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        await putInApim(name, dto, cancellationToken);
-    }
-
-    private async ValueTask PutLogger(DiagnosticDto dto, CancellationToken cancellationToken) =>
-        await DiagnosticModule.TryGetLoggerName(dto)
-                              .IterTask(putLogger.Invoke, cancellationToken);
-
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindDiagnosticDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
-{
-    public async ValueTask<Option<DiagnosticDto>> Handle(DiagnosticName name, CancellationToken cancellationToken)
-    {
-        var informationFile = DiagnosticInformationFile.From(name, serviceDirectory);
-        var informationFileInfo = informationFile.ToFileInfo();
-
-        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
-
-        return from contents in contentsOption
-               let dto = contents.ToObjectFromJson<DiagnosticDto>()
-               let overrideDto = overrideFactory.Create<DiagnosticName, DiagnosticDto>()
-               select overrideDto(name, dto);
-    }
-}
-
-file sealed class PutDiagnosticInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting diagnostic {DiagnosticName}...", name);
-        await DiagnosticUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteDiagnosticHandler(DeleteDiagnosticFromApim deleteFromApim) : IDisposable
-{
-    private readonly DiagnosticSemaphore semaphore = new();
-
-    public async ValueTask Handle(DiagnosticName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(DiagnosticName name, CancellationToken cancellationToken)
-    {
-        await deleteFromApim(name, cancellationToken);
-    }
-
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteDiagnosticFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(DiagnosticName name, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Deleting diagnostic {DiagnosticName}...", name);
-        await DiagnosticUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
-
-file sealed class OnDeletingLoggerHandler(GetDiagnosticDtosInPreviousCommit getDtosInPreviousCommit, ProcessDiagnostic processDiagnostic)
-{
-    private readonly AsyncLazy<FrozenDictionary<LoggerName, FrozenSet<DiagnosticName>>> getLoggerDiagnostics = new(async cancellationToken => await GetLoggerDiagnostics(getDtosInPreviousCommit, cancellationToken));
-
-    /// <summary>
-    /// If a version set is about to be deleted, process the diagnostics that reference it
-    /// </summary>
-    public async ValueTask Handle(LoggerName name, CancellationToken cancellationToken)
-    {
-        var diagnostics = await GetLoggerDiagnostics(name, cancellationToken);
-
-        await diagnostics.IterParallel(processDiagnostic.Invoke, cancellationToken);
-    }
-
-    private static async ValueTask<FrozenDictionary<LoggerName, FrozenSet<DiagnosticName>>> GetLoggerDiagnostics(GetDiagnosticDtosInPreviousCommit getDtosInPreviousCommit, CancellationToken cancellationToken) =>
-        await getDtosInPreviousCommit()
-                .ToAsyncEnumerable()
-                .Choose(async kvp =>
-                {
-                    var dtoOption = await kvp.Value(cancellationToken);
-
-                    return from dto in dtoOption
-                           from loggerName in DiagnosticModule.TryGetLoggerName(dto)
-                           select (LoggerName: loggerName, DiagnosticName: kvp.Key);
-                })
-                .GroupBy(x => x.LoggerName, x => x.DiagnosticName)
-                .SelectAwait(async group => (group.Key, await group.ToFrozenSet(cancellationToken)))
-                .ToFrozenDictionary(cancellationToken);
-
-    private async ValueTask<FrozenSet<DiagnosticName>> GetLoggerDiagnostics(LoggerName name, CancellationToken cancellationToken)
-    {
-        var loggerDiagnostics = await getLoggerDiagnostics.WithCancellation(cancellationToken);
-
-#pragma warning disable CA1849 // Call async methods when in an async method
-        return loggerDiagnostics.Find(name)
-                             .IfNone(FrozenSet<DiagnosticName>.Empty);
-#pragma warning restore CA1849 // Call async methods when in an async method
-    }
-}
-
-file sealed class GetDiagnosticDtosInPreviousCommitHandler(GetArtifactsInPreviousCommit getArtifactsInPreviousCommit, ManagementServiceDirectory serviceDirectory)
-{
-    private readonly Lazy<FrozenDictionary<DiagnosticName, Func<CancellationToken, ValueTask<Option<DiagnosticDto>>>>> dtosInPreviousCommit = new(() => GetDtos(getArtifactsInPreviousCommit, serviceDirectory));
-
-    public FrozenDictionary<DiagnosticName, Func<CancellationToken, ValueTask<Option<DiagnosticDto>>>> Handle() =>
-        dtosInPreviousCommit.Value;
-
-    private static FrozenDictionary<DiagnosticName, Func<CancellationToken, ValueTask<Option<DiagnosticDto>>>> GetDtos(GetArtifactsInPreviousCommit getArtifactsInPreviousCommit, ManagementServiceDirectory serviceDirectory) =>
-        getArtifactsInPreviousCommit()
-            .Choose(kvp => from diagnosticName in TryGetNameFromInformationFile(kvp.Key, serviceDirectory)
-                           select (diagnosticName, TryGetDto(kvp.Value)))
-            .ToFrozenDictionary();
-
-    private static Option<DiagnosticName> TryGetNameFromInformationFile(FileInfo file, ManagementServiceDirectory serviceDirectory) =>
-        from informationFile in DiagnosticInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-
-    private static Func<CancellationToken, ValueTask<Option<DiagnosticDto>>> TryGetDto(Func<CancellationToken, ValueTask<Option<BinaryData>>> tryGetContents) =>
-        async cancellationToken =>
+        return async (name, cancellationToken) =>
         {
-            var contentsOption = await tryGetContents(cancellationToken);
+            using var _ = activitySource.StartActivity(nameof(PutDiagnostic))
+                                       ?.AddTag("diagnostic.name", name);
+
+            var dtoOption = await findDto(name, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        };
+    }
+
+    private static void ConfigureFindDiagnosticDto(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
+
+        builder.Services.TryAddSingleton(GetFindDiagnosticDto);
+    }
+
+    private static FindDiagnosticDto GetFindDiagnosticDto(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+
+        var overrideDto = overrideFactory.Create<DiagnosticName, DiagnosticDto>();
+
+        return async (name, cancellationToken) =>
+        {
+            var informationFile = DiagnosticInformationFile.From(name, serviceDirectory);
+            var informationFileInfo = informationFile.ToFileInfo();
+
+            var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
 
             return from contents in contentsOption
-                   select contents.ToObjectFromJson<DiagnosticDto>();
+                   let dto = contents.ToObjectFromJson<DiagnosticDto>()
+                   select overrideDto(name, dto);
         };
-}
-
-internal static class DiagnosticServices
-{
-    public static void ConfigureFindDiagnosticAction(IServiceCollection services)
-    {
-        ConfigureTryParseDiagnosticName(services);
-        ConfigureProcessDiagnostic(services);
-
-        services.TryAddSingleton<FindDiagnosticActionHandler>();
-        services.TryAddSingleton<FindDiagnosticAction>(provider => provider.GetRequiredService<FindDiagnosticActionHandler>().Handle);
     }
 
-    private static void ConfigureTryParseDiagnosticName(IServiceCollection services)
+    private static void ConfigurePutDiagnosticInApim(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<TryParseDiagnosticNameHandler>();
-        services.TryAddSingleton<TryParseDiagnosticName>(provider => provider.GetRequiredService<TryParseDiagnosticNameHandler>().Handle);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutDiagnosticInApim);
     }
 
-    private static void ConfigureProcessDiagnostic(IServiceCollection services)
+    private static PutDiagnosticInApim GetPutDiagnosticInApim(IServiceProvider provider)
     {
-        ConfigureIsDiagnosticNameInSourceControl(services);
-        ConfigurePutDiagnostic(services);
-        ConfigureDeleteDiagnostic(services);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ProcessDiagnosticHandler>();
-        services.TryAddSingleton<ProcessDiagnostic>(provider => provider.GetRequiredService<ProcessDiagnosticHandler>().Handle);
+        return async (name, dto, cancellationToken) =>
+        {
+            logger.LogInformation("Putting diagnostic {DiagnosticName}...", name);
+
+            await DiagnosticUri.From(name, serviceUri)
+                               .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    private static void ConfigureIsDiagnosticNameInSourceControl(IServiceCollection services)
+    public static void ConfigureDeleteDiagnostics(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<IsDiagnosticNameInSourceControlHandler>();
-        services.TryAddSingleton<IsDiagnosticNameInSourceControl>(provider => provider.GetRequiredService<IsDiagnosticNameInSourceControlHandler>().Handle);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseDiagnosticName(builder);
+        ConfigureIsDiagnosticNameInSourceControl(builder);
+        ConfigureDeleteDiagnostic(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteDiagnostics);
     }
 
-    public static void ConfigurePutDiagnostic(IServiceCollection services)
+    private static DeleteDiagnostics GetDeleteDiagnostics(IServiceProvider provider)
     {
-        ConfigureFindDiagnosticDto(services);
-        ConfigurePutDiagnosticInApim(services);
-        LoggerServices.ConfigurePutLogger(services);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseDiagnosticName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsDiagnosticNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteDiagnostic>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<PutDiagnosticHandler>();
-        services.TryAddSingleton<PutDiagnostic>(provider => provider.GetRequiredService<PutDiagnosticHandler>().Handle);
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteDiagnostics));
+
+            logger.LogInformation("Deleting diagnostics...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigureFindDiagnosticDto(IServiceCollection services)
+    private static void ConfigureDeleteDiagnostic(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<FindDiagnosticDtoHandler>();
-        services.TryAddSingleton<FindDiagnosticDto>(provider => provider.GetRequiredService<FindDiagnosticDtoHandler>().Handle);
+        ConfigureDeleteDiagnosticFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteDiagnostic);
     }
 
-    private static void ConfigurePutDiagnosticInApim(IServiceCollection services)
+    private static DeleteDiagnostic GetDeleteDiagnostic(IServiceProvider provider)
     {
-        services.TryAddSingleton<PutDiagnosticInApimHandler>();
-        services.TryAddSingleton<PutDiagnosticInApim>(provider => provider.GetRequiredService<PutDiagnosticInApimHandler>().Handle);
+        var deleteFromApim = provider.GetRequiredService<DeleteDiagnosticFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteDiagnostic))
+                                       ?.AddTag("diagnostic.name", name);
+
+            await deleteFromApim(name, cancellationToken);
+        };
     }
 
-    private static void ConfigureDeleteDiagnostic(IServiceCollection services)
+    private static void ConfigureDeleteDiagnosticFromApim(IHostApplicationBuilder builder)
     {
-        ConfigureDeleteDiagnosticFromApim(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<DeleteDiagnosticHandler>();
-        services.TryAddSingleton<DeleteDiagnostic>(provider => provider.GetRequiredService<DeleteDiagnosticHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteDiagnosticFromApim);
     }
 
-    private static void ConfigureDeleteDiagnosticFromApim(IServiceCollection services)
+    private static DeleteDiagnosticFromApim GetDeleteDiagnosticFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteDiagnosticFromApimHandler>();
-        services.TryAddSingleton<DeleteDiagnosticFromApim>(provider => provider.GetRequiredService<DeleteDiagnosticFromApimHandler>().Handle);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting diagnostic {DiagnosticName}...", name);
+
+            await DiagnosticUri.From(name, serviceUri)
+                               .Delete(pipeline, cancellationToken);
+        };
     }
-
-    public static void ConfigureOnDeletingLogger(IServiceCollection services)
-    {
-        ConfigureGetDiagnosticDtosInPreviousCommit(services);
-
-        services.TryAddSingleton<OnDeletingLoggerHandler>();
-
-        // We use AddSingleton instead of TryAddSingleton to support multiple registrations
-        services.AddSingleton<OnDeletingLogger>(provider => provider.GetRequiredService<OnDeletingLoggerHandler>().Handle);
-    }
-
-    private static void ConfigureGetDiagnosticDtosInPreviousCommit(IServiceCollection services)
-    {
-        services.TryAddSingleton<GetDiagnosticDtosInPreviousCommitHandler>();
-        services.TryAddSingleton<GetDiagnosticDtosInPreviousCommit>(provider => provider.GetRequiredService<GetDiagnosticDtosInPreviousCommitHandler>().Handle);
-    }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("DiagnosticPublisher");
 }

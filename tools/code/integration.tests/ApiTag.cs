@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal static class ApiTag
+internal static class ApiTagModule
 {
     public static async ValueTask Put(IEnumerable<ApiTagModel> models, ApiName apiName, ManagementServiceUri serviceUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await models.IterParallel(async model =>
@@ -60,11 +60,11 @@ internal static class ApiTag
     }
 
     private static async ValueTask<FrozenDictionary<TagName, ApiTagDto>> GetFileResources(ApiName apiName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-        await ApiTagModule.ListInformationFiles(apiName, serviceDirectory)
-                                .ToAsyncEnumerable()
-                                .SelectAwait(async file => (file.Parent.Name,
-                                                            await file.ReadDto(cancellationToken)))
-                                .ToFrozenDictionary(cancellationToken);
+        await common.ApiTagModule.ListInformationFiles(apiName, serviceDirectory)
+                                 .ToAsyncEnumerable()
+                                 .SelectAwait(async file => (file.Parent.Name,
+                                                             await file.ReadDto(cancellationToken)))
+                                 .ToFrozenDictionary(cancellationToken);
 
     private static string NormalizeDto(ApiTagDto dto) =>
         nameof(ApiTagDto);

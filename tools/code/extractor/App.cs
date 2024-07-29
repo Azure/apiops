@@ -1,36 +1,38 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using common;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.FeatureManagement;
 using System;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Diagnostics;
 
 namespace extractor;
 
-internal delegate ValueTask RunExtractor(CancellationToken cancellationToken);
-
-internal static class AppServices
+internal static class AppModule
 {
-    public static void ConfigureRunExtractor(IServiceCollection services)
+    public static void ConfigureRunApplication(IHostApplicationBuilder builder)
     {
-        NamedValueServices.ConfigureExtractNamedValues(services);
-        TagServices.ConfigureExtractTags(services);
-        GatewayServices.ConfigureExtractGateways(services);
-        VersionSetServices.ConfigureExtractVersionSets(services);
-        BackendServices.ConfigureExtractBackends(services);
-        LoggerServices.ConfigureExtractLoggers(services);
-        DiagnosticServices.ConfigureExtractDiagnostics(services);
-        PolicyFragmentServices.ConfigureExtractPolicyFragments(services);
-        ServicePolicyServices.ConfigureExtractServicePolicies(services);
-        ProductServices.ConfigureExtractProducts(services);
-        GroupServices.ConfigureExtractGroups(services);
-        SubscriptionServices.ConfigureExtractSubscriptions(services);
-        ApiServices.ConfigureExtractApis(services);
+        NamedValueModule.ConfigureExtractNamedValues(builder);
+        TagModule.ConfigureExtractTags(builder);
+        GatewayModule.ConfigureExtractGateways(builder);
+        VersionSetModule.ConfigureExtractVersionSets(builder);
+        BackendModule.ConfigureExtractBackends(builder);
+        LoggerModule.ConfigureExtractLoggers(builder);
+        DiagnosticModule.ConfigureExtractDiagnostics(builder);
+        PolicyFragmentModule.ConfigureExtractPolicyFragments(builder);
+        ServicePolicyModule.ConfigureExtractServicePolicies(builder);
+        ProductModule.ConfigureExtractProducts(builder);
+        GroupModule.ConfigureExtractGroups(builder);
+        SubscriptionModule.ConfigureExtractSubscriptions(builder);
+        ApiModule.ConfigureExtractApis(builder);
+        WorkspaceModule.ConfigureExtractWorkspaces(builder);
+        builder.Services.AddFeatureManagement();
 
-        services.TryAddSingleton(RunExtractor);
+        builder.Services.TryAddSingleton(GetRunApplication);
     }
 
-    private static RunExtractor RunExtractor(IServiceProvider provider)
+    private static RunApplication GetRunApplication(IServiceProvider provider)
     {
         var extractNamedValues = provider.GetRequiredService<ExtractNamedValues>();
         var extractTags = provider.GetRequiredService<ExtractTags>();
@@ -45,12 +47,15 @@ internal static class AppServices
         var extractGroups = provider.GetRequiredService<ExtractGroups>();
         var extractSubscriptions = provider.GetRequiredService<ExtractSubscriptions>();
         var extractApis = provider.GetRequiredService<ExtractApis>();
-        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-
-        var logger = loggerFactory.CreateLogger("Extractor");
+        var extractWorkspaces = provider.GetRequiredService<ExtractWorkspaces>();
+        var featureManager = provider.GetRequiredService<IFeatureManager>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async cancellationToken =>
         {
+            using var activity = activitySource.StartActivity(nameof(RunApplication));
+
             logger.LogInformation("Running extractor...");
 
             await extractNamedValues(cancellationToken);
@@ -66,6 +71,11 @@ internal static class AppServices
             await extractGroups(cancellationToken);
             await extractSubscriptions(cancellationToken);
             await extractApis(cancellationToken);
+
+            if (await featureManager.IsEnabledAsync("Workspaces"))
+            {
+                await extractWorkspaces(cancellationToken);
+            }
 
             logger.LogInformation("Extractor completed.");
         };

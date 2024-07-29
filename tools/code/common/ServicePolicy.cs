@@ -124,17 +124,6 @@ public static class ServicePolicyModule
         return content.ToObjectFromJson<ServicePolicyDto>();
     }
 
-    public static async ValueTask<Option<ServicePolicyDto>> TryGetDto(this ServicePolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<ServicePolicyDto>())
-                     .Match(Option<ServicePolicyDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<ServicePolicyDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this ServicePolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         await pipeline.DeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);
 

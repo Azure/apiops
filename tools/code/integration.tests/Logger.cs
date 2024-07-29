@@ -7,6 +7,7 @@ using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using publisher;
 using System;
@@ -20,340 +21,374 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal delegate ValueTask DeleteAllLoggers(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteAllLoggers(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask PutLoggerModels(IEnumerable<LoggerModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask ValidateExtractedLoggers(Option<FrozenSet<LoggerName>> loggerNamesOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<LoggerName, LoggerDto>> GetApimLoggers(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<LoggerName, LoggerDto>> GetFileLoggers(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
+public delegate ValueTask WriteLoggerModels(IEnumerable<LoggerModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask ValidatePublishedLoggers(IDictionary<LoggerName, LoggerDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 
-internal delegate ValueTask PutLoggerModels(IEnumerable<LoggerModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidateExtractedLoggers(Option<FrozenSet<LoggerName>> namesFilterOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<LoggerName, LoggerDto>> GetApimLoggers(ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<LoggerName, LoggerDto>> GetFileLoggers(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteLoggerModels(IEnumerable<LoggerModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidatePublishedLoggers(IDictionary<LoggerName, LoggerDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file sealed class DeleteAllLoggersHandler(ILogger<DeleteAllLoggers> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+public static class LoggerModule
 {
-    public async ValueTask Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    public static void ConfigureDeleteAllLoggers(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(DeleteAllLoggers));
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        logger.LogInformation("Deleting all loggers in {ServiceName}...", serviceName);
-        var serviceUri = getServiceUri(serviceName);
-        await LoggersUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+        builder.Services.TryAddSingleton(GetDeleteAllLoggers);
     }
-}
 
-file sealed class PutLoggerModelsHandler(ILogger<PutLoggerModels> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<LoggerModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken)
+    private static DeleteAllLoggers GetDeleteAllLoggers(IServiceProvider provider)
     {
-        using var _ = activitySource.StartActivity(nameof(PutLoggerModels));
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        logger.LogInformation("Putting logger models in {ServiceName}...", serviceName);
-        await models.IterParallel(async model =>
+        return async (serviceName, cancellationToken) =>
         {
-            await Put(model, serviceName, cancellationToken);
-        }, cancellationToken);
-    }
+            using var _ = activitySource.StartActivity(nameof(DeleteAllLoggers));
 
-    private async ValueTask Put(LoggerModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var serviceUri = getServiceUri(serviceName);
-        var uri = LoggerUri.From(model.Name, serviceUri);
-        var dto = GetDto(model);
+            logger.LogInformation("Deleting all loggers in {ServiceName}...", serviceName);
 
-        await uri.PutDto(dto, pipeline, cancellationToken);
-    }
+            var serviceUri = getServiceUri(serviceName);
 
-    private static LoggerDto GetDto(LoggerModel model) =>
-        new()
-        {
-            Properties = new LoggerDto.LoggerContract
-            {
-                LoggerType = model.Type switch
-                {
-                    LoggerType.ApplicationInsights => "applicationInsights",
-                    LoggerType.AzureMonitor => "azureMonitor",
-                    LoggerType.EventHub => "azureEventHub",
-                    _ => throw new ArgumentException($"Model type '{model.Type}' is not supported.", nameof(model))
-                },
-                Description = model.Description.ValueUnsafe(),
-                IsBuffered = model.IsBuffered,
-                ResourceId = model.Type switch
-                {
-                    LoggerType.ApplicationInsights applicationInsights => applicationInsights.ResourceId,
-                    LoggerType.EventHub eventHub => eventHub.ResourceId,
-                    _ => null
-                },
-                Credentials = model.Type switch
-                {
-                    LoggerType.ApplicationInsights applicationInsights => new JsonObject
-                    {
-                        ["instrumentationKey"] = $"{{{{{applicationInsights.InstrumentationKeyNamedValue}}}}}"
-                    },
-                    LoggerType.EventHub eventHub => new JsonObject
-                    {
-                        ["name"] = eventHub.Name,
-                        ["connectionString"] = $"{{{{{eventHub.ConnectionStringNamedValue}}}}}"
-                    },
-                    _ => null
-                }
-            }
+            await LoggersUri.From(serviceUri)
+                            .DeleteAll(pipeline, cancellationToken);
         };
-}
-
-file sealed class ValidateExtractedLoggersHandler(ILogger<ValidateExtractedLoggers> logger, GetApimLoggers getApimResources, GetFileLoggers getFileResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(Option<FrozenSet<LoggerName>> namesFilterOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidateExtractedLoggers));
-
-        logger.LogInformation("Validating extracted loggers in {ServiceName}...", serviceName);
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
-
-        var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, namesFilterOption))
-                                    .MapValue(NormalizeDto);
-        var actual = fileResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
     }
 
-    private static string NormalizeDto(LoggerDto dto) =>
-        new
+    public static void ConfigurePutLoggerModels(IHostApplicationBuilder builder)
+    {
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutLoggerModels);
+    }
+
+    private static PutLoggerModels GetPutLoggerModels(IServiceProvider provider)
+    {
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceName, cancellationToken) =>
         {
-            LoggerType = dto.Properties.LoggerType ?? string.Empty,
-            Description = dto.Properties.Description ?? string.Empty,
-            IsBuffered = dto.Properties.IsBuffered ?? false,
-            ResourceId = dto.Properties.ResourceId ?? string.Empty,
-            Credentials = new
+            using var _ = activitySource.StartActivity(nameof(PutLoggerModels));
+
+            logger.LogInformation("Putting logger models in {ServiceName}...", serviceName);
+
+            await models.IterParallel(async model =>
             {
-                Name = dto.Properties.Credentials?.TryGetStringProperty("name").ValueUnsafe() ?? string.Empty,
-                ConnectionString = dto.Properties.Credentials?.TryGetStringProperty("connectionString").ValueUnsafe() ?? string.Empty,
-                InstrumentationKey = dto.Properties.Credentials?.TryGetStringProperty("instrumentationKey").ValueUnsafe() ?? string.Empty
-            }
-        }.ToString()!;
-}
-
-file sealed class GetApimLoggersHandler(ILogger<GetApimLoggers> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<LoggerName, LoggerDto>> Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetApimLoggers));
-
-        logger.LogInformation("Getting loggers from {ServiceName}...", serviceName);
-
-        var serviceUri = getServiceUri(serviceName);
-        var uri = LoggersUri.From(serviceUri);
-
-        return await uri.List(pipeline, cancellationToken)
-                        .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class GetFileLoggersHandler(ILogger<GetFileLoggers> logger, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<LoggerName, LoggerDto>> Handle(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken) =>
-        await commitIdOption.Map(commitId => GetWithCommit(serviceDirectory, commitId, cancellationToken))
-                           .IfNone(() => GetWithoutCommit(serviceDirectory, cancellationToken));
-
-    private async ValueTask<FrozenDictionary<LoggerName, LoggerDto>> GetWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileLoggers));
-
-        logger.LogInformation("Getting loggers from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
-
-        return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
-                        .ToAsyncEnumerable()
-                        .Choose(file => LoggerInformationFile.TryParse(file, serviceDirectory))
-                        .Choose(async file => await TryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
-                        .ToFrozenDictionary(cancellationToken);
-    }
-
-    private static async ValueTask<Option<(LoggerName name, LoggerDto dto)>> TryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, LoggerInformationFile file, CancellationToken cancellationToken)
-    {
-        var name = file.Parent.Name;
-        var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
-
-        return await contentsOption.MapTask(async contents =>
-        {
-            using (contents)
-            {
-                var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
-                var dto = data.ToObjectFromJson<LoggerDto>();
-                return (name, dto);
-            }
-        });
-    }
-
-    private async ValueTask<FrozenDictionary<LoggerName, LoggerDto>> GetWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileLoggers));
-
-        logger.LogInformation("Getting loggers from {ServiceDirectory}...", serviceDirectory);
-
-        return await LoggerModule.ListInformationFiles(serviceDirectory)
-                              .ToAsyncEnumerable()
-                              .SelectAwait(async file => (file.Parent.Name,
-                                                          await file.ReadDto(cancellationToken)))
-                              .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class WriteLoggerModelsHandler(ILogger<WriteLoggerModels> logger, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<LoggerModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(WriteLoggerModels));
-
-        logger.LogInformation("Writing logger models to {ServiceDirectory}...", serviceDirectory);
-        await models.IterParallel(async model =>
-        {
-            await WriteInformationFile(model, serviceDirectory, cancellationToken);
-        }, cancellationToken);
-    }
-
-    private static async ValueTask WriteInformationFile(LoggerModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        var informationFile = LoggerInformationFile.From(model.Name, serviceDirectory);
-        var dto = GetDto(model);
-
-        await informationFile.WriteDto(dto, cancellationToken);
-    }
-
-    private static LoggerDto GetDto(LoggerModel model) =>
-        new()
-        {
-            Properties = new LoggerDto.LoggerContract
-            {
-                LoggerType = model.Type switch
-                {
-                    LoggerType.ApplicationInsights => "applicationInsights",
-                    LoggerType.AzureMonitor => "azureMonitor",
-                    LoggerType.EventHub => "azureEventHub",
-                    _ => throw new ArgumentException($"Model type '{model.Type}' is not supported.", nameof(model))
-                },
-                Description = model.Description.ValueUnsafe(),
-                IsBuffered = model.IsBuffered,
-                ResourceId = model.Type switch
-                {
-                    LoggerType.ApplicationInsights applicationInsights => applicationInsights.ResourceId,
-                    LoggerType.EventHub eventHub => eventHub.ResourceId,
-                    _ => null
-                },
-                Credentials = model.Type switch
-                {
-                    LoggerType.ApplicationInsights applicationInsights => new JsonObject
-                    {
-                        ["instrumentationKey"] = $"{{{{{applicationInsights.InstrumentationKeyNamedValue}}}}}"
-                    },
-                    LoggerType.EventHub eventHub => new JsonObject
-                    {
-                        ["name"] = eventHub.Name,
-                        ["connectionString"] = $"{{{{{eventHub.ConnectionStringNamedValue}}}}}"
-                    },
-                    _ => null
-                }
-            }
+                await put(model, serviceName, cancellationToken);
+            }, cancellationToken);
         };
-}
 
-file sealed class ValidatePublishedLoggersHandler(ILogger<ValidatePublishedLoggers> logger, GetFileLoggers getFileResources, GetApimLoggers getApimResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IDictionary<LoggerName, LoggerDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidatePublishedLoggers));
-
-        logger.LogInformation("Validating published loggers in {ServiceDirectory}...", serviceDirectory);
-
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
-
-        var expected = PublisherOptions.Override(fileResources, overrides)
-                                       .MapValue(NormalizeDto);
-        var actual = apimResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
-    }
-
-    private static string NormalizeDto(LoggerDto dto) =>
-        new
+        async ValueTask put(LoggerModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
         {
-            LoggerType = dto.Properties.LoggerType ?? string.Empty,
-            Description = dto.Properties.Description ?? string.Empty,
-            IsBuffered = dto.Properties.IsBuffered ?? false,
-            ResourceId = dto.Properties.ResourceId ?? string.Empty,
-            Credentials = new
+            var serviceUri = getServiceUri(serviceName);
+
+            var dto = getDto(model);
+
+            await LoggerUri.From(model.Name, serviceUri)
+                            .PutDto(dto, pipeline, cancellationToken);
+        }
+
+        static LoggerDto getDto(LoggerModel model) =>
+            new()
             {
-                Name = dto.Properties.Credentials?.TryGetStringProperty("name").ValueUnsafe() ?? string.Empty,
-                ConnectionString = dto.Properties.Credentials?.TryGetStringProperty("connectionString").ValueUnsafe() ?? string.Empty,
-                InstrumentationKey = dto.Properties.Credentials?.TryGetStringProperty("instrumentationKey").ValueUnsafe() ?? string.Empty
-            }
-        }.ToString()!;
-}
-
-internal static class LoggerServices
-{
-    public static void ConfigureDeleteAllLoggers(IServiceCollection services)
-    {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
-
-        services.TryAddSingleton<DeleteAllLoggersHandler>();
-        services.TryAddSingleton<DeleteAllLoggers>(provider => provider.GetRequiredService<DeleteAllLoggersHandler>().Handle);
+                Properties = new LoggerDto.LoggerContract
+                {
+                    LoggerType = model.Type switch
+                    {
+                        LoggerType.ApplicationInsights => "applicationInsights",
+                        LoggerType.AzureMonitor => "azureMonitor",
+                        LoggerType.EventHub => "azureEventHub",
+                        _ => throw new ArgumentException($"Model type '{model.Type}' is not supported.", nameof(model))
+                    },
+                    Description = model.Description.ValueUnsafe(),
+                    IsBuffered = model.IsBuffered,
+                    ResourceId = model.Type switch
+                    {
+                        LoggerType.ApplicationInsights applicationInsights => applicationInsights.ResourceId,
+                        LoggerType.EventHub eventHub => eventHub.ResourceId,
+                        _ => null
+                    },
+                    Credentials = model.Type switch
+                    {
+                        LoggerType.ApplicationInsights applicationInsights => new JsonObject
+                        {
+                            ["instrumentationKey"] = $"{{{{{applicationInsights.InstrumentationKeyNamedValue}}}}}"
+                        },
+                        LoggerType.EventHub eventHub => new JsonObject
+                        {
+                            ["name"] = eventHub.Name,
+                            ["connectionString"] = $"{{{{{eventHub.ConnectionStringNamedValue}}}}}"
+                        },
+                        _ => null
+                    }
+                }
+            };
     }
 
-    public static void ConfigurePutLoggerModels(IServiceCollection services)
+    public static void ConfigureValidateExtractedLoggers(IHostApplicationBuilder builder)
     {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+        ConfigureGetApimLoggers(builder);
+        ConfigureGetFileLoggers(builder);
 
-        services.TryAddSingleton<PutLoggerModelsHandler>();
-        services.TryAddSingleton<PutLoggerModels>(provider => provider.GetRequiredService<PutLoggerModelsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetValidateExtractedLoggers);
     }
 
-    public static void ConfigureValidateExtractedLoggers(IServiceCollection services)
+    private static ValidateExtractedLoggers GetValidateExtractedLoggers(IServiceProvider provider)
     {
-        ConfigureGetApimLoggers(services);
-        ConfigureGetFileLoggers(services);
+        var getApimResources = provider.GetRequiredService<GetApimLoggers>();
+        var tryGetApimGraphQlSchema = provider.GetRequiredService<TryGetApimGraphQlSchema>();
+        var getFileResources = provider.GetRequiredService<GetFileLoggers>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidateExtractedLoggersHandler>();
-        services.TryAddSingleton<ValidateExtractedLoggers>(provider => provider.GetRequiredService<ValidateExtractedLoggersHandler>().Handle);
+        return async (namesFilterOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidateExtractedLoggers));
+
+            logger.LogInformation("Validating extracted loggers in {ServiceName}...", serviceName);
+
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
+
+            var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, namesFilterOption))
+                                        .MapValue(normalizeDto)
+                                        .ToFrozenDictionary();
+
+            var actual = fileResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        };
+
+        static string normalizeDto(LoggerDto dto) =>
+            new
+            {
+                LoggerType = dto.Properties.LoggerType ?? string.Empty,
+                Description = dto.Properties.Description ?? string.Empty,
+                IsBuffered = dto.Properties.IsBuffered ?? false,
+                ResourceId = dto.Properties.ResourceId ?? string.Empty,
+                Credentials = new
+                {
+                    Name = dto.Properties.Credentials?.TryGetStringProperty("name").ValueUnsafe() ?? string.Empty,
+                    ConnectionString = dto.Properties.Credentials?.TryGetStringProperty("connectionString").ValueUnsafe() ?? string.Empty,
+                    InstrumentationKey = dto.Properties.Credentials?.TryGetStringProperty("instrumentationKey").ValueUnsafe() ?? string.Empty
+                }
+            }.ToString()!;
     }
 
-    private static void ConfigureGetApimLoggers(IServiceCollection services)
+    public static void ConfigureGetApimLoggers(IHostApplicationBuilder builder)
     {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<GetApimLoggersHandler>();
-        services.TryAddSingleton<GetApimLoggers>(provider => provider.GetRequiredService<GetApimLoggersHandler>().Handle);
+        builder.Services.TryAddSingleton(GetGetApimLoggers);
     }
 
-    private static void ConfigureGetFileLoggers(IServiceCollection services)
+    private static GetApimLoggers GetGetApimLoggers(IServiceProvider provider)
     {
-        services.TryAddSingleton<GetFileLoggersHandler>();
-        services.TryAddSingleton<GetFileLoggers>(provider => provider.GetRequiredService<GetFileLoggersHandler>().Handle);
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (serviceName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(GetApimLoggers));
+
+            logger.LogInformation("Getting loggers from {ServiceName}...", serviceName);
+
+            var serviceUri = getServiceUri(serviceName);
+
+            return await LoggersUri.From(serviceUri)
+                                   .List(pipeline, cancellationToken)
+                                   .ToFrozenDictionary(cancellationToken);
+        };
     }
 
-    public static void ConfigureWriteLoggerModels(IServiceCollection services)
+    public static void ConfigureGetFileLoggers(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<WriteLoggerModelsHandler>();
-        services.TryAddSingleton<WriteLoggerModels>(provider => provider.GetRequiredService<WriteLoggerModelsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetGetFileLoggers);
     }
 
-    public static void ConfigureValidatePublishedLoggers(IServiceCollection services)
+    private static GetFileLoggers GetGetFileLoggers(IServiceProvider provider)
     {
-        ConfigureGetFileLoggers(services);
-        ConfigureGetApimLoggers(services);
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidatePublishedLoggersHandler>();
-        services.TryAddSingleton<ValidatePublishedLoggers>(provider => provider.GetRequiredService<ValidatePublishedLoggersHandler>().Handle);
+        return async (serviceDirectory, commitIdOption, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileLoggers));
+
+            return await commitIdOption.Map(commitId => getWithCommit(serviceDirectory, commitId, cancellationToken))
+                                       .IfNone(() => getWithoutCommit(serviceDirectory, cancellationToken));
+        };
+
+        async ValueTask<FrozenDictionary<LoggerName, LoggerDto>> getWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileLoggers));
+
+            logger.LogInformation("Getting loggers from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
+
+            return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
+                            .ToAsyncEnumerable()
+                            .Choose(file => LoggerInformationFile.TryParse(file, serviceDirectory))
+                            .Choose(async file => await tryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
+                            .ToFrozenDictionary(cancellationToken);
+        }
+
+        static async ValueTask<Option<(LoggerName name, LoggerDto dto)>> tryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, LoggerInformationFile file, CancellationToken cancellationToken)
+        {
+            var name = file.Parent.Name;
+            var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
+
+            return await contentsOption.MapTask(async contents =>
+            {
+                using (contents)
+                {
+                    var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
+                    var dto = data.ToObjectFromJson<LoggerDto>();
+                    return (name, dto);
+                }
+            });
+        }
+
+        async ValueTask<FrozenDictionary<LoggerName, LoggerDto>> getWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            logger.LogInformation("Getting loggers from {ServiceDirectory}...", serviceDirectory);
+
+            return await common.LoggerModule.ListInformationFiles(serviceDirectory)
+                                             .ToAsyncEnumerable()
+                                             .SelectAwait(async file => (file.Parent.Name,
+                                                                         await file.ReadDto(cancellationToken)))
+                                             .ToFrozenDictionary(cancellationToken);
+        }
     }
-}
 
-internal static class Logger
-{
+    public static void ConfigureWriteLoggerModels(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetWriteLoggerModels);
+    }
+
+    private static WriteLoggerModels GetWriteLoggerModels(IServiceProvider provider)
+    {
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(WriteLoggerModels));
+
+            logger.LogInformation("Writing logger models to {ServiceDirectory}...", serviceDirectory);
+
+            await models.IterParallel(async model =>
+            {
+                await writeInformationFile(model, serviceDirectory, cancellationToken);
+            }, cancellationToken);
+        };
+
+        static async ValueTask writeInformationFile(LoggerModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var informationFile = LoggerInformationFile.From(model.Name, serviceDirectory);
+            var dto = getDto(model);
+
+            await informationFile.WriteDto(dto, cancellationToken);
+        }
+
+        static LoggerDto getDto(LoggerModel model) =>
+            new()
+            {
+                Properties = new LoggerDto.LoggerContract
+                {
+                    LoggerType = model.Type switch
+                    {
+                        LoggerType.ApplicationInsights => "applicationInsights",
+                        LoggerType.AzureMonitor => "azureMonitor",
+                        LoggerType.EventHub => "azureEventHub",
+                        _ => throw new ArgumentException($"Model type '{model.Type}' is not supported.", nameof(model))
+                    },
+                    Description = model.Description.ValueUnsafe(),
+                    IsBuffered = model.IsBuffered,
+                    ResourceId = model.Type switch
+                    {
+                        LoggerType.ApplicationInsights applicationInsights => applicationInsights.ResourceId,
+                        LoggerType.EventHub eventHub => eventHub.ResourceId,
+                        _ => null
+                    },
+                    Credentials = model.Type switch
+                    {
+                        LoggerType.ApplicationInsights applicationInsights => new JsonObject
+                        {
+                            ["instrumentationKey"] = $"{{{{{applicationInsights.InstrumentationKeyNamedValue}}}}}"
+                        },
+                        LoggerType.EventHub eventHub => new JsonObject
+                        {
+                            ["name"] = eventHub.Name,
+                            ["connectionString"] = $"{{{{{eventHub.ConnectionStringNamedValue}}}}}"
+                        },
+                        _ => null
+                    }
+                }
+            };
+    }
+
+    public static void ConfigureValidatePublishedLoggers(IHostApplicationBuilder builder)
+    {
+        ConfigureGetFileLoggers(builder);
+        ConfigureGetApimLoggers(builder);
+
+        builder.Services.TryAddSingleton(GetValidatePublishedLoggers);
+    }
+
+    private static ValidatePublishedLoggers GetValidatePublishedLoggers(IServiceProvider provider)
+    {
+        var getFileResources = provider.GetRequiredService<GetFileLoggers>();
+        var getApimResources = provider.GetRequiredService<GetApimLoggers>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (overrides, commitIdOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidatePublishedLoggers));
+
+            logger.LogInformation("Validating published loggers in {ServiceDirectory}...", serviceDirectory);
+
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
+
+            var expected = PublisherOptions.Override(fileResources, overrides)
+                                           .MapValue(normalizeDto)
+                                           .ToFrozenDictionary();
+
+            var actual = apimResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        };
+
+        static string normalizeDto(LoggerDto dto) =>
+            new
+            {
+                LoggerType = dto.Properties.LoggerType ?? string.Empty,
+                Description = dto.Properties.Description ?? string.Empty,
+                IsBuffered = dto.Properties.IsBuffered ?? false,
+                ResourceId = dto.Properties.ResourceId ?? string.Empty,
+                Credentials = new
+                {
+                    Name = dto.Properties.Credentials?.TryGetStringProperty("name").ValueUnsafe() ?? string.Empty,
+                    ConnectionString = dto.Properties.Credentials?.TryGetStringProperty("connectionString").ValueUnsafe() ?? string.Empty,
+                    InstrumentationKey = dto.Properties.Credentials?.TryGetStringProperty("instrumentationKey").ValueUnsafe() ?? string.Empty
+                }
+            }.ToString()!;
+    }
+
     public static Gen<LoggerModel> GenerateUpdate(LoggerModel original) =>
         from type in LoggerType.Generate()
         from description in LoggerModel.GenerateDescription().OptionOf()

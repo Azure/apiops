@@ -293,17 +293,9 @@ public sealed record ApiDto
             [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
             public OAuth2AuthenticationSettingsContract? OAuth2 { get; init; }
 
-            [JsonPropertyName("oAuth2AuthenticationSettings")]
-            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-            public ImmutableArray<OAuth2AuthenticationSettingsContract>? OAuth2AuthenticationSettings { get; init; }
-
             [JsonPropertyName("openid")]
             [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
             public OpenIdAuthenticationSettingsContract? OpenId { get; init; }
-
-            [JsonPropertyName("openidAuthenticationSettings")]
-            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-            public ImmutableArray<OpenIdAuthenticationSettingsContract>? OpenIdAuthenticationSettings { get; init; }
         }
 
         public record OAuth2AuthenticationSettingsContract
@@ -436,17 +428,6 @@ public static class ApiModule
     {
         var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
         return content.ToObjectFromJson<ApiDto>();
-    }
-
-    public static async ValueTask<Option<ApiDto>> TryGetDto(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<ApiDto>())
-                     .Match(Option<ApiDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<ApiDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
     }
 
     public static async ValueTask<Option<BinaryData>> TryGetSpecificationContents(this ApiUri apiUri, ApiSpecification specification, HttpPipeline pipeline, CancellationToken cancellationToken)
@@ -664,7 +645,7 @@ public static class ApiModule
         }
     }
 
-    public static async ValueTask PutGraphQlSchema(this ApiUri uri, string schema, HttpPipeline pipeline, CancellationToken cancellationToken)
+    public static async ValueTask PutGraphQlSchema(this ApiUri uri, BinaryData schema, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var contents = BinaryData.FromObjectAsJson(new JsonObject()
         {
@@ -673,7 +654,7 @@ public static class ApiModule
                 ["contentType"] = "application/vnd.ms-azure-apim.graphql.schema",
                 ["document"] = new JsonObject()
                 {
-                    ["value"] = schema
+                    ["value"] = schema.ToString()
                 }
             }
         });
@@ -691,13 +672,9 @@ public static class ApiModule
                            .AppendPathSegment("graphql")
                            .ToUri();
 
-        var schemaJsonEither = await pipeline.TryGetJsonObject(schemaUri, cancellationToken);
+        var schemaJsonOption = await pipeline.GetJsonObjectOption(schemaUri, cancellationToken);
 
-        return schemaJsonEither.Map(GetGraphQlSpecificationFromSchemaResponse)
-                               .Match(Option<BinaryData>.Some,
-                                      response => response.Status == (int)HttpStatusCode.NotFound
-                                                    ? Option<BinaryData>.None
-                                                    : throw response.ToHttpRequestException(schemaUri));
+        return schemaJsonOption.Map(GetGraphQlSpecificationFromSchemaResponse);
     }
 
     private static BinaryData GetGraphQlSpecificationFromSchemaResponse(JsonObject responseJson)
@@ -724,11 +701,11 @@ public static class ApiModule
             .Select(directory => new ApiInformationFile { Parent = directory })
             .Where(informationFile => informationFile.ToFileInfo().Exists());
 
-    public static IAsyncEnumerable<ApiSpecificationFile> ListSpecificationFiles(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<ApiSpecificationFile> ListSpecificationFiles(ManagementServiceDirectory serviceDirectory) =>
         ListDirectories(serviceDirectory)
             .SelectMany(directory => directory.ToDirectoryInfo().ListFiles("*"))
             .ToAsyncEnumerable()
-            .Choose(async file => await ApiSpecificationFile.TryParse(file, serviceDirectory, cancellationToken));
+            .Choose(async (file, cancellationToken) => await ApiSpecificationFile.TryParse(file, serviceDirectory, cancellationToken));
 
     public static async ValueTask WriteDto(this ApiInformationFile file, ApiDto dto, CancellationToken cancellationToken)
     {
@@ -745,26 +722,9 @@ public static class ApiModule
     public static async ValueTask WriteSpecification(this ApiSpecificationFile file, BinaryData contents, CancellationToken cancellationToken) =>
         await file.ToFileInfo().OverwriteWithBinaryData(contents, cancellationToken);
 
-    public static FileInfo ToFileInfo(this ApiSpecificationFile file) =>
-        file switch
-        {
-            GraphQlSpecificationFile graphQl => graphQl.ToFileInfo(),
-            WadlSpecificationFile wadl => wadl.ToFileInfo(),
-            WsdlSpecificationFile wsdl => wsdl.ToFileInfo(),
-            OpenApiSpecificationFile openApi => openApi switch
-            {
-                YamlOpenApiSpecificationFile yaml => yaml.ToFileInfo(),
-                JsonOpenApiSpecificationFile json => json.ToFileInfo(),
-                _ => throw new NotSupportedException()
-            },
-            _ => throw new NotSupportedException()
-        };
-
-    public static async ValueTask<BinaryData> ReadContents(this ApiSpecificationFile file, CancellationToken cancellationToken) =>
-        await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
-
     public static Option<VersionSetName> TryGetVersionSetName(ApiDto dto) =>
         from versionSetId in Prelude.Optional(dto.Properties.ApiVersionSetId)
-        from versionSetNameString in versionSetId.Split('/').LastOrNone()
+        from versionSetNameString in versionSetId.Split('/')
+                                                 .LastOrNone()
         select VersionSetName.From(versionSetNameString);
 }

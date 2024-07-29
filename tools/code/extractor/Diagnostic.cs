@@ -3,58 +3,64 @@ using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractDiagnostics(CancellationToken cancellationToken);
+public delegate ValueTask ExtractDiagnostics(CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(DiagnosticName Name, DiagnosticDto Dto)> ListDiagnostics(CancellationToken cancellationToken);
+public delegate bool ShouldExtractDiagnostic(DiagnosticName name, DiagnosticDto dto);
+public delegate ValueTask WriteDiagnosticArtifacts(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken);
+public delegate ValueTask WriteDiagnosticInformationFile(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken);
 
-internal delegate IAsyncEnumerable<(DiagnosticName Name, DiagnosticDto Dto)> ListDiagnostics(CancellationToken cancellationToken);
-
-internal delegate bool ShouldExtractDiagnostic(DiagnosticName name, DiagnosticDto dto);
-
-internal delegate ValueTask WriteDiagnosticArtifacts(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteDiagnosticInformationFile(DiagnosticName name, DiagnosticDto dto, CancellationToken cancellationToken);
-
-internal static class DiagnosticServices
+internal static class DiagnosticModule
 {
-    public static void ConfigureExtractDiagnostics(IServiceCollection services)
+    public static void ConfigureExtractDiagnostics(IHostApplicationBuilder builder)
     {
-        ConfigureListDiagnostics(services);
-        ConfigureShouldExtractDiagnostic(services);
-        ConfigureWriteDiagnosticArtifacts(services);
+        ConfigureListDiagnostics(builder);
+        ConfigureShouldExtractDiagnostic(builder);
+        ConfigureWriteDiagnosticArtifacts(builder);
 
-        services.TryAddSingleton(ExtractDiagnostics);
+        builder.Services.TryAddSingleton(GetExtractDiagnostics);
     }
 
-    private static ExtractDiagnostics ExtractDiagnostics(IServiceProvider provider)
+    private static ExtractDiagnostics GetExtractDiagnostics(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListDiagnostics>();
         var shouldExtract = provider.GetRequiredService<ShouldExtractDiagnostic>();
         var writeArtifacts = provider.GetRequiredService<WriteDiagnosticArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractDiagnostics));
+
+            logger.LogInformation("Extracting diagnostics...");
+
             await list(cancellationToken)
                     .Where(diagnostic => shouldExtract(diagnostic.Name, diagnostic.Dto))
                     .IterParallel(async diagnostic => await writeArtifacts(diagnostic.Name, diagnostic.Dto, cancellationToken),
                                   cancellationToken);
+        };
     }
 
-    private static void ConfigureListDiagnostics(IServiceCollection services)
+    private static void ConfigureListDiagnostics(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceUri(services);
-        CommonServices.ConfigureHttpPipeline(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton(ListDiagnostics);
+        builder.Services.TryAddSingleton(GetListDiagnostics);
     }
 
-    private static ListDiagnostics ListDiagnostics(IServiceProvider provider)
+    private static ListDiagnostics GetListDiagnostics(IServiceProvider provider)
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
@@ -64,15 +70,15 @@ internal static class DiagnosticServices
                           .List(pipeline, cancellationToken);
     }
 
-    private static void ConfigureShouldExtractDiagnostic(IServiceCollection services)
+    private static void ConfigureShouldExtractDiagnostic(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureShouldExtractFactory(services);
-        LoggerServices.ConfigureShouldExtractLogger(services);
+        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        LoggerModule.ConfigureShouldExtractLogger(builder);
 
-        services.TryAddSingleton(ShouldExtractDiagnostic);
+        builder.Services.TryAddSingleton(GetShouldExtractDiagnostic);
     }
 
-    private static ShouldExtractDiagnostic ShouldExtractDiagnostic(IServiceProvider provider)
+    private static ShouldExtractDiagnostic GetShouldExtractDiagnostic(IServiceProvider provider)
     {
         var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
         var shouldExtractLogger = provider.GetRequiredService<ShouldExtractLogger>();
@@ -81,19 +87,19 @@ internal static class DiagnosticServices
 
         return (name, dto) =>
             shouldExtractDiagnosticName(name)
-            && DiagnosticModule.TryGetLoggerName(dto)
-                               .Map(shouldExtractLogger.Invoke)
-                               .IfNone(true);
+            && common.DiagnosticModule.TryGetLoggerName(dto)
+                                      .Map(shouldExtractLogger.Invoke)
+                                      .IfNone(true);
     }
 
-    private static void ConfigureWriteDiagnosticArtifacts(IServiceCollection services)
+    private static void ConfigureWriteDiagnosticArtifacts(IHostApplicationBuilder builder)
     {
-        ConfigureWriteDiagnosticInformationFile(services);
+        ConfigureWriteDiagnosticInformationFile(builder);
 
-        services.TryAddSingleton(WriteDiagnosticArtifacts);
+        builder.Services.TryAddSingleton(GetWriteDiagnosticArtifacts);
     }
 
-    private static WriteDiagnosticArtifacts WriteDiagnosticArtifacts(IServiceProvider provider)
+    private static WriteDiagnosticArtifacts GetWriteDiagnosticArtifacts(IServiceProvider provider)
     {
         var writeInformationFile = provider.GetRequiredService<WriteDiagnosticInformationFile>();
 
@@ -101,19 +107,17 @@ internal static class DiagnosticServices
             await writeInformationFile(name, dto, cancellationToken);
     }
 
-    private static void ConfigureWriteDiagnosticInformationFile(IServiceCollection services)
+    private static void ConfigureWriteDiagnosticInformationFile(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceDirectory(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        services.TryAddSingleton(WriteDiagnosticInformationFile);
+        builder.Services.TryAddSingleton(GetWriteDiagnosticInformationFile);
     }
 
-    private static WriteDiagnosticInformationFile WriteDiagnosticInformationFile(IServiceProvider provider)
+    private static WriteDiagnosticInformationFile GetWriteDiagnosticInformationFile(IServiceProvider provider)
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
-        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-
-        var logger = Common.GetLogger(loggerFactory);
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (name, dto, cancellationToken) =>
         {
@@ -123,10 +127,4 @@ internal static class DiagnosticServices
             await informationFile.WriteDto(dto, cancellationToken);
         };
     }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("DiagnosticExtractor");
 }

@@ -1,267 +1,249 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindProductApiAction(FileInfo file);
+public delegate ValueTask PutProductApis(CancellationToken cancellationToken);
+public delegate Option<(ApiName Name, ProductName ProductName)> TryParseProductApiName(FileInfo file);
+public delegate bool IsProductApiNameInSourceControl(ApiName name, ProductName productName);
+public delegate ValueTask PutProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<ProductApiDto>> FindProductApiDto(ApiName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask PutProductApiInApim(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductApis(CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteProductApiFromApim(ApiName name, ProductName productName, CancellationToken cancellationToken);
 
-file delegate Option<(ApiName Name, ProductName ProductName)> TryParseApiName(FileInfo file);
-
-file delegate ValueTask ProcessProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate bool IsApiNameInSourceControl(ApiName name, ProductName productName);
-
-file delegate ValueTask<Option<ProductApiDto>> FindProductApiDto(ApiName name, ProductName productName, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteProductApi(ApiName name, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask PutProductApiInApim(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteProductApiFromApim(ApiName name, ProductName productName, CancellationToken cancellationToken);
-
-file sealed class FindProductApiActionHandler(TryParseApiName tryParseName, ProcessProductApi processProductApi)
+internal static class ProductApiModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from names in tryParseName(file)
-        select GetAction(names.Name, names.ProductName);
-
-    private PublisherAction GetAction(ApiName name, ProductName productName) =>
-        async cancellationToken => await processProductApi(name, productName, cancellationToken);
-}
-
-file sealed class TryParseApiNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<(ApiName, ProductName)> Handle(FileInfo file) =>
-        TryParseNameFromApiInformationFile(file);
-
-    private Option<(ApiName, ProductName)> TryParseNameFromApiInformationFile(FileInfo file) =>
-        from informationFile in ProductApiInformationFile.TryParse(file, serviceDirectory)
-        select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class ProductApiSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<(ApiName, ProductName)> locker = new(LockOptions.Default);
-    private ImmutableHashSet<(ApiName, ProductName)> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(ApiName name, ProductName productName, Func<ApiName, ProductName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutProductApis(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync((name, productName), cancellationToken).ConfigureAwait(false);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryProductParseApiName(builder);
+        ConfigureIsProductApiNameInSourceControl(builder);
+        ConfigurePutProductApi(builder);
 
-        // Only process each name once
-        if (processedNames.Contains((name, productName)))
-        {
-            return;
-        }
-
-        await action(name, productName, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add((name, productName)));
+        builder.Services.TryAddSingleton(GetPutProductApis);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessProductApiHandler(IsApiNameInSourceControl isNameInSourceControl, PutProductApi put, DeleteProductApi delete) : IDisposable
-{
-    private readonly ProductApiSemaphore semaphore = new();
-
-    public async ValueTask Handle(ApiName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(ApiName name, ProductName productName, CancellationToken cancellationToken)
+    private static PutProductApis GetPutProductApis(IServiceProvider provider)
     {
-        if (isNameInSourceControl(name, productName))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseProductApiName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsProductApiNameInSourceControl>();
+        var put = provider.GetRequiredService<PutProductApi>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            await put(name, productName, cancellationToken);
-        }
-        else
+            using var _ = activitySource.StartActivity(nameof(PutProductApis));
+
+            logger.LogInformation("Putting product apis...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(api => isNameInSourceControl(api.Name, api.ProductName))
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryProductParseApiName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseProductApiName);
+    }
+
+    private static TryParseProductApiName GetTryParseProductApiName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in ProductApiInformationFile.TryParse(file, serviceDirectory)
+                       select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
+    }
+
+    private static void ConfigureIsProductApiNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsApiNameInSourceControl);
+    }
+
+    private static IsProductApiNameInSourceControl GetIsApiNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(ApiName name, ProductName productName)
         {
-            await delete(name, productName, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var apiFile = ProductApiInformationFile.From(name, productName, serviceDirectory);
+
+            return artifactFiles.Contains(apiFile.ToFileInfo());
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsApiNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(ApiName name, ProductName productName) =>
-        DoesApiInformationFileExist(name, productName);
-
-    private bool DoesApiInformationFileExist(ApiName name, ProductName productName)
+    private static void ConfigurePutProductApi(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = ProductApiInformationFile.From(name, productName, serviceDirectory);
+        ConfigureFindProductApiDto(builder);
+        ConfigurePutProductApiInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutProductApiHandler(FindProductApiDto findDto, PutProduct putProduct, PutApi putApi, PutProductApiInApim putInApim) : IDisposable
-{
-    private readonly ProductApiSemaphore semaphore = new();
-
-    public async ValueTask Handle(ApiName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, Put, cancellationToken);
-
-    private async ValueTask Put(ApiName name, ProductName productName, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, productName, cancellationToken);
-        await dtoOption.IterTask(async dto => await Put(name, dto, productName, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutProductApi);
     }
 
-    private async ValueTask Put(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken)
+    private static PutProductApi GetPutProductApi(IServiceProvider provider)
     {
-        await putProduct(productName, cancellationToken);
-        await putApi(name, cancellationToken);
-        await putInApim(name, dto, productName, cancellationToken);
+        var findDto = provider.GetRequiredService<FindProductApiDto>();
+        var putInApim = provider.GetRequiredService<PutProductApiInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, productName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutProductApi))
+                                       ?.AddTag("product_api.name", name)
+                                       ?.AddTag("product.name", productName);
+
+            var dtoOption = await findDto(name, productName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, productName, cancellationToken));
+        };
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindProductApiDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents)
-{
-    public async ValueTask<Option<ProductApiDto>> Handle(ApiName name, ProductName productName, CancellationToken cancellationToken)
+    private static void ConfigureFindProductApiDto(IHostApplicationBuilder builder)
     {
-        var informationFile = ProductApiInformationFile.From(name, productName, serviceDirectory);
-        var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
 
-        return from contents in contentsOption
-               select contents.ToObjectFromJson<ProductApiDto>();
-    }
-}
-
-file sealed class PutProductApiInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(ApiName name, ProductApiDto dto, ProductName productName, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Adding api {ApiName} to product {ProductName}...", name, productName);
-        await ProductApiUri.From(name, productName, serviceUri).PutDto(dto, pipeline, cancellationToken);
-    }
-}
-
-file sealed class DeleteProductApiHandler(DeleteProductApiFromApim deleteFromApim) : IDisposable
-{
-    private readonly ProductApiSemaphore semaphore = new();
-
-    public async ValueTask Handle(ApiName name, ProductName productName, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, productName, Delete, cancellationToken);
-
-    private async ValueTask Delete(ApiName name, ProductName productName, CancellationToken cancellationToken)
-    {
-        await deleteFromApim(name, productName, cancellationToken);
+        builder.Services.TryAddSingleton(GetFindProductApiDto);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteProductApiFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(ApiName name, ProductName productName, CancellationToken cancellationToken)
+    private static FindProductApiDto GetFindProductApiDto(IServiceProvider provider)
     {
-        logger.LogInformation("Deleting api {ApiName} from product {ProductName}...", name, productName);
-        await ProductApiUri.From(name, productName, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-internal static class ProductApiServices
-{
-    public static void ConfigureFindProductApiAction(IServiceCollection services)
-    {
-        ConfigureTryParseApiName(services);
-        ConfigureProcessProductApi(services);
+        return async (name, productName, cancellationToken) =>
+        {
+            var informationFile = ProductApiInformationFile.From(name, productName, serviceDirectory);
+            var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
-        services.TryAddSingleton<FindProductApiActionHandler>();
-        services.TryAddSingleton<FindProductApiAction>(provider => provider.GetRequiredService<FindProductApiActionHandler>().Handle);
+            return from contents in contentsOption
+                   select contents.ToObjectFromJson<ProductApiDto>();
+        };
     }
 
-    private static void ConfigureTryParseApiName(IServiceCollection services)
+    private static void ConfigurePutProductApiInApim(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<TryParseApiNameHandler>();
-        services.TryAddSingleton<TryParseApiName>(provider => provider.GetRequiredService<TryParseApiNameHandler>().Handle);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutProductApiInApim);
     }
 
-    private static void ConfigureProcessProductApi(IServiceCollection services)
+    private static PutProductApiInApim GetPutProductApiInApim(IServiceProvider provider)
     {
-        ConfigureIsApiNameInSourceControl(services);
-        ConfigurePutProductApi(services);
-        ConfigureDeleteProductApi(services);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ProcessProductApiHandler>();
-        services.TryAddSingleton<ProcessProductApi>(provider => provider.GetRequiredService<ProcessProductApiHandler>().Handle);
+        return async (name, dto, productName, cancellationToken) =>
+        {
+            logger.LogInformation("Adding API {ApiName} to product {ProductName}...", name, productName);
+
+            await ProductApiUri.From(name, productName, serviceUri)
+                               .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    private static void ConfigureIsApiNameInSourceControl(IServiceCollection services)
+    public static void ConfigureDeleteProductApis(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<IsApiNameInSourceControlHandler>();
-        services.TryAddSingleton<IsApiNameInSourceControl>(provider => provider.GetRequiredService<IsApiNameInSourceControlHandler>().Handle);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryProductParseApiName(builder);
+        ConfigureIsProductApiNameInSourceControl(builder);
+        ConfigureDeleteProductApi(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteProductApis);
     }
 
-    public static void ConfigurePutProductApi(IServiceCollection services)
+    private static DeleteProductApis GetDeleteProductApis(IServiceProvider provider)
     {
-        ConfigureFindProductApiDto(services);
-        ConfigurePutProductApiInApim(services);
-        ProductServices.ConfigurePutProduct(services);
-        ApiServices.ConfigurePutApi(services);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseProductApiName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsProductApiNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteProductApi>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<PutProductApiHandler>();
-        services.TryAddSingleton<PutProductApi>(provider => provider.GetRequiredService<PutProductApiHandler>().Handle);
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteProductApis));
+
+            logger.LogInformation("Deleting product apis...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(api => isNameInSourceControl(api.Name, api.ProductName) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigureFindProductApiDto(IServiceCollection services)
+    private static void ConfigureDeleteProductApi(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<FindProductApiDtoHandler>();
-        services.TryAddSingleton<FindProductApiDto>(provider => provider.GetRequiredService<FindProductApiDtoHandler>().Handle);
+        ConfigureDeleteProductApiFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteProductApi);
     }
 
-    private static void ConfigurePutProductApiInApim(IServiceCollection services)
+    private static DeleteProductApi GetDeleteProductApi(IServiceProvider provider)
     {
-        services.TryAddSingleton<PutProductApiInApimHandler>();
-        services.TryAddSingleton<PutProductApiInApim>(provider => provider.GetRequiredService<PutProductApiInApimHandler>().Handle);
+        var deleteFromApim = provider.GetRequiredService<DeleteProductApiFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+
+        return async (name, productName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteProductApi))
+                                       ?.AddTag("product_api.name", name)
+                                       ?.AddTag("product.name", productName);
+
+            await deleteFromApim(name, productName, cancellationToken);
+        };
     }
 
-    private static void ConfigureDeleteProductApi(IServiceCollection services)
+    private static void ConfigureDeleteProductApiFromApim(IHostApplicationBuilder builder)
     {
-        ConfigureDeleteProductApiFromApim(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<DeleteProductApiHandler>();
-        services.TryAddSingleton<DeleteProductApi>(provider => provider.GetRequiredService<DeleteProductApiHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteProductApiFromApim);
     }
 
-    private static void ConfigureDeleteProductApiFromApim(IServiceCollection services)
+    private static DeleteProductApiFromApim GetDeleteProductApiFromApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteProductApiFromApimHandler>();
-        services.TryAddSingleton<DeleteProductApiFromApim>(provider => provider.GetRequiredService<DeleteProductApiFromApimHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("ProductApiPublisher");
+        return async (name, productName, cancellationToken) =>
+        {
+            logger.LogInformation("Removing API {ApiName} from product {ProductName}...", name, productName);
+
+            await ProductApiUri.From(name, productName, serviceUri)
+                               .Delete(pipeline, cancellationToken);
+        };
+    }
 }

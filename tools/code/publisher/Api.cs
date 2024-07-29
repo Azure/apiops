@@ -1,21 +1,23 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using DotNext.Threading;
 using LanguageExt;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Exceptions;
 using Microsoft.OpenApi.Extensions;
 using Microsoft.OpenApi.Models;
 using Microsoft.OpenApi.Readers;
-using Nito.Comparers.Linq;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -23,716 +25,659 @@ using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate Option<PublisherAction> FindApiAction(FileInfo file);
+public delegate ValueTask PutApis(CancellationToken cancellationToken);
+public delegate Option<ApiName> TryParseApiName(FileInfo file);
+public delegate bool IsApiNameInSourceControl(ApiName name);
+public delegate ValueTask PutApi(ApiName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<ApiDto>> FindApiInformationFileDto(ApiName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<(ApiSpecification Specification, BinaryData Contents)>> FindApiSpecificationContents(ApiName name, CancellationToken cancellationToken);
+public delegate ValueTask CorrectApimRevisionNumber(ApiName name, ApiDto Dto, CancellationToken cancellationToken);
+public delegate FrozenDictionary<ApiName, Func<CancellationToken, ValueTask<Option<ApiDto>>>> GetApiDtosInPreviousCommit();
+public delegate ValueTask MakeApiRevisionCurrent(ApiName name, ApiRevisionNumber revisionNumber, CancellationToken cancellationToken);
+public delegate ValueTask PutApiInApim(ApiName name, ApiDto dto, Option<(ApiSpecification.GraphQl Specification, BinaryData Contents)> graphQlSpecificationContentsOption, CancellationToken cancellationToken);
+public delegate ValueTask DeleteApis(CancellationToken cancellationToken);
+public delegate ValueTask DeleteApi(ApiName name, CancellationToken cancellationToken);
+public delegate ValueTask DeleteApiFromApim(ApiName name, CancellationToken cancellationToken);
 
-file delegate Option<ApiName> TryParseApiName(FileInfo file);
-
-file delegate ValueTask ProcessApi(ApiName name, CancellationToken cancellationToken);
-
-file delegate bool IsApiNameInSourceControl(ApiName name);
-
-internal delegate ValueTask PutApi(ApiName name, CancellationToken cancellationToken);
-
-file delegate ValueTask<Option<ApiDto>> FindApiDto(ApiName name, CancellationToken cancellationToken);
-
-file delegate ValueTask CorrectApimRevisionNumber(ApiName name, ApiDto Dto, CancellationToken cancellationToken);
-
-file delegate FrozenDictionary<ApiName, Func<CancellationToken, ValueTask<Option<ApiDto>>>> GetApiDtosInPreviousCommit();
-
-file delegate ValueTask PutApiInApim(ApiName name, ApiDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteApiFromApim(ApiName name, CancellationToken cancellationToken);
-
-file delegate ValueTask MakeApiRevisionCurrent(ApiName name, ApiRevisionNumber revisionNumber, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteApi(ApiName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask OnDeletingApi(ApiName name, CancellationToken cancellationToken);
-
-file sealed class FindApiActionHandler(TryParseApiName tryParseName, ProcessApi processApi)
+internal static class ApiModule
 {
-    public Option<PublisherAction> Handle(FileInfo file) =>
-        from name in tryParseName(file)
-        select GetPublisherAction(name);
-
-    private PublisherAction GetPublisherAction(ApiName name) =>
-        async cancellationToken => await processApi(name, cancellationToken);
-}
-
-file sealed class TryParseApiNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<ApiName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file)
-        | TryParseNameFromSpecificationFile(file);
-
-    private Option<ApiName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in ApiInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-
-    private Option<ApiName> TryParseNameFromSpecificationFile(FileInfo file) =>
-        from apiDirectory in ApiDirectory.TryParse(file.Directory, serviceDirectory)
-        where Common.SpecificationFileNames.Contains(file.Name)
-        select apiDirectory.Name;
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class ApiSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<ApiName> locker = new(LockOptions.Default);
-    private ImmutableHashSet<ApiName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(ApiName name, Func<ApiName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    public static void ConfigurePutApis(IHostApplicationBuilder builder)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseApiName(builder);
+        ConfigureIsApiNameInSourceControl(builder);
+        ConfigurePutApi(builder);
 
-        // Only process each name once
-        if (processedNames.Contains(name))
-        {
-            return;
-        }
-
-        await action(name, cancellationToken);
-
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+        builder.Services.TryAddSingleton(GetPutApis);
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class ProcessApiHandler(IsApiNameInSourceControl isNameInSourceControl, PutApi put, DeleteApi delete) : IDisposable
-{
-    private readonly ApiSemaphore semaphore = new();
-
-    public async ValueTask Handle(ApiName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, HandleInner, cancellationToken);
-
-    private async ValueTask HandleInner(ApiName name, CancellationToken cancellationToken)
+    private static PutApis GetPutApis(IServiceProvider provider)
     {
-        // Process root API first
-        if (ApiName.IsRevisioned(name))
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseApiName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsApiNameInSourceControl>();
+        var put = provider.GetRequiredService<PutApi>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
         {
-            var rootName = ApiName.GetRootName(name);
-            await Handle(rootName, cancellationToken);
+            using var _ = activitySource.StartActivity(nameof(PutApis));
+
+            logger.LogInformation("Putting APIs...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
+    }
+
+    private static void ConfigureTryParseApiName(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetTryParseApiName);
+    }
+
+    private static TryParseApiName GetTryParseApiName(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in ApiInformationFile.TryParse(file, serviceDirectory)
+                       select informationFile.Parent.Name;
+    }
+
+    private static void ConfigureIsApiNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsApiNameInSourceControl);
+    }
+
+    private static IsApiNameInSourceControl GetIsApiNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return name => doesInformationFileExist(name) || doesSpecificationFileExist(name);
+
+        bool doesInformationFileExist(ApiName name)
+        {
+            var artifactFiles = getArtifactFiles();
+            var informationFile = ApiInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
 
-        if (isNameInSourceControl(name))
+        bool doesSpecificationFileExist(ApiName name)
         {
-            await put(name, cancellationToken);
-        }
-        else
-        {
-            await delete(name, cancellationToken);
+            var artifactFiles = getArtifactFiles();
+            var getFileInApiDirectory = ApiDirectory.From(name, serviceDirectory)
+                                                    .ToDirectoryInfo()
+                                                    .GetChildFile;
+
+            return Common.SpecificationFileNames
+                         .Select(getFileInApiDirectory)
+                         .Any(artifactFiles.Contains);
         }
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class IsApiNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(ApiName name) =>
-        DoesInformationFileExist(name)
-        || DoesSpecificationFileExist(name);
-
-    private bool DoesInformationFileExist(ApiName name)
+    private static void ConfigurePutApi(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = ApiInformationFile.From(name, serviceDirectory);
+        ConfigureFindApiInformationFileDto(builder);
+        ConfigureFindApiSpecificationContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
+        ConfigureCorrectApimRevisionNumber(builder);
+        ConfigurePutApiInApim(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
+        builder.Services.TryAddSingleton(GetPutApi);
     }
 
-    private bool DoesSpecificationFileExist(ApiName name)
+    private static PutApi GetPutApi(IServiceProvider provider)
     {
-        var artifactFiles = getArtifactFiles();
-        var getFileInApiDirectory = ApiDirectory.From(name, serviceDirectory)
-                                                .ToDirectoryInfo()
-                                                .GetChildFile;
-
-        return Common.SpecificationFileNames
-                     .Select(getFileInApiDirectory)
-                     .Any(artifactFiles.Contains);
-    }
-}
-
-file sealed class PutApiHandler(FindApiDto findDto,
-                                PutVersionSet putVersionSet,
-                                CorrectApimRevisionNumber correctApimRevisionNumber,
-                                PutApiInApim putInApim) : IDisposable
-{
-    private readonly ApiSemaphore semaphore = new();
-
-    public async ValueTask Handle(ApiName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(ApiName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await Put(name, dto, cancellationToken));
-    }
-
-    private async ValueTask Put(ApiName name, ApiDto dto, CancellationToken cancellationToken)
-    {
-        // Put prerequisites
-        await PutVersionSet(dto, cancellationToken);
-        await PutCurrentRevision(name, dto, cancellationToken);
-
-        await putInApim(name, dto, cancellationToken);
-    }
-
-    private async ValueTask PutVersionSet(ApiDto dto, CancellationToken cancellationToken) =>
-        await ApiModule.TryGetVersionSetName(dto)
-                       .IterTask(putVersionSet.Invoke, cancellationToken);
-
-    private async ValueTask PutCurrentRevision(ApiName name, ApiDto dto, CancellationToken cancellationToken)
-    {
-        if (ApiName.IsRevisioned(name))
-        {
-            var rootName = ApiName.GetRootName(name);
-            await Handle(rootName, cancellationToken);
-        }
-        else
-        {
-            await correctApimRevisionNumber(name, dto, cancellationToken);
-        }
-    }
-
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class FindApiDtoHandler(ManagementServiceDirectory serviceDirectory,
-                                    TryGetFileContents tryGetFileContents,
-                                    GetArtifactFiles getArtifactFiles,
-                                    OverrideDtoFactory overrideDtoFactory)
-{
-    public async ValueTask<Option<ApiDto>> Handle(ApiName name, CancellationToken cancellationToken)
-    {
-        var informationFileDtoOption = await TryGetInformationFileDto(name, cancellationToken);
-        var specificationContentsOption = await TryGetSpecificationContents(name, cancellationToken);
-
-        return await TryGetDto(name, informationFileDtoOption, specificationContentsOption, cancellationToken);
-    }
-
-    private async ValueTask<Option<ApiDto>> TryGetInformationFileDto(ApiName name, CancellationToken cancellationToken)
-    {
-        var informationFile = ApiInformationFile.From(name, serviceDirectory);
-        var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
-
-        return from contents in contentsOption
-               select contents.ToObjectFromJson<ApiDto>();
-    }
-
-    private async ValueTask<Option<(ApiSpecification, BinaryData)>> TryGetSpecificationContents(ApiName name, CancellationToken cancellationToken) =>
-        await GetSpecificationFiles(name)
-                .ToAsyncEnumerable()
-                .Choose(async file => await TryGetSpecificationContents(file, cancellationToken))
-                .HeadOrNone(cancellationToken);
-
-    private FrozenSet<FileInfo> GetSpecificationFiles(ApiName name)
-    {
-        var apiDirectory = ApiDirectory.From(name, serviceDirectory);
-        var artifactFiles = getArtifactFiles();
-
-        return Common.SpecificationFileNames
-                     .Select(apiDirectory.ToDirectoryInfo().GetChildFile)
-                     .Where(artifactFiles.Contains)
-                     .ToFrozenSet();
-    }
-
-    private async ValueTask<Option<(ApiSpecification, BinaryData)>> TryGetSpecificationContents(FileInfo file, CancellationToken cancellationToken)
-    {
-        var contentsOption = await tryGetFileContents(file, cancellationToken);
-
-        return await contentsOption.BindTask(async contents =>
-        {
-            var specificationFileOption = await TryParseSpecificationFile(file, contents, cancellationToken);
-
-            return from specificationFile in specificationFileOption
-                   select (specificationFile.Specification, contents);
-        });
-    }
-
-    private async ValueTask<Option<ApiSpecificationFile>> TryParseSpecificationFile(FileInfo file, BinaryData contents, CancellationToken cancellationToken) =>
-        await ApiSpecificationFile.TryParse(file,
-                                            getFileContents: _ => ValueTask.FromResult(contents),
-                                            serviceDirectory,
-                                            cancellationToken);
-
-    private async ValueTask<Option<ApiDto>> TryGetDto(ApiName name,
-                                                      Option<ApiDto> informationFileDtoOption,
-                                                      Option<(ApiSpecification, BinaryData)> specificationContentsOption,
-                                                      CancellationToken cancellationToken)
-    {
-        if (informationFileDtoOption.IsNone && specificationContentsOption.IsNone)
-        {
-            return Option<ApiDto>.None;
-        }
-
-#pragma warning disable CA1849 // Call async methods when in an async method
-        var dto = informationFileDtoOption.IfNone(() => new ApiDto { Properties = new ApiDto.ApiCreateOrUpdateProperties() });
-#pragma warning restore CA1849 // Call async methods when in an async method
-        await specificationContentsOption.IterTask(async specificationContents =>
-        {
-            var (specification, contents) = specificationContents;
-            dto = await AddSpecificationToDto(name, dto, specification, contents, cancellationToken);
-        });
+        var findInformationFileDto = provider.GetRequiredService<FindApiInformationFileDto>();
+        var findSpecificationContents = provider.GetRequiredService<FindApiSpecificationContents>();
+        var overrideDtoFactory = provider.GetRequiredService<OverrideDtoFactory>();
+        var correctRevisionNumber = provider.GetRequiredService<CorrectApimRevisionNumber>();
+        var putInApim = provider.GetRequiredService<PutApiInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
         var overrideDto = overrideDtoFactory.Create<ApiName, ApiDto>();
-        dto = overrideDto(name, dto);
+        var taskDictionary = new ConcurrentDictionary<ApiName, AsyncLazy<Unit>>();
 
-        return dto;
-    }
+        return putApi;
 
-    private static async ValueTask<ApiDto> AddSpecificationToDto(ApiName name, ApiDto dto, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken) =>
-        dto with
+        async ValueTask putApi(ApiName name, CancellationToken cancellationToken)
         {
-            Properties = dto.Properties with
+            using var _ = activitySource.StartActivity(nameof(PutApi))
+                                       ?.AddTag("api.name", name);
+
+            await taskDictionary.GetOrAdd(name,
+                                          name => new AsyncLazy<Unit>(async cancellationToken =>
+                                          {
+                                              await putApiInner(name, cancellationToken);
+                                              return Unit.Default;
+                                          }))
+                                .WithCancellation(cancellationToken);
+        };
+
+        async ValueTask putApiInner(ApiName name, CancellationToken cancellationToken)
+        {
+            var informationFileDtoOption = await findInformationFileDto(name, cancellationToken);
+            await informationFileDtoOption.IterTask(async informationFileDto =>
             {
-                Format = specification switch
+                await putCurrentRevision(name, informationFileDto, cancellationToken);
+                var specificationContentsOption = await findSpecificationContents(name, cancellationToken);
+                var dto = await tryGetDto(name, informationFileDto, specificationContentsOption, cancellationToken);
+                var graphQlSpecificationContentsOption = specificationContentsOption.Bind(specificationContents =>
                 {
-                    ApiSpecification.Wsdl => "wsdl",
-                    ApiSpecification.Wadl => "wadl-xml",
-                    ApiSpecification.OpenApi openApi => (openApi.Format, openApi.Version) switch
-                    {
-                        (common.OpenApiFormat.Json, OpenApiVersion.V2) => "swagger-json",
-                        (common.OpenApiFormat.Json, OpenApiVersion.V3) => "openapi+json",
-                        (common.OpenApiFormat.Yaml, OpenApiVersion.V2) => "openapi",
-                        (common.OpenApiFormat.Yaml, OpenApiVersion.V3) => "openapi",
-                        _ => throw new InvalidOperationException($"Unsupported OpenAPI format '{openApi.Format}' and version '{openApi.Version}'.")
-                    },
-                    _ => dto.Properties.Format
-                },
-                // APIM does not support OpenAPI V2 YAML. Convert to V3 YAML if needed.
-                Value = specification switch
-                {
-                    ApiSpecification.GraphQl => null,
-                    ApiSpecification.OpenApi { Format: common.OpenApiFormat.Yaml, Version: OpenApiVersion.V2 } =>
-                        await ConvertStreamToOpenApiV3Yaml(contents, $"Could not convert specification for API {name} to OpenAPIV3.", cancellationToken),
-                    _ => contents.ToString()
-                }
-            }
-        };
+                    var (specification, contents) = specificationContents;
 
-    private static async ValueTask<string> ConvertStreamToOpenApiV3Yaml(BinaryData contents, string errorMessage, CancellationToken cancellationToken)
-    {
-        using var stream = contents.ToStream();
-        var readResult = await new OpenApiStreamReader().ReadAsync(stream, cancellationToken);
-
-        return readResult.OpenApiDiagnostic.Errors switch
-        {
-        [] => readResult.OpenApiDocument.Serialize(OpenApiSpecVersion.OpenApi3_0, Microsoft.OpenApi.OpenApiFormat.Yaml),
-            var errors => throw OpenApiErrorsToException(errorMessage, errors)
-        };
-    }
-
-    private static OpenApiException OpenApiErrorsToException(string message, IEnumerable<OpenApiError> errors) =>
-        new($"{message}. Errors are: {Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
-}
-
-file sealed class CorrectApimRevisionHandler(ILoggerFactory loggerFactory,
-                                             GetApiDtosInPreviousCommit getDtosInPreviousCommit,
-                                             PutApiInApim putApiInApim,
-                                             DeleteApiFromApim deleteApiFromApim,
-                                             IsApiNameInSourceControl isNameInSourceControl,
-                                             MakeApiRevisionCurrent makeApiRevisionCurrent)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    /// <summary>
-    /// If this is the current revision and its revision number changed,
-    /// create a new release with the new revision number in APIM.
-    public async ValueTask Handle(ApiName name, ApiDto dto, CancellationToken cancellationToken)
-    {
-        if (ApiName.IsRevisioned(name))
-        {
-            return;
-        }
-
-        var previousRevisionNumberOption = await FindPreviousRevisionNumber(name, cancellationToken);
-        await previousRevisionNumberOption.IterTask(async previousRevisionNumber =>
-        {
-            var currentRevisionNumber = Common.GetRevisionNumber(dto);
-            await SetApimCurrentRevisionNumber(name, currentRevisionNumber, previousRevisionNumber, cancellationToken);
-        });
-    }
-
-    private async ValueTask<Option<ApiRevisionNumber>> FindPreviousRevisionNumber(ApiName name, CancellationToken cancellationToken) =>
-        await getDtosInPreviousCommit()
-                .Find(name)
-                .BindTask(async getDto =>
-                {
-                    var dtoOption = await getDto(cancellationToken);
-
-                    return from dto in dtoOption
-                           select Common.GetRevisionNumber(dto);
+                    return specification is ApiSpecification.GraphQl graphQl
+                            ? (graphQl, contents)
+                            : Option<(ApiSpecification.GraphQl, BinaryData)>.None;
                 });
-
-    private async ValueTask SetApimCurrentRevisionNumber(ApiName name, ApiRevisionNumber newRevisionNumber, ApiRevisionNumber existingRevisionNumber, CancellationToken cancellationToken)
-    {
-        if (newRevisionNumber == existingRevisionNumber)
-        {
-            return;
+                await putInApim(name, dto, graphQlSpecificationContentsOption, cancellationToken);
+            });
         }
 
-        logger.LogInformation("Changing current revision on {ApiName} from {RevisionNumber} to {RevisionNumber}...", name, existingRevisionNumber, newRevisionNumber);
-
-        await PutRevision(name, newRevisionNumber, existingRevisionNumber, cancellationToken);
-        await makeApiRevisionCurrent(name, newRevisionNumber, cancellationToken);
-        await DeleteOldRevision(name, existingRevisionNumber, cancellationToken);
-    }
-
-    private async ValueTask PutRevision(ApiName name, ApiRevisionNumber revisionNumber, ApiRevisionNumber existingRevisionNumber, CancellationToken cancellationToken)
-    {
-        var dto = new ApiDto
+        async ValueTask putCurrentRevision(ApiName name, ApiDto dto, CancellationToken cancellationToken)
         {
-            Properties = new ApiDto.ApiCreateOrUpdateProperties
+            if (ApiName.IsRevisioned(name))
             {
-                ApiRevision = revisionNumber.ToString(),
-                SourceApiId = $"/apis/{ApiName.GetRevisionedName(name, existingRevisionNumber)}"
+                var rootName = ApiName.GetRootName(name);
+                await putApi(rootName, cancellationToken);
             }
-        };
-
-        await putApiInApim(name, dto, cancellationToken);
-    }
-
-    /// <summary>
-    /// If the old revision is no longer in source control, delete it from APIM. Handles this scenario:
-    /// 1. Dev and prod APIM both have apiA with current revision 1. Artifacts folder has /apis/apiA/apiInformation.json with revision 1.
-    /// 2. User changes the current revision in dev APIM from 1 to 2.
-    /// 3. User deletes revision 1 from dev APIM, as it's no longer needed.
-    /// 4. User runs extractor for dev APIM. Artifacts folder has /apis/apiA/apiInformation.json with revision 2.
-    /// 5. User runs publisher to prod APIM. The only changed artifact will be an update in apiInformation.json to revision 2, so we will create revision 2 in prod and make it current.
-    /// 
-    /// If we do nothing else, dev and prod will be inconsistent as prod will still have the revision 1 API. There was nothing in Git that told the publisher to delete revision 1.
-    /// </summary>
-    private async ValueTask DeleteOldRevision(ApiName name, ApiRevisionNumber oldRevisionNumber, CancellationToken cancellationToken)
-    {
-        var revisionedName = ApiName.GetRevisionedName(name, oldRevisionNumber);
-
-        if (isNameInSourceControl(revisionedName))
-        {
-            return;
+            else
+            {
+                await correctRevisionNumber(name, dto, cancellationToken);
+            }
         }
 
-        logger.LogInformation("Deleting old revision {RevisionNumber} of {ApiName}...", oldRevisionNumber, name);
-        await deleteApiFromApim(revisionedName, cancellationToken);
-    }
-}
-
-file sealed class GetApiDtosInPreviousCommitHandler(GetArtifactsInPreviousCommit getArtifactsInPreviousCommit, ManagementServiceDirectory serviceDirectory)
-{
-    private readonly Lazy<FrozenDictionary<ApiName, Func<CancellationToken, ValueTask<Option<ApiDto>>>>> dtosInPreviousCommit = new(() => GetDtos(getArtifactsInPreviousCommit, serviceDirectory));
-
-    public FrozenDictionary<ApiName, Func<CancellationToken, ValueTask<Option<ApiDto>>>> Handle() =>
-        dtosInPreviousCommit.Value;
-
-    private static FrozenDictionary<ApiName, Func<CancellationToken, ValueTask<Option<ApiDto>>>> GetDtos(GetArtifactsInPreviousCommit getArtifactsInPreviousCommit,
-                                                                                                         ManagementServiceDirectory serviceDirectory) =>
-        getArtifactsInPreviousCommit()
-            .Choose(kvp => from apiName in TryGetNameFromInformationFile(kvp.Key, serviceDirectory)
-                           select (apiName, TryGetDto(kvp.Value)))
-            .ToFrozenDictionary();
-
-    private static Option<ApiName> TryGetNameFromInformationFile(FileInfo file, ManagementServiceDirectory serviceDirectory) =>
-        from informationFile in ApiInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-
-    private static Func<CancellationToken, ValueTask<Option<ApiDto>>> TryGetDto(Func<CancellationToken, ValueTask<Option<BinaryData>>> tryGetContents) =>
-        async cancellationToken =>
+        async ValueTask<ApiDto> tryGetDto(ApiName name,
+                                          ApiDto informationFileDto,
+                                          Option<(ApiSpecification, BinaryData)> specificationContentsOption,
+                                          CancellationToken cancellationToken)
         {
-            var contentsOption = await tryGetContents(cancellationToken);
+            var dto = informationFileDto;
+
+            await specificationContentsOption.IterTask(async specificationContents =>
+            {
+                var (specification, contents) = specificationContents;
+                dto = await addSpecificationToDto(name, dto, specification, contents, cancellationToken);
+            });
+
+            dto = overrideDto(name, dto);
+
+            return dto;
+        }
+
+        static async ValueTask<ApiDto> addSpecificationToDto(ApiName name, ApiDto dto, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken) =>
+            dto with
+            {
+                Properties = dto.Properties with
+                {
+                    Format = specification switch
+                    {
+                        ApiSpecification.Wsdl => "wsdl",
+                        ApiSpecification.Wadl => "wadl-xml",
+                        ApiSpecification.OpenApi openApi => (openApi.Format, openApi.Version) switch
+                        {
+                            (common.OpenApiFormat.Json, OpenApiVersion.V2) => "swagger-json",
+                            (common.OpenApiFormat.Json, OpenApiVersion.V3) => "openapi+json",
+                            (common.OpenApiFormat.Yaml, OpenApiVersion.V2) => "openapi",
+                            (common.OpenApiFormat.Yaml, OpenApiVersion.V3) => "openapi",
+                            _ => throw new InvalidOperationException($"Unsupported OpenAPI format '{openApi.Format}' and version '{openApi.Version}'.")
+                        },
+                        _ => dto.Properties.Format
+                    },
+                    // APIM does not support OpenAPI V2 YAML. Convert to V3 YAML if needed.
+                    Value = specification switch
+                    {
+                        ApiSpecification.GraphQl => null,
+                        ApiSpecification.OpenApi { Format: common.OpenApiFormat.Yaml, Version: OpenApiVersion.V2 } =>
+                            await convertStreamToOpenApiV3Yaml(contents, $"Could not convert specification for API {name} to OpenAPIV3.", cancellationToken),
+                        _ => contents.ToString()
+                    }
+                }
+            };
+
+        static async ValueTask<string> convertStreamToOpenApiV3Yaml(BinaryData contents, string errorMessage, CancellationToken cancellationToken)
+        {
+            using var stream = contents.ToStream();
+            var readResult = await new OpenApiStreamReader().ReadAsync(stream, cancellationToken);
+
+            return readResult.OpenApiDiagnostic.Errors switch
+            {
+            [] => readResult.OpenApiDocument.Serialize(OpenApiSpecVersion.OpenApi3_0, Microsoft.OpenApi.OpenApiFormat.Yaml),
+                var errors => throw openApiErrorsToException(errorMessage, errors)
+            };
+        }
+
+        static OpenApiException openApiErrorsToException(string message, IEnumerable<OpenApiError> errors) =>
+            new($"{message}. Errors are: {Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
+    }
+
+    private static void ConfigureFindApiSpecificationContents(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        CommonModule.ConfigureGetArtifactFiles(builder);
+
+        builder.Services.TryAddSingleton(GetFindApiSpecificationContents);
+    }
+
+    private static FindApiSpecificationContents GetFindApiSpecificationContents(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+
+        return async (name, cancellationToken) =>
+            await getSpecificationFiles(name)
+                    .ToAsyncEnumerable()
+                    .Choose(async file => await tryGetSpecificationContentsFromFile(file, cancellationToken))
+                    .FirstOrNone(cancellationToken);
+
+        FrozenSet<FileInfo> getSpecificationFiles(ApiName name)
+        {
+            var apiDirectory = ApiDirectory.From(name, serviceDirectory);
+            var artifactFiles = getArtifactFiles();
+
+            return Common.SpecificationFileNames
+                         .Select(apiDirectory.ToDirectoryInfo().GetChildFile)
+                         .Where(artifactFiles.Contains)
+                         .ToFrozenSet();
+        }
+
+        async ValueTask<Option<(ApiSpecification, BinaryData)>> tryGetSpecificationContentsFromFile(FileInfo file, CancellationToken cancellationToken)
+        {
+            var contentsOption = await tryGetFileContents(file, cancellationToken);
+
+            return await contentsOption.BindTask(async contents =>
+            {
+                var specificationFileOption = await tryParseSpecificationFile(file, contents, cancellationToken);
+
+                return from specificationFile in specificationFileOption
+                       select (specificationFile.Specification, contents);
+            });
+        }
+
+        async ValueTask<Option<ApiSpecificationFile>> tryParseSpecificationFile(FileInfo file, BinaryData contents, CancellationToken cancellationToken) =>
+            await ApiSpecificationFile.TryParse(file,
+                                                getFileContents: _ => ValueTask.FromResult(contents),
+                                                serviceDirectory,
+                                                cancellationToken);
+    }
+
+    private static void ConfigureFindApiInformationFileDto(IHostApplicationBuilder builder)
+    {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+
+        builder.Services.TryAddSingleton(GetFindApiInformationFileDto);
+    }
+
+    private static FindApiInformationFileDto GetFindApiInformationFileDto(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+
+        return async (name, cancellationToken) =>
+        {
+            var informationFile = ApiInformationFile.From(name, serviceDirectory);
+            var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
                    select contents.ToObjectFromJson<ApiDto>();
         };
-}
-
-file sealed class PutApiInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(ApiName name, ApiDto dto, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Putting API {ApiName}...", name);
-
-        var revisionNumber = Common.GetRevisionNumber(dto);
-        var uri = GetRevisionedUri(name, revisionNumber);
-
-        // APIM sometimes fails revisions if isCurrent is set to true.
-        var dtoWithoutIsCurrent = dto with { Properties = dto.Properties with { IsCurrent = null } };
-        await uri.PutDto(dtoWithoutIsCurrent, pipeline, cancellationToken);
     }
 
-    private ApiUri GetRevisionedUri(ApiName name, ApiRevisionNumber revisionNumber)
+    private static void ConfigureCorrectApimRevisionNumber(IHostApplicationBuilder builder)
     {
-        var revisionedApiName = ApiName.GetRevisionedName(name, revisionNumber);
-        return ApiUri.From(revisionedApiName, serviceUri);
+        ConfigureGetApiDtosInPreviousCommit(builder);
+        ConfigurePutApiInApim(builder);
+        ConfigureMakeApiRevisionCurrent(builder);
+        ConfigureIsApiNameInSourceControl(builder);
+        ConfigureDeleteApiFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetCorrectApimRevisionNumber);
     }
-}
 
-file sealed class DeleteApiFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(ApiName name, CancellationToken cancellationToken)
+    private static CorrectApimRevisionNumber GetCorrectApimRevisionNumber(IServiceProvider provider)
     {
-        logger.LogInformation("Deleting API {ApiName}...", name);
+        var getPreviousCommitDtos = provider.GetRequiredService<GetApiDtosInPreviousCommit>();
+        var putApiInApim = provider.GetRequiredService<PutApiInApim>();
+        var makeApiRevisionCurrent = provider.GetRequiredService<MakeApiRevisionCurrent>();
+        var isNameInSourceControl = provider.GetRequiredService<IsApiNameInSourceControl>();
+        var deleteApiFromApim = provider.GetRequiredService<DeleteApiFromApim>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        var uri = ApiUri.From(name, serviceUri);
-        if (ApiName.IsRevisioned(name))
+        return async (name, dto, cancellationToken) =>
         {
-            await uri.Delete(pipeline, cancellationToken);
-        }
-        else
-        {
-            await uri.DeleteAllRevisions(pipeline, cancellationToken);
-        }
-    }
-}
-
-file sealed class MakeApiRevisionCurrentHandler(PutApiReleaseInApim putRelease, DeleteApiReleaseFromApim deleteRelease)
-{
-    public async ValueTask Handle(ApiName name, ApiRevisionNumber revisionNumber, CancellationToken cancellationToken)
-    {
-        var revisionedName = ApiName.GetRevisionedName(name, revisionNumber);
-        var releaseName = ApiReleaseName.From("apiops-set-current");
-        var releaseDto = new ApiReleaseDto
-        {
-            Properties = new ApiReleaseDto.ApiReleaseContract
+            if (ApiName.IsRevisioned(name))
             {
-                ApiId = $"/apis/{revisionedName}",
-                Notes = "Setting current revision for ApiOps"
+                return;
             }
+
+            var previousRevisionNumberOption = await tryGetPreviousRevisionNumber(name, cancellationToken);
+            await previousRevisionNumberOption.IterTask(async previousRevisionNumber =>
+            {
+                var currentRevisionNumber = Common.GetRevisionNumber(dto);
+                await setApimCurrentRevisionNumber(name, currentRevisionNumber, previousRevisionNumber, cancellationToken);
+            });
         };
 
-        await putRelease(releaseName, releaseDto, name, cancellationToken);
-        await deleteRelease(releaseName, name, cancellationToken);
-    }
-}
+        async ValueTask<Option<ApiRevisionNumber>> tryGetPreviousRevisionNumber(ApiName name, CancellationToken cancellationToken) =>
+            await getPreviousCommitDtos()
+                    .Find(name)
+                    .BindTask(async getDto =>
+                    {
+                        var dtoOption = await getDto(cancellationToken);
 
-file sealed class DeleteApiHandler(IEnumerable<OnDeletingApi> onDeletingHandlers,
-                                   ILoggerFactory loggerFactory,
-                                   FindApiDto findDto,
-                                   DeleteApiFromApim deleteFromApim) : IDisposable
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-    private readonly ApiSemaphore semaphore = new();
+                        return from dto in dtoOption
+                               select Common.GetRevisionNumber(dto);
+                    });
 
-    public async ValueTask Handle(ApiName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(ApiName name, CancellationToken cancellationToken)
-    {
-        if (await IsApiRevisionNumberCurrentInSourceControl(name, cancellationToken))
+        async ValueTask setApimCurrentRevisionNumber(ApiName name, ApiRevisionNumber newRevisionNumber, ApiRevisionNumber existingRevisionNumber, CancellationToken cancellationToken)
         {
-            logger.LogInformation("API {ApiName} is the current revision in source control. Skipping deletion...", name);
-            return;
+            if (newRevisionNumber == existingRevisionNumber)
+            {
+                return;
+            }
+
+            logger.LogInformation("Changing current revision on {ApiName} from {RevisionNumber} to {RevisionNumber}...", name, existingRevisionNumber, newRevisionNumber);
+
+            await putRevision(name, newRevisionNumber, existingRevisionNumber, cancellationToken);
+            await makeApiRevisionCurrent(name, newRevisionNumber, cancellationToken);
+            await deleteOldRevision(name, existingRevisionNumber, cancellationToken);
         }
 
-        await onDeletingHandlers.IterParallel(async handler => await handler(name, cancellationToken), cancellationToken);
-        await deleteFromApim(name, cancellationToken);
-    }
-
-    /// <summary>
-    /// We don't want to delete a revision if it was just made current. For instance:
-    /// 1. Dev has apiA  with revision 1 (current) and revision 2. Artifacts folder has:
-    ///     - /apis/apiA/apiInformation.json with revision 1 as current
-    ///     - /apis/apiA;rev=2/apiInformation.json
-    /// 2. User makes revision 2 current in dev APIM.
-    /// 3. User runs extractor for dev APIM. Artifacts folder has:
-    ///     - /apis/apiA/apiInformation.json with revision 2 as current
-    ///     - /apis/apiA;rev=1/apiInformation.json
-    ///     - /apis/apiA;rev=2 folder gets deleted.
-    /// 4. User runs publisher to prod APIM. We don't want to handle the deletion of folder /apis/apiA;rev=2, as it's the current revision.
-    private async ValueTask<bool> IsApiRevisionNumberCurrentInSourceControl(ApiName name, CancellationToken cancellationToken) =>
-        await ApiName.TryParseRevisionedName(name)
-                     .Match(async api =>
-                     {
-                         var (rootName, revisionNumber) = api;
-                         var sourceControlRevisionNumberOption = await TryGetRevisionNumberInSourceControl(rootName, cancellationToken);
-
-#pragma warning disable CA1849 // Call async methods when in an async method
-                         return sourceControlRevisionNumberOption
-                                .Map(sourceControlRevisionNumber => sourceControlRevisionNumber == revisionNumber)
-                                .IfNone(false);
-#pragma warning restore CA1849 // Call async methods when in an async method
-                     }, async _ => await ValueTask.FromResult(false));
-
-    private async ValueTask<Option<ApiRevisionNumber>> TryGetRevisionNumberInSourceControl(ApiName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-
-        return dtoOption.Map(Common.GetRevisionNumber);
-    }
-
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class OnDeletingVersionSetHandler(GetApiDtosInPreviousCommit getDtosInPreviousCommit, ProcessApi processApi)
-{
-    private readonly AsyncLazy<FrozenDictionary<VersionSetName, FrozenSet<ApiName>>> getVersionSetApis = new(async cancellationToken => await GetVersionSetApis(getDtosInPreviousCommit, cancellationToken));
-
-    /// <summary>
-    /// If a version set is about to be deleted, process the APIs that reference it
-    /// </summary>
-    public async ValueTask Handle(VersionSetName name, CancellationToken cancellationToken)
-    {
-        var apis = await GetVersionSetApis(name, cancellationToken);
-
-        await apis.IterParallel(processApi.Invoke, cancellationToken);
-    }
-
-    private static async ValueTask<FrozenDictionary<VersionSetName, FrozenSet<ApiName>>> GetVersionSetApis(GetApiDtosInPreviousCommit getDtosInPreviousCommit, CancellationToken cancellationToken) =>
-        await getDtosInPreviousCommit()
-                .ToAsyncEnumerable()
-                .Choose(async kvp =>
+        async ValueTask putRevision(ApiName name, ApiRevisionNumber revisionNumber, ApiRevisionNumber existingRevisionNumber, CancellationToken cancellationToken)
+        {
+            var dto = new ApiDto
+            {
+                Properties = new ApiDto.ApiCreateOrUpdateProperties
                 {
-                    var dtoOption = await kvp.Value(cancellationToken);
+                    ApiRevision = revisionNumber.ToString(),
+                    SourceApiId = $"/apis/{ApiName.GetRevisionedName(name, existingRevisionNumber)}"
+                }
+            };
 
-                    return from dto in dtoOption
-                           from versionSetName in ApiModule.TryGetVersionSetName(dto)
-                           select (VersionSetName: versionSetName, ApiName: kvp.Key);
-                })
-                .GroupBy(x => x.VersionSetName, x => x.ApiName)
-                .SelectAwait(async group => (group.Key, await group.ToFrozenSet(cancellationToken)))
-                .ToFrozenDictionary(cancellationToken);
+            await putApiInApim(name, dto, Option<(ApiSpecification.GraphQl, BinaryData)>.None, cancellationToken);
+        }
 
-    private async ValueTask<FrozenSet<ApiName>> GetVersionSetApis(VersionSetName name, CancellationToken cancellationToken)
-    {
-        var versionSetApis = await getVersionSetApis.WithCancellation(cancellationToken);
+        /// <summary>
+        /// If the old revision is no longer in source control, delete it from APIM. Handles this scenario:
+        /// 1. Dev and prod APIM both have apiA with current revision 1. Artifacts folder has /apis/apiA/apiInformation.json with revision 1.
+        /// 2. User changes the current revision in dev APIM from 1 to 2.
+        /// 3. User deletes revision 1 from dev APIM, as it's no longer needed.
+        /// 4. User runs extractor for dev APIM. Artifacts folder has /apis/apiA/apiInformation.json with revision 2.
+        /// 5. User runs publisher to prod APIM. The only changed artifact will be an update in apiInformation.json to revision 2, so we will create revision 2 in prod and make it current.
+        /// 
+        /// If we do nothing else, dev and prod will be inconsistent as prod will still have the revision 1 API. There was nothing in Git that told the publisher to delete revision 1.
+        /// </summary>
+        async ValueTask deleteOldRevision(ApiName name, ApiRevisionNumber oldRevisionNumber, CancellationToken cancellationToken)
+        {
+            var revisionedName = ApiName.GetRevisionedName(name, oldRevisionNumber);
 
-#pragma warning disable CA1849 // Call async methods when in an async method
-        return versionSetApis.Find(name)
-                             .IfNone(FrozenSet<ApiName>.Empty);
-#pragma warning restore CA1849 // Call async methods when in an async method
-    }
-}
+            if (isNameInSourceControl(revisionedName))
+            {
+                return;
+            }
 
-internal static class ApiServices
-{
-    public static void ConfigureFindApiAction(IServiceCollection services)
-    {
-        ConfigureTryParseApiName(services);
-        ConfigureProcessApi(services);
-
-        services.TryAddSingleton<FindApiActionHandler>();
-        services.TryAddSingleton<FindApiAction>(provider => provider.GetRequiredService<FindApiActionHandler>().Handle);
-    }
-
-    private static void ConfigureTryParseApiName(IServiceCollection services)
-    {
-        services.TryAddSingleton<TryParseApiNameHandler>();
-        services.TryAddSingleton<TryParseApiName>(provider => provider.GetRequiredService<TryParseApiNameHandler>().Handle);
+            logger.LogInformation("Deleting old revision {RevisionNumber} of {ApiName}...", oldRevisionNumber, name);
+            await deleteApiFromApim(revisionedName, cancellationToken);
+        }
     }
 
-    private static void ConfigureProcessApi(IServiceCollection services)
+    private static void ConfigureGetApiDtosInPreviousCommit(IHostApplicationBuilder builder)
     {
-        ConfigureIsApiNameInSourceControl(services);
-        ConfigurePutApi(services);
-        ConfigureDeleteApi(services);
+        CommonModule.ConfigureGetArtifactsInPreviousCommit(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        builder.Services.AddMemoryCache();
 
-        services.TryAddSingleton<ProcessApiHandler>();
-        services.TryAddSingleton<ProcessApi>(provider => provider.GetRequiredService<ProcessApiHandler>().Handle);
+        builder.Services.TryAddSingleton(GetApiDtosInPreviousCommit);
     }
 
-    private static void ConfigureIsApiNameInSourceControl(IServiceCollection services)
+    private static GetApiDtosInPreviousCommit GetApiDtosInPreviousCommit(IServiceProvider provider)
     {
-        services.TryAddSingleton<IsApiNameInSourceControlHandler>();
-        services.TryAddSingleton<IsApiNameInSourceControl>(provider => provider.GetRequiredService<IsApiNameInSourceControlHandler>().Handle);
+        var getArtifactsInPreviousCommit = provider.GetRequiredService<GetArtifactsInPreviousCommit>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var cache = provider.GetRequiredService<IMemoryCache>();
+
+        var cacheKey = Guid.NewGuid().ToString();
+
+        return () =>
+            cache.GetOrCreate(cacheKey, _ => getDtos())!;
+
+        FrozenDictionary<ApiName, Func<CancellationToken, ValueTask<Option<ApiDto>>>> getDtos() =>
+            getArtifactsInPreviousCommit()
+                .Choose(kvp => from apiName in tryGetNameFromInformationFile(kvp.Key)
+                               select (apiName, tryGetDto(kvp.Value)))
+                .ToFrozenDictionary();
+
+        Option<ApiName> tryGetNameFromInformationFile(FileInfo file) =>
+            from informationFile in ApiInformationFile.TryParse(file, serviceDirectory)
+            select informationFile.Parent.Name;
+
+        static Func<CancellationToken, ValueTask<Option<ApiDto>>> tryGetDto(Func<CancellationToken, ValueTask<Option<BinaryData>>> tryGetContents) =>
+            async cancellationToken =>
+            {
+                var contentsOption = await tryGetContents(cancellationToken);
+
+                return from contents in contentsOption
+                       select contents.ToObjectFromJson<ApiDto>();
+            };
     }
 
-    public static void ConfigurePutApi(IServiceCollection services)
+    private static void ConfigureMakeApiRevisionCurrent(IHostApplicationBuilder builder)
     {
-        ConfigureFindApiDto(services);
-        VersionSetServices.ConfigurePutVersionSet(services);
-        ConfigureCorrectApimRevisionNumber(services);
-        ConfigurePutApiInApim(services);
+        ApiReleaseModule.ConfigurePutApiReleaseInApim(builder);
+        ApiReleaseModule.ConfigureDeleteApiReleaseFromApim(builder);
 
-        services.TryAddSingleton<PutApiHandler>();
-        services.TryAddSingleton<PutApi>(provider => provider.GetRequiredService<PutApiHandler>().Handle);
+        builder.Services.TryAddSingleton(GetMakeApiRevisionCurrent);
     }
 
-    private static void ConfigureFindApiDto(IServiceCollection services)
+    private static MakeApiRevisionCurrent GetMakeApiRevisionCurrent(IServiceProvider provider)
     {
-        services.TryAddSingleton<FindApiDtoHandler>();
-        services.TryAddSingleton<FindApiDto>(provider => provider.GetRequiredService<FindApiDtoHandler>().Handle);
+        var putRelease = provider.GetRequiredService<PutApiReleaseInApim>();
+        var deleteRelease = provider.GetRequiredService<DeleteApiReleaseFromApim>();
+
+        return async (name, revisionNumber, cancellationToken) =>
+        {
+            var revisionedName = ApiName.GetRevisionedName(name, revisionNumber);
+            var releaseName = ApiReleaseName.From("apiops-set-current");
+            var releaseDto = new ApiReleaseDto
+            {
+                Properties = new ApiReleaseDto.ApiReleaseContract
+                {
+                    ApiId = $"/apis/{revisionedName}",
+                    Notes = "Setting current revision for ApiOps"
+                }
+            };
+
+            await putRelease(releaseName, releaseDto, name, cancellationToken);
+            await deleteRelease(releaseName, name, cancellationToken);
+        };
     }
 
-    private static void ConfigureCorrectApimRevisionNumber(IServiceCollection services)
+    private static void ConfigurePutApiInApim(IHostApplicationBuilder builder)
     {
-        ConfigureGetApiDtosInPreviousCommit(services);
-        ConfigurePutApiInApim(services);
-        ConfigureDeleteApiFromApim(services);
-        ConfigureIsApiNameInSourceControl(services);
-        ConfigureMakeApiRevisionCurrent(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<CorrectApimRevisionHandler>();
-        services.TryAddSingleton<CorrectApimRevisionNumber>(provider => provider.GetRequiredService<CorrectApimRevisionHandler>().Handle);
+        builder.Services.TryAddSingleton(GetPutApiInApim);
     }
 
-    private static void ConfigureGetApiDtosInPreviousCommit(IServiceCollection services)
+    private static PutApiInApim GetPutApiInApim(IServiceProvider provider)
     {
-        services.TryAddSingleton<GetApiDtosInPreviousCommitHandler>();
-        services.TryAddSingleton<GetApiDtosInPreviousCommit>(provider => provider.GetRequiredService<GetApiDtosInPreviousCommitHandler>().Handle);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, graphQlSpecificationContentsOption, cancellationToken) =>
+        {
+            logger.LogInformation("Putting API {ApiName}...", name);
+
+            var revisionNumber = Common.GetRevisionNumber(dto);
+            var uri = getRevisionedUri(name, revisionNumber);
+
+            // APIM sometimes fails revisions if isCurrent is set to true.
+            var dtoWithoutIsCurrent = dto with { Properties = dto.Properties with { IsCurrent = null } };
+
+            await uri.PutDto(dtoWithoutIsCurrent, pipeline, cancellationToken);
+
+            // Put GraphQl schema
+            await graphQlSpecificationContentsOption.IterTask(async graphQlSpecificationContents =>
+            {
+                var (_, contents) = graphQlSpecificationContents;
+                await uri.PutGraphQlSchema(contents, pipeline, cancellationToken);
+            });
+        };
+
+        ApiUri getRevisionedUri(ApiName name, ApiRevisionNumber revisionNumber)
+        {
+            var revisionedApiName = ApiName.GetRevisionedName(name, revisionNumber);
+            return ApiUri.From(revisionedApiName, serviceUri);
+        }
     }
 
-    private static void ConfigurePutApiInApim(IServiceCollection services)
+    public static void ConfigureDeleteApis(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<PutApiInApimHandler>();
-        services.TryAddSingleton<PutApiInApim>(provider => provider.GetRequiredService<PutApiInApimHandler>().Handle);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseApiName(builder);
+        ConfigureIsApiNameInSourceControl(builder);
+        ConfigureDeleteApi(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteApis);
     }
 
-    private static void ConfigureDeleteApiFromApim(IServiceCollection services)
+    private static DeleteApis GetDeleteApis(IServiceProvider provider)
     {
-        services.TryAddSingleton<DeleteApiFromApimHandler>();
-        services.TryAddSingleton<DeleteApiFromApim>(provider => provider.GetRequiredService<DeleteApiFromApimHandler>().Handle);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseApiName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsApiNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteApi>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteApis));
+
+            logger.LogInformation("Deleting APIs...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    private static void ConfigureMakeApiRevisionCurrent(IServiceCollection services)
+    private static void ConfigureDeleteApi(IHostApplicationBuilder builder)
     {
-        ApiReleaseServices.ConfigurePutApiReleaseInApim(services);
-        ApiReleaseServices.ConfigureDeleteApiReleaseFromApim(services);
+        ConfigureFindApiInformationFileDto(builder);
+        ConfigureDeleteApiFromApim(builder);
 
-        services.TryAddSingleton<MakeApiRevisionCurrentHandler>();
-        services.TryAddSingleton<MakeApiRevisionCurrent>(provider => provider.GetRequiredService<MakeApiRevisionCurrentHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteApi);
     }
 
-    private static void ConfigureDeleteApi(IServiceCollection services)
+    private static DeleteApi GetDeleteApi(IServiceProvider provider)
     {
-        ConfigureOnDeletingApi(services);
-        ConfigureFindApiDto(services);
-        ConfigureDeleteApiFromApim(services);
+        var findDto = provider.GetRequiredService<FindApiInformationFileDto>();
+        var deleteFromApim = provider.GetRequiredService<DeleteApiFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<DeleteApiHandler>();
-        services.TryAddSingleton<DeleteApi>(provider => provider.GetRequiredService<DeleteApiHandler>().Handle);
+        var taskDictionary = new ConcurrentDictionary<ApiName, AsyncLazy<Unit>>();
+
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteApi))
+                                       ?.AddTag("api.name", name);
+
+            await taskDictionary.GetOrAdd(name,
+                                          name => new AsyncLazy<Unit>(async cancellationToken =>
+                                          {
+                                              await deleteApiInner(name, cancellationToken);
+                                              return Unit.Default;
+                                          }))
+                                .WithCancellation(cancellationToken);
+        };
+
+        async ValueTask deleteApiInner(ApiName name, CancellationToken cancellationToken)
+        {
+            if (await isApiRevisionNumberCurrentInSourceControl(name, cancellationToken))
+            {
+                logger.LogInformation("API {ApiName} is the current revision in source control. Skipping deletion...", name);
+                return;
+            }
+
+            await deleteFromApim(name, cancellationToken);
+        }
+
+        /// <summary>
+        /// We don't want to delete a revision if it was just made current. For instance:
+        /// 1. Dev has apiA  with revision 1 (current) and revision 2. Artifacts folder has:
+        ///     - /apis/apiA/apiInformation.json with revision 1 as current
+        ///     - /apis/apiA;rev=2/apiInformation.json
+        /// 2. User makes revision 2 current in dev APIM.
+        /// 3. User runs extractor for dev APIM. Artifacts folder has:
+        ///     - /apis/apiA/apiInformation.json with revision 2 as current
+        ///     - /apis/apiA;rev=1/apiInformation.json
+        ///     - /apis/apiA;rev=2 folder gets deleted.
+        /// 4. User runs publisher to prod APIM. We don't want to handle the deletion of folder /apis/apiA;rev=2, as it's the current revision.
+        async ValueTask<bool> isApiRevisionNumberCurrentInSourceControl(ApiName name, CancellationToken cancellationToken) =>
+            await ApiName.TryParseRevisionedName(name)
+                         .Match(async _ => await ValueTask.FromResult(false),
+                                async api =>
+                                {
+                                    var (rootName, revisionNumber) = api;
+                                    var sourceControlRevisionNumberOption = await tryGetRevisionNumberInSourceControl(rootName, cancellationToken);
+                                    return sourceControlRevisionNumberOption
+                                           .Map(sourceControlRevisionNumber => sourceControlRevisionNumber == revisionNumber)
+                                           .IfNone(false);
+                                });
+
+        async ValueTask<Option<ApiRevisionNumber>> tryGetRevisionNumberInSourceControl(ApiName name, CancellationToken cancellationToken)
+        {
+            var dtoOption = await findDto(name, cancellationToken);
+
+            return dtoOption.Map(Common.GetRevisionNumber);
+        }
     }
 
-    private static void ConfigureOnDeletingApi(IServiceCollection services)
+    private static void ConfigureDeleteApiFromApim(IHostApplicationBuilder builder)
     {
-        SubscriptionServices.ConfigureOnDeletingApi(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteApiFromApim);
     }
 
-    public static void ConfigureOnDeletingVersionSet(IServiceCollection services)
+    private static DeleteApiFromApim GetDeleteApiFromApim(IServiceProvider provider)
     {
-        ConfigureGetApiDtosInPreviousCommit(services);
-        ConfigureProcessApi(services);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<OnDeletingVersionSetHandler>();
-        services.TryAddSingleton<OnDeletingVersionSet>(provider => provider.GetRequiredService<OnDeletingVersionSetHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting API {ApiName}...", name);
+
+            await ApiUri.From(name, serviceUri)
+                        .Delete(pipeline, cancellationToken);
+        };
     }
 }
 
 file static class Common
 {
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("ApiPublisher");
-
     public static FrozenSet<string> SpecificationFileNames { get; } =
         new[]
         {

@@ -2,56 +2,63 @@
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractApiTags(ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask ExtractApiTags(ApiName apiName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(TagName Name, ApiTagDto Dto)> ListApiTags(ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask WriteApiTagArtifacts(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
+public delegate ValueTask WriteApiTagInformationFile(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
 
-internal delegate IAsyncEnumerable<(TagName Name, ApiTagDto Dto)> ListApiTags(ApiName apiName, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteApiTagArtifacts(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteApiTagInformationFile(TagName name, ApiTagDto dto, ApiName apiName, CancellationToken cancellationToken);
-
-internal static class ApiTagServices
+internal static class ApiTagModule
 {
-    public static void ConfigureExtractApiTags(IServiceCollection services)
+    public static void ConfigureExtractApiTags(IHostApplicationBuilder builder)
     {
-        ConfigureListApiTags(services);
-        TagServices.ConfigureShouldExtractTag(services);
-        ConfigureWriteApiTagArtifacts(services);
+        ConfigureListApiTags(builder);
+        TagModule.ConfigureShouldExtractTag(builder);
+        ConfigureWriteApiTagArtifacts(builder);
 
-        services.TryAddSingleton(ExtractApiTags);
+        builder.Services.TryAddSingleton(GetExtractApiTags);
     }
 
-    private static ExtractApiTags ExtractApiTags(IServiceProvider provider)
+    private static ExtractApiTags GetExtractApiTags(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListApiTags>();
         var shouldExtractTag = provider.GetRequiredService<ShouldExtractTag>();
         var writeArtifacts = provider.GetRequiredService<WriteApiTagArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (apiName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractApiTags));
+
+            logger.LogInformation("Extracting tags for API {ApiName}...", apiName);
+
             await list(apiName, cancellationToken)
                     .Where(tag => shouldExtractTag(tag.Name))
                     .IterParallel(async tag => await writeArtifacts(tag.Name, tag.Dto, apiName, cancellationToken),
                                   cancellationToken);
+        };
     }
 
-    private static void ConfigureListApiTags(IServiceCollection services)
+    private static void ConfigureListApiTags(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceUri(services);
-        CommonServices.ConfigureHttpPipeline(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton(ListApiTags);
+        builder.Services.TryAddSingleton(GetListApiTags);
     }
 
-    private static ListApiTags ListApiTags(IServiceProvider provider)
+    private static ListApiTags GetListApiTags(IServiceProvider provider)
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
@@ -61,14 +68,14 @@ internal static class ApiTagServices
                       .List(pipeline, cancellationToken);
     }
 
-    private static void ConfigureWriteApiTagArtifacts(IServiceCollection services)
+    private static void ConfigureWriteApiTagArtifacts(IHostApplicationBuilder builder)
     {
-        ConfigureWriteApiTagInformationFile(services);
+        ConfigureWriteApiTagInformationFile(builder);
 
-        services.TryAddSingleton(WriteApiTagArtifacts);
+        builder.Services.TryAddSingleton(GetWriteApiTagArtifacts);
     }
 
-    private static WriteApiTagArtifacts WriteApiTagArtifacts(IServiceProvider provider)
+    private static WriteApiTagArtifacts GetWriteApiTagArtifacts(IServiceProvider provider)
     {
         var writeInformationFile = provider.GetRequiredService<WriteApiTagInformationFile>();
 
@@ -76,19 +83,17 @@ internal static class ApiTagServices
             await writeInformationFile(name, dto, apiName, cancellationToken);
     }
 
-    private static void ConfigureWriteApiTagInformationFile(IServiceCollection services)
+    private static void ConfigureWriteApiTagInformationFile(IHostApplicationBuilder builder)
     {
-        CommonServices.ConfigureManagementServiceDirectory(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        services.TryAddSingleton(WriteApiTagInformationFile);
+        builder.Services.TryAddSingleton(GetWriteApiTagInformationFile);
     }
 
-    private static WriteApiTagInformationFile WriteApiTagInformationFile(IServiceProvider provider)
+    private static WriteApiTagInformationFile GetWriteApiTagInformationFile(IServiceProvider provider)
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
-        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
-
-        var logger = Common.GetLogger(loggerFactory);
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (name, dto, apiName, cancellationToken) =>
         {
@@ -98,10 +103,4 @@ internal static class ApiTagServices
             await informationFile.WriteDto(dto, cancellationToken);
         };
     }
-}
-
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("ApiTagExtractor");
 }

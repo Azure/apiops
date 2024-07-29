@@ -46,28 +46,6 @@ public static class OptionExtensions
     public static async ValueTask<Option<T2>> BindTask<T, T2>(this Option<T> option, Func<T, CancellationToken, ValueTask<Option<T2>>> bind, CancellationToken cancellationToken) =>
         await option.Match(t => bind(t, cancellationToken), () => ValueTask.FromResult(Option<T2>.None));
 
-    public static async ValueTask<Option<T>> Where<T>(this Option<T> option, Func<T, ValueTask<bool>> predicate) =>
-        await option.BindTask(async t => await predicate(t)
-                                         ? Option<T>.Some(t)
-                                         : Option<T>.None);
-
-    /// <summary>
-    /// Run each function until one returns Some. If none return Some, return None.
-    /// </summary>
-    public static async ValueTask<Option<T>> PickFirst<T>(this IEnumerable<Func<ValueTask<Option<T>>>> functions, CancellationToken cancellationToken) =>
-        await functions.ToAsyncEnumerable()
-                       .Pick(async f => await f(), cancellationToken);
-
-    /// <summary>
-    /// Run each function until one returns Some. If none return Some, return None.
-    /// </summary>
-    public static async ValueTask<Option<T>> PickFirst<T>(this IEnumerable<Func<Task<Option<T>>>> functions, CancellationToken cancellationToken) =>
-        await functions.ToAsyncEnumerable()
-                       .Pick(async f => await f(), cancellationToken);
-
-    public static Option<T> Or<T>(this Option<T> option, Func<Option<T>> alternative) =>
-        option.Match(Option<T>.Some, alternative);
-
     public static async ValueTask<Option<T>> Or<T>(this Option<T> option, Func<ValueTask<Option<T>>> alternative) =>
          await option.Match(t => ValueTask.FromResult(Option<T>.Some(t)), alternative);
 

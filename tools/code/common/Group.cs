@@ -169,17 +169,6 @@ public static class GroupModule
         return content.ToObjectFromJson<GroupDto>();
     }
 
-    public static async ValueTask<Option<GroupDto>> TryGetDto(this GroupUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<GroupDto>())
-                     .Match(Option<GroupDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<GroupDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
-    }
-
     public static async ValueTask Delete(this GroupUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var either = await pipeline.TryDeleteResource(uri.ToUri(), waitForCompletion: true, cancellationToken);

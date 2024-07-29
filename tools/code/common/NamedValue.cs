@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -184,17 +183,6 @@ public static class NamedValueModule
     {
         var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
         return content.ToObjectFromJson<NamedValueDto>();
-    }
-
-    public static async ValueTask<Option<NamedValueDto>> TryGetDto(this NamedValueUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var either = await pipeline.TryGetContent(uri.ToUri(), cancellationToken);
-
-        return either.Map(content => content.ToObjectFromJson<NamedValueDto>())
-                     .Match(Option<NamedValueDto>.Some,
-                            response => response.Status == (int)HttpStatusCode.NotFound
-                                          ? Option<NamedValueDto>.None
-                                          : throw response.ToHttpRequestException(uri.ToUri()));
     }
 
     public static async ValueTask Delete(this NamedValueUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>

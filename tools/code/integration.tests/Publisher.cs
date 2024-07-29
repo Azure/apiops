@@ -4,6 +4,7 @@ using CsCheck;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using publisher;
 using System;
@@ -20,11 +21,10 @@ using YamlDotNet.System.Text.Json;
 
 namespace integration.tests;
 
-internal delegate ValueTask RunPublisher(PublisherOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
+public delegate ValueTask RunPublisher(PublisherOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
+public delegate ValueTask ValidatePublishedArtifacts(PublisherOptions options, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 
-internal delegate ValueTask ValidatePublishedArtifacts(PublisherOptions options, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-internal sealed record PublisherOptions
+public sealed record PublisherOptions
 {
     public required FrozenDictionary<NamedValueName, NamedValueDto> NamedValueOverrides { get; init; }
     public required FrozenDictionary<TagName, TagDto> TagOverrides { get; init; }
@@ -41,19 +41,19 @@ internal sealed record PublisherOptions
     public required FrozenDictionary<SubscriptionName, SubscriptionDto> SubscriptionOverrides { get; init; }
 
     public static Gen<PublisherOptions> Generate(ServiceModel serviceModel) =>
-        from namedValues in GenerateOverrides(serviceModel.NamedValues, NamedValue.GetDtoDictionary, NamedValue.GenerateOverride)
-        from tags in GenerateOverrides(serviceModel.Tags, Tag.GetDtoDictionary, Tag.GenerateOverride)
-        from gateways in GenerateOverrides(serviceModel.Gateways, Gateway.GetDtoDictionary, Gateway.GenerateOverride)
-        from versionSets in GenerateOverrides(serviceModel.VersionSets, VersionSet.GetDtoDictionary, VersionSet.GenerateOverride)
-        from backends in GenerateOverrides(serviceModel.Backends, Backend.GetDtoDictionary, Backend.GenerateOverride)
-        from loggers in GenerateOverrides(serviceModel.Loggers, Logger.GetDtoDictionary, Logger.GenerateOverride)
-        from diagnostics in GenerateOverrides(serviceModel.Diagnostics, Diagnostic.GetDtoDictionary, Diagnostic.GenerateOverride)
-        from policyFragments in GenerateOverrides(serviceModel.PolicyFragments, PolicyFragment.GetDtoDictionary, PolicyFragment.GenerateOverride)
-        from servicePolicies in GenerateOverrides(serviceModel.ServicePolicies, ServicePolicy.GetDtoDictionary, ServicePolicy.GenerateOverride)
-        from products in GenerateOverrides(serviceModel.Products, Product.GetDtoDictionary, Product.GenerateOverride)
-        from groups in GenerateOverrides(serviceModel.Groups, Group.GetDtoDictionary, Group.GenerateOverride)
-        from apis in GenerateOverrides(serviceModel.Apis, Api.GetDtoDictionary, Api.GenerateOverride)
-        from subscriptions in GenerateOverrides(serviceModel.Subscriptions, Subscription.GetDtoDictionary, Subscription.GenerateOverride)
+        from namedValues in GenerateOverrides(serviceModel.NamedValues, NamedValueModule.GetDtoDictionary, NamedValueModule.GenerateOverride)
+        from tags in GenerateOverrides(serviceModel.Tags, TagModule.GetDtoDictionary, TagModule.GenerateOverride)
+        from gateways in GenerateOverrides(serviceModel.Gateways, GatewayModule.GetDtoDictionary, GatewayModule.GenerateOverride)
+        from versionSets in GenerateOverrides(serviceModel.VersionSets, VersionSetModule.GetDtoDictionary, VersionSetModule.GenerateOverride)
+        from backends in GenerateOverrides(serviceModel.Backends, BackendModule.GetDtoDictionary, BackendModule.GenerateOverride)
+        from loggers in GenerateOverrides(serviceModel.Loggers, LoggerModule.GetDtoDictionary, LoggerModule.GenerateOverride)
+        from diagnostics in GenerateOverrides(serviceModel.Diagnostics, DiagnosticModule.GetDtoDictionary, DiagnosticModule.GenerateOverride)
+        from policyFragments in GenerateOverrides(serviceModel.PolicyFragments, PolicyFragmentModule.GetDtoDictionary, PolicyFragmentModule.GenerateOverride)
+        from servicePolicies in GenerateOverrides(serviceModel.ServicePolicies, ServicePolicyModule.GetDtoDictionary, ServicePolicyModule.GenerateOverride)
+        from products in GenerateOverrides(serviceModel.Products, ProductModule.GetDtoDictionary, ProductModule.GenerateOverride)
+        from groups in GenerateOverrides(serviceModel.Groups, GroupModule.GetDtoDictionary, GroupModule.GenerateOverride)
+        from apis in GenerateOverrides(serviceModel.Apis, ApiModule.GetDtoDictionary, ApiModule.GenerateOverride)
+        from subscriptions in GenerateOverrides(serviceModel.Subscriptions, SubscriptionModule.GetDtoDictionary, SubscriptionModule.GenerateOverride)
         select new PublisherOptions
         {
             NamedValueOverrides = namedValues,
@@ -79,8 +79,8 @@ internal sealed record PublisherOptions
 
     private static Gen<FrozenDictionary<TName, TDto>> GenerateOverrides<TName, TDto>(IDictionary<TName, TDto> models, Func<TDto, Gen<TDto>> dtoGen) where TName : notnull =>
         from modelsToOverride in Generator.SubImmutableArrayOf(models)
-        from overrides in modelsToOverride.Map(model => from newDto in dtoGen(model.Value)
-                                                        select (model.Key, newDto))
+        from overrides in modelsToOverride.Select(model => from newDto in dtoGen(model.Value)
+                                                           select (model.Key, newDto))
                                           .SequenceToFrozenSet(x => x.Key)
         select overrides.ToFrozenDictionary();
 
@@ -117,15 +117,15 @@ internal sealed record PublisherOptions
     {
         var sectionName = OverrideDtoFactory.GetSectionName<TName>();
         var getNameToWrite = (TName name) => (JsonNode?)OverrideDtoFactory.GetNameToFind(name);
-        var overridesJson = overrides.Map(kvp => JsonObjectExtensions.Parse(kvp.Value)
-                                                                     .SetProperty("name", getNameToWrite(kvp.Key)))
+        var overridesJson = overrides.Select(kvp => JsonObjectExtensions.Parse(kvp.Value)
+                                                                        .SetProperty("name", getNameToWrite(kvp.Key)))
                                      .ToJsonArray();
 
         return jsonObject.SetProperty(sectionName, overridesJson);
     }
 
     public static FrozenDictionary<TName, TDto> Override<TName, TDto>(IDictionary<TName, TDto> dtos, IDictionary<TName, TDto> overrides) where TName : notnull =>
-        dtos.Map(kvp =>
+        dtos.Select(kvp =>
         {
             var key = kvp.Key switch
             {
@@ -141,171 +141,124 @@ internal sealed record PublisherOptions
         }).ToFrozenDictionary();
 }
 
-file sealed class RunPublisherHandler(ILogger<RunPublisher> logger,
-                                      ActivitySource activitySource,
-                                      GetSubscriptionId getSubscriptionId,
-                                      GetResourceGroupName getResourceGroupName,
-                                      GetBearerToken getBearerToken)
+public static class PublisherModule
 {
-    public async ValueTask Handle(PublisherOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken)
+    public static void ConfigureRunPublisher(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(RunPublisher));
-
-        logger.LogInformation("Running publisher...");
-
-        var configurationFileOption = await TryGetConfigurationYamlFile(options, serviceDirectory, cancellationToken);
-        var arguments = await GetArguments(serviceName, serviceDirectory, configurationFileOption, commitIdOption, cancellationToken);
-        await publisher.Program.Main(arguments);
+        builder.Services.TryAddSingleton(GetRunPublisher);
     }
 
-    private static async ValueTask<Option<FileInfo>> TryGetConfigurationYamlFile(PublisherOptions options, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+    private static RunPublisher GetRunPublisher(IServiceProvider provider)
     {
-        var optionsJson = options.ToJsonObject();
-        if (optionsJson.Count == 0)
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (options, serviceName, serviceDirectory, commitIdOption, cancellationToken) =>
         {
-            return Option<FileInfo>.None;
+            using var _ = activitySource.StartActivity(nameof(RunPublisher))
+                                       ?.AddTag("commit.id", commitIdOption.ToString());
+
+            logger.LogInformation("Running publisher...");
+
+            var configurationFileOption = await tryGetConfigurationYamlFile(options, serviceDirectory, cancellationToken);
+            var arguments = getArguments(serviceName, serviceDirectory, configurationFileOption, commitIdOption, cancellationToken);
+            await publisher.Program.Main(arguments);
+        };
+
+        static async ValueTask<Option<FileInfo>> tryGetConfigurationYamlFile(PublisherOptions options, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var optionsJson = options.ToJsonObject();
+            if (optionsJson.Count == 0)
+            {
+                return Option<FileInfo>.None;
+            }
+
+            var yamlFilePath = Path.Combine(serviceDirectory.ToDirectoryInfo().FullName, "configuration.publisher.yaml");
+            var yamlFile = new FileInfo(yamlFilePath);
+            await writeYamlToFile(optionsJson, yamlFile, cancellationToken);
+
+            return yamlFile;
         }
 
-        var yamlFilePath = Path.Combine(serviceDirectory.ToDirectoryInfo().FullName, "configuration.publisher.yaml");
-        var yamlFile = new FileInfo(yamlFilePath);
-        await WriteYamlToFile(optionsJson, yamlFile, cancellationToken);
-
-        return yamlFile;
-    }
-
-    private static async ValueTask WriteYamlToFile(JsonNode json, FileInfo file, CancellationToken cancellationToken)
-    {
-        var yaml = YamlConverter.Serialize(json);
-        var content = BinaryData.FromString(yaml);
-        await file.OverwriteWithBinaryData(content, cancellationToken);
-    }
-
-    private async ValueTask<string[]> GetArguments(ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, Option<FileInfo> configurationFileOption, Option<CommitId> commitIdOption, CancellationToken cancellationToken)
-    {
-        var argumentDictionary = new Dictionary<string, string>
+        static async ValueTask writeYamlToFile(JsonNode json, FileInfo file, CancellationToken cancellationToken)
         {
-            [$"{GetApiManagementServiceNameParameter()}"] = serviceName.ToString(),
-            ["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"] = serviceDirectory.ToDirectoryInfo().FullName,
-            ["AZURE_SUBSCRIPTION_ID"] = getSubscriptionId(),
-            ["AZURE_RESOURCE_GROUP_NAME"] = getResourceGroupName(),
-            ["AZURE_BEARER_TOKEN"] = await getBearerToken(cancellationToken)
-        };
+            var yaml = YamlConverter.Serialize(json);
+            var content = BinaryData.FromString(yaml);
+            await file.OverwriteWithBinaryData(content, cancellationToken);
+        }
 
-#pragma warning disable CA1849 // Call async methods when in an async method
-        configurationFileOption.Iter(file => argumentDictionary.Add("CONFIGURATION_YAML_PATH", file.FullName));
-        commitIdOption.Iter(id => argumentDictionary.Add("COMMIT_ID", id.Value));
-#pragma warning restore CA1849 // Call async methods when in an async method
-
-        return argumentDictionary.Aggregate(Array.Empty<string>(), (arguments, kvp) => [.. arguments, $"--{kvp.Key}", kvp.Value]);
-    }
-
-    private static string GetApiManagementServiceNameParameter() =>
-        Gen.OneOfConst("API_MANAGEMENT_SERVICE_NAME", "apimServiceName").Single();
-}
-
-file sealed class ValidatePublishedArtifactsHandler(ILogger<ValidatePublishedArtifacts> logger,
-                                                    ActivitySource activitySource,
-                                                    ValidatePublishedNamedValues validateNamedValues,
-                                                    ValidatePublishedTags validateTags,
-                                                    ValidatePublishedVersionSets validateVersionSets,
-                                                    ValidatePublishedBackends validateBackends,
-                                                    ValidatePublishedLoggers validateLoggers,
-                                                    ValidatePublishedDiagnostics validateDiagnostics,
-                                                    ValidatePublishedPolicyFragments validatePolicyFragments,
-                                                    ValidatePublishedServicePolicies validateServicePolicies,
-                                                    ValidatePublishedGroups validateGroups,
-                                                    ValidatePublishedProducts validateProducts,
-                                                    ValidatePublishedApis validateApis)
-{
-    public async ValueTask Handle(PublisherOptions options, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidatePublishedArtifacts));
-
-        logger.LogInformation("Validating published artifacts...");
-
-        await validateNamedValues(options.NamedValueOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateTags(options.TagOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateVersionSets(options.VersionSetOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateBackends(options.BackendOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateLoggers(options.LoggerOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateDiagnostics(options.DiagnosticOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validatePolicyFragments(options.PolicyFragmentOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateServicePolicies(options.ServicePolicyOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateGroups(options.GroupOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateProducts(options.ProductOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-        await validateApis(options.ApiOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
-    }
-}
-
-internal static class PublisherServices
-{
-    public static void ConfigureRunPublisher(IServiceCollection services)
-    {
-        services.TryAddSingleton<RunPublisherHandler>();
-        services.TryAddSingleton<RunPublisher>(provider => provider.GetRequiredService<RunPublisherHandler>().Handle);
-    }
-
-    public static void ConfigureValidatePublishedArtifacts(IServiceCollection services)
-    {
-        NamedValueServices.ConfigureValidatePublishedNamedValues(services);
-        TagServices.ConfigureValidatePublishedTags(services);
-        VersionSetServices.ConfigureValidatePublishedVersionSets(services);
-        BackendServices.ConfigureValidatePublishedBackends(services);
-        LoggerServices.ConfigureValidatePublishedLoggers(services);
-        DiagnosticServices.ConfigureValidatePublishedDiagnostics(services);
-        PolicyFragmentServices.ConfigureValidatePublishedPolicyFragments(services);
-        ServicePolicyServices.ConfigureValidatePublishedServicePolicies(services);
-        GroupServices.ConfigureValidatePublishedGroups(services);
-        ProductServices.ConfigureValidatePublishedProducts(services);
-        ApiServices.ConfigureValidatePublishedApis(services);
-
-        services.TryAddSingleton<ValidatePublishedArtifactsHandler>();
-        services.TryAddSingleton<ValidatePublishedArtifacts>(provider => provider.GetRequiredService<ValidatePublishedArtifactsHandler>().Handle);
-    }
-}
-
-internal static class Publisher
-{
-    public static async ValueTask Run(PublisherOptions options, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, string subscriptionId, string resourceGroupName, string bearerToken, Option<CommitId> commitId, CancellationToken cancellationToken)
-    {
-        var argumentDictionary = new Dictionary<string, string>
+        static string[] getArguments(ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, Option<FileInfo> configurationFileOption, Option<CommitId> commitIdOption, CancellationToken cancellationToken)
         {
-            [$"{GetApiManagementServiceNameParameter()}"] = serviceName.ToString(),
-            ["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"] = serviceDirectory.ToDirectoryInfo().FullName,
-            ["AZURE_SUBSCRIPTION_ID"] = subscriptionId,
-            ["AZURE_RESOURCE_GROUP_NAME"] = resourceGroupName,
-            ["AZURE_BEARER_TOKEN"] = bearerToken,
-            ["Logging:LogLevel:Default"] = "Trace"
+            var argumentDictionary = new Dictionary<string, string>
+            {
+                [$"{getApiManagementServiceNameParameter()}"] = serviceName.ToString(),
+                ["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"] = serviceDirectory.ToDirectoryInfo().FullName
+            };
+
+            configurationFileOption.Iter(file => argumentDictionary.Add("CONFIGURATION_YAML_PATH", file.FullName));
+
+            commitIdOption.Iter(id => argumentDictionary.Add("COMMIT_ID", id.Value));
+
+            return argumentDictionary.Aggregate(Array.Empty<string>(), (arguments, kvp) => [.. arguments, $"--{kvp.Key}", kvp.Value]);
+        }
+
+        static string getApiManagementServiceNameParameter() =>
+            Gen.OneOfConst("API_MANAGEMENT_SERVICE_NAME", "apimServiceName").Single();
+    }
+
+    public static void ConfigureValidatePublishedArtifacts(IHostApplicationBuilder builder)
+    {
+        NamedValueModule.ConfigureValidatePublishedNamedValues(builder);
+        TagModule.ConfigureValidatePublishedTags(builder);
+        VersionSetModule.ConfigureValidatePublishedVersionSets(builder);
+        BackendModule.ConfigureValidatePublishedBackends(builder);
+        LoggerModule.ConfigureValidatePublishedLoggers(builder);
+        DiagnosticModule.ConfigureValidatePublishedDiagnostics(builder);
+        PolicyFragmentModule.ConfigureValidatePublishedPolicyFragments(builder);
+        ServicePolicyModule.ConfigureValidatePublishedServicePolicies(builder);
+        GroupModule.ConfigureValidatePublishedGroups(builder);
+        ProductModule.ConfigureValidatePublishedProducts(builder);
+        ApiModule.ConfigureValidatePublishedApis(builder);
+        SubscriptionModule.ConfigureValidatePublishedSubscriptions(builder);
+
+        builder.Services.TryAddSingleton(GetValidatePublishedArtifacts);
+    }
+
+    private static ValidatePublishedArtifacts GetValidatePublishedArtifacts(IServiceProvider provider)
+    {
+        var validateNamedValues = provider.GetRequiredService<ValidatePublishedNamedValues>();
+        var validateTags = provider.GetRequiredService<ValidatePublishedTags>();
+        var validateVersionSets = provider.GetRequiredService<ValidatePublishedVersionSets>();
+        var validateBackends = provider.GetRequiredService<ValidatePublishedBackends>();
+        var validateLoggers = provider.GetRequiredService<ValidatePublishedLoggers>();
+        var validateDiagnostics = provider.GetRequiredService<ValidatePublishedDiagnostics>();
+        var validatePolicyFragments = provider.GetRequiredService<ValidatePublishedPolicyFragments>();
+        var validateServicePolicies = provider.GetRequiredService<ValidatePublishedServicePolicies>();
+        var validateGroups = provider.GetRequiredService<ValidatePublishedGroups>();
+        var validateProducts = provider.GetRequiredService<ValidatePublishedProducts>();
+        var validateApis = provider.GetRequiredService<ValidatePublishedApis>();
+        var validateSubscriptions = provider.GetRequiredService<ValidatePublishedSubscriptions>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (options, commitIdOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidatePublishedArtifacts));
+
+            logger.LogInformation("Validating published artifacts...");
+
+            await validateNamedValues(options.NamedValueOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateTags(options.TagOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateVersionSets(options.VersionSetOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateBackends(options.BackendOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateLoggers(options.LoggerOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateDiagnostics(options.DiagnosticOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validatePolicyFragments(options.PolicyFragmentOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateServicePolicies(options.ServicePolicyOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateGroups(options.GroupOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateProducts(options.ProductOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateApis(options.ApiOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+            await validateSubscriptions(options.SubscriptionOverrides, commitIdOption, serviceName, serviceDirectory, cancellationToken);
         };
-
-#pragma warning disable CA1849 // Call async methods when in an async method
-        commitId.Iter(id => argumentDictionary.Add("COMMIT_ID", id.Value));
-#pragma warning restore CA1849 // Call async methods when in an async method
-
-        var yamlFile = await WriteConfigurationYaml(options, serviceDirectory, cancellationToken);
-        argumentDictionary.Add("CONFIGURATION_YAML_PATH", yamlFile.FullName);
-
-        var arguments = argumentDictionary.Aggregate(Array.Empty<string>(), (arguments, kvp) => [.. arguments, $"--{kvp.Key}", kvp.Value]);
-        await Program.Main(arguments);
-    }
-
-    private static string GetApiManagementServiceNameParameter() =>
-        Gen.OneOfConst("API_MANAGEMENT_SERVICE_NAME", "apimServiceName").Single();
-
-    private static async ValueTask<FileInfo> WriteConfigurationYaml(PublisherOptions options, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        var yamlFilePath = Path.Combine(serviceDirectory.ToDirectoryInfo().FullName, "configuration.publisher.yaml");
-        var yamlFile = new FileInfo(yamlFilePath);
-        var json = options.ToJsonObject();
-        await WriteYamlToFile(json, yamlFile, cancellationToken);
-
-        return yamlFile;
-    }
-
-    private static async ValueTask WriteYamlToFile(JsonNode json, FileInfo file, CancellationToken cancellationToken)
-    {
-        var yaml = YamlConverter.Serialize(json);
-        var content = BinaryData.FromString(yaml);
-        await file.OverwriteWithBinaryData(content, cancellationToken);
     }
 }

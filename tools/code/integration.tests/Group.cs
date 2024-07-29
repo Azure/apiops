@@ -7,6 +7,7 @@ using LanguageExt;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using publisher;
 using System;
@@ -19,274 +20,308 @@ using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal delegate ValueTask DeleteAllGroups(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteAllGroups(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask PutGroupModels(IEnumerable<GroupModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask ValidateExtractedGroups(Option<FrozenSet<GroupName>> groupNamesOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<GroupName, GroupDto>> GetApimGroups(ManagementServiceName serviceName, CancellationToken cancellationToken);
+public delegate ValueTask<FrozenDictionary<GroupName, GroupDto>> GetFileGroups(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
+public delegate ValueTask WriteGroupModels(IEnumerable<GroupModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+public delegate ValueTask ValidatePublishedGroups(IDictionary<GroupName, GroupDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 
-internal delegate ValueTask PutGroupModels(IEnumerable<GroupModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidateExtractedGroups(Option<FrozenSet<GroupName>> namesFilterOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<GroupName, GroupDto>> GetApimGroups(ManagementServiceName serviceName, CancellationToken cancellationToken);
-
-file delegate ValueTask<FrozenDictionary<GroupName, GroupDto>> GetFileGroups(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken);
-
-internal delegate ValueTask WriteGroupModels(IEnumerable<GroupModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-internal delegate ValueTask ValidatePublishedGroups(IDictionary<GroupName, GroupDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
-
-file sealed class DeleteAllGroupsHandler(ILogger<DeleteAllGroups> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
+public static class GroupModule
 {
-    public async ValueTask Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
+    public static void ConfigureDeleteAllGroups(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(DeleteAllGroups));
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        logger.LogInformation("Deleting all groups in {ServiceName}...", serviceName);
-        var serviceUri = getServiceUri(serviceName);
-        await GroupsUri.From(serviceUri).DeleteAll(pipeline, cancellationToken);
+        builder.Services.TryAddSingleton(GetDeleteAllGroups);
     }
-}
 
-file sealed class PutGroupModelsHandler(ILogger<PutGroupModels> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<GroupModel> models, ManagementServiceName serviceName, CancellationToken cancellationToken)
+    private static DeleteAllGroups GetDeleteAllGroups(IServiceProvider provider)
     {
-        using var _ = activitySource.StartActivity(nameof(PutGroupModels));
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        logger.LogInformation("Putting group models in {ServiceName}...", serviceName);
-        await models.IterParallel(async model =>
+        return async (serviceName, cancellationToken) =>
         {
-            await Put(model, serviceName, cancellationToken);
-        }, cancellationToken);
-    }
+            using var _ = activitySource.StartActivity(nameof(DeleteAllGroups));
 
-    private async ValueTask Put(GroupModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        var serviceUri = getServiceUri(serviceName);
-        var uri = GroupUri.From(model.Name, serviceUri);
-        var dto = GetDto(model);
+            logger.LogInformation("Deleting all groups in {ServiceName}...", serviceName);
 
-        await uri.PutDto(dto, pipeline, cancellationToken);
-    }
+            var serviceUri = getServiceUri(serviceName);
 
-    private static GroupDto GetDto(GroupModel model) =>
-        new()
-        {
-            Properties = new GroupDto.GroupContract
-            {
-                DisplayName = model.DisplayName,
-                Description = model.Description.ValueUnsafe()
-            }
+            await GroupsUri.From(serviceUri)
+                           .DeleteAll(pipeline, cancellationToken);
         };
-}
-
-file sealed class ValidateExtractedGroupsHandler(ILogger<ValidateExtractedGroups> logger, GetApimGroups getApimResources, GetFileGroups getFileResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(Option<FrozenSet<GroupName>> namesFilterOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidateExtractedGroups));
-
-        logger.LogInformation("Validating extracted groups in {ServiceName}...", serviceName);
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
-
-        var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, namesFilterOption))
-                                    .MapValue(NormalizeDto);
-        var actual = fileResources.MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
     }
 
-    private static string NormalizeDto(GroupDto dto) =>
-        new
+    public static void ConfigurePutGroupModels(IHostApplicationBuilder builder)
+    {
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutGroupModels);
+    }
+
+    private static PutGroupModels GetPutGroupModels(IServiceProvider provider)
+    {
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceName, cancellationToken) =>
         {
-            DisplayName = dto.Properties.DisplayName ?? string.Empty,
-            Description = dto.Properties.Description ?? string.Empty
-        }.ToString()!;
-}
+            using var _ = activitySource.StartActivity(nameof(PutGroupModels));
 
-file sealed class GetApimGroupsHandler(ILogger<GetApimGroups> logger, GetManagementServiceUri getServiceUri, HttpPipeline pipeline, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<GroupName, GroupDto>> Handle(ManagementServiceName serviceName, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetApimGroups));
+            logger.LogInformation("Putting group models in {ServiceName}...", serviceName);
 
-        logger.LogInformation("Getting groups from {ServiceName}...", serviceName);
-
-        var serviceUri = getServiceUri(serviceName);
-        var uri = GroupsUri.From(serviceUri);
-
-        return await uri.List(pipeline, cancellationToken)
-                        .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class GetFileGroupsHandler(ILogger<GetFileGroups> logger, ActivitySource activitySource)
-{
-    public async ValueTask<FrozenDictionary<GroupName, GroupDto>> Handle(ManagementServiceDirectory serviceDirectory, Option<CommitId> commitIdOption, CancellationToken cancellationToken) =>
-        await commitIdOption.Map(commitId => GetWithCommit(serviceDirectory, commitId, cancellationToken))
-                           .IfNone(() => GetWithoutCommit(serviceDirectory, cancellationToken));
-
-    private async ValueTask<FrozenDictionary<GroupName, GroupDto>> GetWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileGroups));
-
-        logger.LogInformation("Getting groups from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
-
-        return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
-                        .ToAsyncEnumerable()
-                        .Choose(file => GroupInformationFile.TryParse(file, serviceDirectory))
-                        .Choose(async file => await TryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
-                        .ToFrozenDictionary(cancellationToken);
-    }
-
-    private static async ValueTask<Option<(GroupName name, GroupDto dto)>> TryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, GroupInformationFile file, CancellationToken cancellationToken)
-    {
-        var name = file.Parent.Name;
-        var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
-
-        return await contentsOption.MapTask(async contents =>
-        {
-            using (contents)
+            await models.IterParallel(async model =>
             {
-                var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
-                var dto = data.ToObjectFromJson<GroupDto>();
-                return (name, dto);
-            }
-        });
-    }
-
-    private async ValueTask<FrozenDictionary<GroupName, GroupDto>> GetWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(GetFileGroups));
-
-        logger.LogInformation("Getting groups from {ServiceDirectory}...", serviceDirectory);
-
-        return await GroupModule.ListInformationFiles(serviceDirectory)
-                              .ToAsyncEnumerable()
-                              .SelectAwait(async file => (file.Parent.Name,
-                                                          await file.ReadDto(cancellationToken)))
-                              .ToFrozenDictionary(cancellationToken);
-    }
-}
-
-file sealed class WriteGroupModelsHandler(ILogger<WriteGroupModels> logger, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IEnumerable<GroupModel> models, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(WriteGroupModels));
-
-        logger.LogInformation("Writing group models to {ServiceDirectory}...", serviceDirectory);
-        await models.IterParallel(async model =>
-        {
-            await WriteInformationFile(model, serviceDirectory, cancellationToken);
-        }, cancellationToken);
-    }
-
-    private static async ValueTask WriteInformationFile(GroupModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        var informationFile = GroupInformationFile.From(model.Name, serviceDirectory);
-        var dto = GetDto(model);
-
-        await informationFile.WriteDto(dto, cancellationToken);
-    }
-
-    private static GroupDto GetDto(GroupModel model) =>
-        new()
-        {
-            Properties = new GroupDto.GroupContract
-            {
-                DisplayName = model.DisplayName,
-                Description = model.Description.ValueUnsafe()
-            }
+                await put(model, serviceName, cancellationToken);
+            }, cancellationToken);
         };
-}
 
-file sealed class ValidatePublishedGroupsHandler(ILogger<ValidatePublishedGroups> logger, GetFileGroups getFileResources, GetApimGroups getApimResources, ActivitySource activitySource)
-{
-    public async ValueTask Handle(IDictionary<GroupName, GroupDto> overrides, Option<CommitId> commitIdOption, ManagementServiceName serviceName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(ValidatePublishedGroups));
-
-        logger.LogInformation("Validating published groups in {ServiceDirectory}...", serviceDirectory);
-
-        var apimResources = await getApimResources(serviceName, cancellationToken);
-        var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
-
-        var expected = PublisherOptions.Override(fileResources, overrides)
-                                       .Where(kvp => (kvp.Value.Properties.Type?.Contains("system", StringComparison.OrdinalIgnoreCase) ?? false) is false)
-                                       .MapValue(NormalizeDto);
-        var actual = apimResources.Where(kvp => (kvp.Value.Properties.Type?.Contains("system", StringComparison.OrdinalIgnoreCase) ?? false) is false)
-                                  .MapValue(NormalizeDto);
-
-        actual.Should().BeEquivalentTo(expected);
-    }
-
-    private static string NormalizeDto(GroupDto dto) =>
-        new
+        async ValueTask put(GroupModel model, ManagementServiceName serviceName, CancellationToken cancellationToken)
         {
-            DisplayName = dto.Properties.DisplayName ?? string.Empty,
-            Description = dto.Properties.Description ?? string.Empty
-        }.ToString()!;
-}
+            var serviceUri = getServiceUri(serviceName);
 
-internal static class GroupServices
-{
-    public static void ConfigureDeleteAllGroups(IServiceCollection services)
-    {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+            var dto = getDto(model);
 
-        services.TryAddSingleton<DeleteAllGroupsHandler>();
-        services.TryAddSingleton<DeleteAllGroups>(provider => provider.GetRequiredService<DeleteAllGroupsHandler>().Handle);
+            await GroupUri.From(model.Name, serviceUri)
+                          .PutDto(dto, pipeline, cancellationToken);
+        }
+
+        static GroupDto getDto(GroupModel model) =>
+            new()
+            {
+                Properties = new GroupDto.GroupContract
+                {
+                    DisplayName = model.DisplayName,
+                    Description = model.Description.ValueUnsafe()
+                }
+            };
     }
 
-    public static void ConfigurePutGroupModels(IServiceCollection services)
+    public static void ConfigureValidateExtractedGroups(IHostApplicationBuilder builder)
     {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+        ConfigureGetApimGroups(builder);
+        ConfigureGetFileGroups(builder);
 
-        services.TryAddSingleton<PutGroupModelsHandler>();
-        services.TryAddSingleton<PutGroupModels>(provider => provider.GetRequiredService<PutGroupModelsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetValidateExtractedGroups);
     }
 
-    public static void ConfigureValidateExtractedGroups(IServiceCollection services)
+    private static ValidateExtractedGroups GetValidateExtractedGroups(IServiceProvider provider)
     {
-        ConfigureGetApimGroups(services);
-        ConfigureGetFileGroups(services);
+        var getApimResources = provider.GetRequiredService<GetApimGroups>();
+        var tryGetApimGraphQlSchema = provider.GetRequiredService<TryGetApimGraphQlSchema>();
+        var getFileResources = provider.GetRequiredService<GetFileGroups>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidateExtractedGroupsHandler>();
-        services.TryAddSingleton<ValidateExtractedGroups>(provider => provider.GetRequiredService<ValidateExtractedGroupsHandler>().Handle);
+        return async (namesFilterOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidateExtractedGroups));
+
+            logger.LogInformation("Validating extracted groups in {ServiceName}...", serviceName);
+
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, Prelude.None, cancellationToken);
+
+            var expected = apimResources.WhereKey(name => ExtractorOptions.ShouldExtract(name, namesFilterOption))
+                                        .MapValue(normalizeDto)
+                                        .ToFrozenDictionary();
+
+            var actual = fileResources.MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        };
+
+        static string normalizeDto(GroupDto dto) =>
+            new
+            {
+                DisplayName = dto.Properties.DisplayName ?? string.Empty,
+                Description = dto.Properties.Description ?? string.Empty
+            }.ToString()!;
     }
 
-    private static void ConfigureGetApimGroups(IServiceCollection services)
+    public static void ConfigureGetApimGroups(IHostApplicationBuilder builder)
     {
-        ManagementServices.ConfigureGetManagementServiceUri(services);
+        ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<GetApimGroupsHandler>();
-        services.TryAddSingleton<GetApimGroups>(provider => provider.GetRequiredService<GetApimGroupsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetGetApimGroups);
     }
 
-    private static void ConfigureGetFileGroups(IServiceCollection services)
+    private static GetApimGroups GetGetApimGroups(IServiceProvider provider)
     {
-        services.TryAddSingleton<GetFileGroupsHandler>();
-        services.TryAddSingleton<GetFileGroups>(provider => provider.GetRequiredService<GetFileGroupsHandler>().Handle);
+        var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (serviceName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(GetApimGroups));
+
+            logger.LogInformation("Getting groups from {ServiceName}...", serviceName);
+
+            var serviceUri = getServiceUri(serviceName);
+
+            return await GroupsUri.From(serviceUri)
+                                  .List(pipeline, cancellationToken)
+                                  .ToFrozenDictionary(cancellationToken);
+        };
     }
 
-    public static void ConfigureWriteGroupModels(IServiceCollection services)
+    public static void ConfigureGetFileGroups(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<WriteGroupModelsHandler>();
-        services.TryAddSingleton<WriteGroupModels>(provider => provider.GetRequiredService<WriteGroupModelsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetGetFileGroups);
     }
 
-    public static void ConfigureValidatePublishedGroups(IServiceCollection services)
+    private static GetFileGroups GetGetFileGroups(IServiceProvider provider)
     {
-        ConfigureGetFileGroups(services);
-        ConfigureGetApimGroups(services);
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<ValidatePublishedGroupsHandler>();
-        services.TryAddSingleton<ValidatePublishedGroups>(provider => provider.GetRequiredService<ValidatePublishedGroupsHandler>().Handle);
+        return async (serviceDirectory, commitIdOption, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileGroups));
+
+            return await commitIdOption.Map(commitId => getWithCommit(serviceDirectory, commitId, cancellationToken))
+                                       .IfNone(() => getWithoutCommit(serviceDirectory, cancellationToken));
+        };
+
+        async ValueTask<FrozenDictionary<GroupName, GroupDto>> getWithCommit(ManagementServiceDirectory serviceDirectory, CommitId commitId, CancellationToken cancellationToken)
+        {
+            using var _ = activitySource.StartActivity(nameof(GetFileGroups));
+
+            logger.LogInformation("Getting groups from {ServiceDirectory} as of commit {CommitId}...", serviceDirectory, commitId);
+
+            return await Git.GetExistingFilesInCommit(serviceDirectory.ToDirectoryInfo(), commitId)
+                            .ToAsyncEnumerable()
+                            .Choose(file => GroupInformationFile.TryParse(file, serviceDirectory))
+                            .Choose(async file => await tryGetCommitResource(commitId, serviceDirectory, file, cancellationToken))
+                            .ToFrozenDictionary(cancellationToken);
+        }
+
+        static async ValueTask<Option<(GroupName name, GroupDto dto)>> tryGetCommitResource(CommitId commitId, ManagementServiceDirectory serviceDirectory, GroupInformationFile file, CancellationToken cancellationToken)
+        {
+            var name = file.Parent.Name;
+            var contentsOption = Git.TryGetFileContentsInCommit(serviceDirectory.ToDirectoryInfo(), file.ToFileInfo(), commitId);
+
+            return await contentsOption.MapTask(async contents =>
+            {
+                using (contents)
+                {
+                    var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
+                    var dto = data.ToObjectFromJson<GroupDto>();
+                    return (name, dto);
+                }
+            });
+        }
+
+        async ValueTask<FrozenDictionary<GroupName, GroupDto>> getWithoutCommit(ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            logger.LogInformation("Getting groups from {ServiceDirectory}...", serviceDirectory);
+
+            return await common.GroupModule.ListInformationFiles(serviceDirectory)
+                                           .ToAsyncEnumerable()
+                                           .SelectAwait(async file => (file.Parent.Name,
+                                                                       await file.ReadDto(cancellationToken)))
+                                           .ToFrozenDictionary(cancellationToken);
+        }
     }
-}
 
-internal static class Group
-{
+    public static void ConfigureWriteGroupModels(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetWriteGroupModels);
+    }
+
+    private static WriteGroupModels GetWriteGroupModels(IServiceProvider provider)
+    {
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (models, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(WriteGroupModels));
+
+            logger.LogInformation("Writing group models to {ServiceDirectory}...", serviceDirectory);
+
+            await models.IterParallel(async model =>
+            {
+                await writeInformationFile(model, serviceDirectory, cancellationToken);
+            }, cancellationToken);
+        };
+
+        static async ValueTask writeInformationFile(GroupModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
+        {
+            var informationFile = GroupInformationFile.From(model.Name, serviceDirectory);
+            var dto = getDto(model);
+
+            await informationFile.WriteDto(dto, cancellationToken);
+        }
+
+        static GroupDto getDto(GroupModel model) =>
+            new()
+            {
+                Properties = new GroupDto.GroupContract
+                {
+                    DisplayName = model.DisplayName,
+                    Description = model.Description.ValueUnsafe()
+                }
+            };
+    }
+
+    public static void ConfigureValidatePublishedGroups(IHostApplicationBuilder builder)
+    {
+        ConfigureGetFileGroups(builder);
+        ConfigureGetApimGroups(builder);
+
+        builder.Services.TryAddSingleton(GetValidatePublishedGroups);
+    }
+
+    private static ValidatePublishedGroups GetValidatePublishedGroups(IServiceProvider provider)
+    {
+        var getFileResources = provider.GetRequiredService<GetFileGroups>();
+        var getApimResources = provider.GetRequiredService<GetApimGroups>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (overrides, commitIdOption, serviceName, serviceDirectory, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ValidatePublishedGroups));
+
+            logger.LogInformation("Validating published groups in {ServiceDirectory}...", serviceDirectory);
+
+            var apimResources = await getApimResources(serviceName, cancellationToken);
+            var fileResources = await getFileResources(serviceDirectory, commitIdOption, cancellationToken);
+
+            var expected = PublisherOptions.Override(fileResources, overrides)
+                                           .WhereValue(dto => (dto.Properties.Type?.Contains("system", StringComparison.OrdinalIgnoreCase) ?? false) is false)
+                                           .MapValue(normalizeDto)
+                                           .ToFrozenDictionary();
+
+            var actual = apimResources.WhereValue(dto => (dto.Properties.Type?.Contains("system", StringComparison.OrdinalIgnoreCase) ?? false) is false)
+                                      .MapValue(normalizeDto)
+                                      .ToFrozenDictionary();
+
+            actual.Should().BeEquivalentTo(expected);
+        };
+
+        static string normalizeDto(GroupDto dto) =>
+            new
+            {
+                DisplayName = dto.Properties.DisplayName ?? string.Empty,
+                Description = dto.Properties.Description ?? string.Empty
+            }.ToString()!;
+    }
+
     public static Gen<GroupModel> GenerateUpdate(GroupModel original) =>
         from displayName in GroupModel.GenerateDisplayName()
         from description in GroupModel.GenerateDescription().OptionOf()

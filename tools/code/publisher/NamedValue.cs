@@ -1,13 +1,12 @@
-﻿using AsyncKeyedLock;
-using Azure.Core.Pipeline;
+﻿using Azure.Core.Pipeline;
 using common;
 using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -15,251 +14,248 @@ using System.Threading.Tasks;
 
 namespace publisher;
 
-internal delegate ValueTask ProcessNamedValuesToPut(CancellationToken cancellationToken);
+public delegate ValueTask PutNamedValues(CancellationToken cancellationToken);
+public delegate Option<NamedValueName> TryParseNamedValueName(FileInfo file);
+public delegate bool IsNamedValueNameInSourceControl(NamedValueName name);
+public delegate ValueTask PutNamedValue(NamedValueName name, CancellationToken cancellationToken);
+public delegate ValueTask<Option<NamedValueDto>> FindNamedValueDto(NamedValueName name, CancellationToken cancellationToken);
+public delegate ValueTask PutNamedValueInApim(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken);
+public delegate ValueTask DeleteNamedValues(CancellationToken cancellationToken);
+public delegate ValueTask DeleteNamedValue(NamedValueName name, CancellationToken cancellationToken);
+public delegate ValueTask DeleteNamedValueFromApim(NamedValueName name, CancellationToken cancellationToken);
 
-internal delegate ValueTask ProcessDeletedNamedValues(CancellationToken cancellationToken);
-
-file delegate Option<NamedValueName> TryParseNamedValueName(FileInfo file);
-
-file delegate bool IsNamedValueNameInSourceControl(NamedValueName name);
-
-file delegate ValueTask<Option<NamedValueDto>> FindNamedValueDto(NamedValueName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask PutNamedValue(NamedValueName name, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteNamedValue(NamedValueName name, CancellationToken cancellationToken);
-
-file delegate ValueTask PutNamedValueInApim(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken);
-
-file delegate ValueTask DeleteNamedValueFromApim(NamedValueName name, CancellationToken cancellationToken);
-
-internal delegate ValueTask OnDeletingNamedValue(NamedValueName name, CancellationToken cancellationToken);
-
-file sealed class ProcessNamedValuesToPutHandler(GetPublisherFiles getPublisherFiles,
-                                                 TryParseNamedValueName tryParseNamedValueName,
-                                                 IsNamedValueNameInSourceControl isNameInSourceControl,
-                                                 PutNamedValue putNamedValue)
+internal static class NamedValueModule
 {
-    public async ValueTask Handle(CancellationToken cancellationToken) =>
-        await getPublisherFiles()
-                .Choose(tryParseNamedValueName.Invoke)
-                .Where(isNameInSourceControl.Invoke)
-                .IterParallel(putNamedValue.Invoke, cancellationToken);
-}
-
-file sealed class ProcessDeletedNamedValuesHandler(GetPublisherFiles getPublisherFiles,
-                                                   TryParseNamedValueName tryParseNamedValueName,
-                                                   IsNamedValueNameInSourceControl isNameInSourceControl,
-                                                   DeleteNamedValue deleteNamedValue)
-{
-    public async ValueTask Handle(CancellationToken cancellationToken) =>
-        await getPublisherFiles()
-                .Choose(tryParseNamedValueName.Invoke)
-                .Where(name => isNameInSourceControl(name) is false)
-                .IterParallel(deleteNamedValue.Invoke, cancellationToken);
-}
-
-file sealed class TryParseNamedValueNameHandler(ManagementServiceDirectory serviceDirectory)
-{
-    public Option<NamedValueName> Handle(FileInfo file) =>
-        TryParseNameFromInformationFile(file);
-
-    private Option<NamedValueName> TryParseNameFromInformationFile(FileInfo file) =>
-        from informationFile in NamedValueInformationFile.TryParse(file, serviceDirectory)
-        select informationFile.Parent.Name;
-}
-
-file sealed class IsNamedValueNameInSourceControlHandler(GetArtifactFiles getArtifactFiles, ManagementServiceDirectory serviceDirectory)
-{
-    public bool Handle(NamedValueName name) =>
-        DoesInformationFileExist(name);
-
-    private bool DoesInformationFileExist(NamedValueName name)
+    public static void ConfigurePutNamedValues(IHostApplicationBuilder builder)
     {
-        var artifactFiles = getArtifactFiles();
-        var informationFile = NamedValueInformationFile.From(name, serviceDirectory);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseNamedValueName(builder);
+        ConfigureIsNamedValueNameInSourceControl(builder);
+        ConfigurePutNamedValue(builder);
 
-        return artifactFiles.Contains(informationFile.ToFileInfo());
-    }
-}
-
-file sealed class PutNamedValueHandler(FindNamedValueDto findDto, PutNamedValueInApim putInApim) : IDisposable
-{
-    private readonly NamedValueSemaphore semaphore = new();
-
-    public async ValueTask Handle(NamedValueName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Put, cancellationToken);
-
-    private async ValueTask Put(NamedValueName name, CancellationToken cancellationToken)
-    {
-        var dtoOption = await findDto(name, cancellationToken);
-        await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        builder.Services.TryAddSingleton(GetPutNamedValues);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-/// <summary>
-/// Limits the number of simultaneous operations.
-/// </summary>
-file sealed class NamedValueSemaphore : IDisposable
-{
-    private readonly AsyncKeyedLocker<NamedValueName> locker = new(LockOptions.Default);
-    private ImmutableHashSet<NamedValueName> processedNames = [];
-
-    /// <summary>
-    /// Runs the provided action, ensuring that each name is processed only once.
-    /// </summary>
-    public async ValueTask Run(NamedValueName name, Func<NamedValueName, CancellationToken, ValueTask> action, CancellationToken cancellationToken)
+    private static PutNamedValues GetPutNamedValues(IServiceProvider provider)
     {
-        // Do not process the same name simultaneously
-        using var _ = await locker.LockAsync(name, cancellationToken).ConfigureAwait(false);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseNamedValueName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsNamedValueNameInSourceControl>();
+        var put = provider.GetRequiredService<PutNamedValue>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        // Only process each name once
-        if (processedNames.Contains(name))
+        return async cancellationToken =>
         {
-            return;
-        }
+            using var _ = activitySource.StartActivity(nameof(PutNamedValues));
 
-        await action(name, cancellationToken);
+            logger.LogInformation("Putting named values...");
 
-        ImmutableInterlocked.Update(ref processedNames, set => set.Add(name));
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(isNameInSourceControl.Invoke)
+                    .Distinct()
+                    .IterParallel(put.Invoke, cancellationToken);
+        };
     }
 
-    public void Dispose() => locker.Dispose();
-}
-
-file sealed class FindNamedValueDtoHandler(ManagementServiceDirectory serviceDirectory, TryGetFileContents tryGetFileContents, OverrideDtoFactory overrideFactory)
-{
-    public async ValueTask<Option<NamedValueDto>> Handle(NamedValueName name, CancellationToken cancellationToken)
+    private static void ConfigureTryParseNamedValueName(IHostApplicationBuilder builder)
     {
-        var informationFile = NamedValueInformationFile.From(name, serviceDirectory);
-        var informationFileInfo = informationFile.ToFileInfo();
+        AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
-
-        return from contents in contentsOption
-               let dto = contents.ToObjectFromJson<NamedValueDto>()
-               let overrideDto = overrideFactory.Create<NamedValueName, NamedValueDto>()
-               select overrideDto(name, dto);
+        builder.Services.TryAddSingleton(GetTryParseNamedValueName);
     }
-}
 
-file sealed class PutNamedValueInApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken)
+    private static TryParseNamedValueName GetTryParseNamedValueName(IServiceProvider provider)
     {
-        if (dto.Properties.Secret is true && dto.Properties.Value is null && dto.Properties.KeyVault?.SecretIdentifier is null)
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return file => from informationFile in NamedValueInformationFile.TryParse(file, serviceDirectory)
+                       select informationFile.Parent.Name;
+    }
+
+    private static void ConfigureIsNamedValueNameInSourceControl(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureGetArtifactFiles(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
+        builder.Services.TryAddSingleton(GetIsNamedValueNameInSourceControl);
+    }
+
+    private static IsNamedValueNameInSourceControl GetIsNamedValueNameInSourceControl(IServiceProvider provider)
+    {
+        var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+
+        return doesInformationFileExist;
+
+        bool doesInformationFileExist(NamedValueName name)
         {
-            logger.LogWarning("Named value {NamedValueName} is secret, but no value or keyvault identifier was specified. Skipping it...", name);
-            return;
+            var artifactFiles = getArtifactFiles();
+            var informationFile = NamedValueInformationFile.From(name, serviceDirectory);
+
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
-
-        logger.LogInformation("Putting named value {NamedValueName}...", name);
-        await NamedValueUri.From(name, serviceUri).PutDto(dto, pipeline, cancellationToken);
     }
-}
 
-file sealed class DeleteNamedValueHandler(DeleteNamedValueFromApim deleteFromApim) : IDisposable
-{
-    private readonly NamedValueSemaphore semaphore = new();
-
-    public async ValueTask Handle(NamedValueName name, CancellationToken cancellationToken) =>
-        await semaphore.Run(name, Delete, cancellationToken);
-
-    private async ValueTask Delete(NamedValueName name, CancellationToken cancellationToken)
+    private static void ConfigurePutNamedValue(IHostApplicationBuilder builder)
     {
-        await deleteFromApim(name, cancellationToken);
+        ConfigureFindNamedValueDto(builder);
+        ConfigurePutNamedValueInApim(builder);
+
+        builder.Services.TryAddSingleton(GetPutNamedValue);
     }
 
-    public void Dispose() => semaphore.Dispose();
-}
-
-file sealed class DeleteNamedValueFromApimHandler(ILoggerFactory loggerFactory, ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(NamedValueName name, CancellationToken cancellationToken)
+    private static PutNamedValue GetPutNamedValue(IServiceProvider provider)
     {
-        logger.LogInformation("Deleting named value {NamedValueName}...", name);
-        await NamedValueUri.From(name, serviceUri).Delete(pipeline, cancellationToken);
-    }
-}
+        var findDto = provider.GetRequiredService<FindNamedValueDto>();
+        var putInApim = provider.GetRequiredService<PutNamedValueInApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-internal static class NamedValueServices
-{
-    public static void ConfigureProcessNamedValuesToPut(IServiceCollection services)
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(PutNamedValue))
+                                       ?.AddTag("named_value.name", name);
+
+            var dtoOption = await findDto(name, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(name, dto, cancellationToken));
+        };
+    }
+
+    private static void ConfigureFindNamedValueDto(IHostApplicationBuilder builder)
     {
-        ConfigureTryParseNamedValueName(services);
-        ConfigureIsNamedValueNameInSourceControl(services);
-        ConfigurePutNamedValue(services);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
 
-        services.TryAddSingleton<ProcessNamedValuesToPutHandler>();
-        services.TryAddSingleton<ProcessNamedValuesToPut>(provider => provider.GetRequiredService<ProcessNamedValuesToPutHandler>().Handle);
+        builder.Services.TryAddSingleton(GetFindNamedValueDto);
     }
 
-    private static void ConfigureTryParseNamedValueName(IServiceCollection services)
+    private static FindNamedValueDto GetFindNamedValueDto(IServiceProvider provider)
     {
-        services.TryAddSingleton<TryParseNamedValueNameHandler>();
-        services.TryAddSingleton<TryParseNamedValueName>(provider => provider.GetRequiredService<TryParseNamedValueNameHandler>().Handle);
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+
+        var overrideDto = overrideFactory.Create<NamedValueName, NamedValueDto>();
+
+        return async (name, cancellationToken) =>
+        {
+            var informationFile = NamedValueInformationFile.From(name, serviceDirectory);
+            var informationFileInfo = informationFile.ToFileInfo();
+
+            var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
+
+            return from contents in contentsOption
+                   let dto = contents.ToObjectFromJson<NamedValueDto>()
+                   select overrideDto(name, dto);
+        };
     }
 
-    private static void ConfigureIsNamedValueNameInSourceControl(IServiceCollection services)
+    private static void ConfigurePutNamedValueInApim(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<IsNamedValueNameInSourceControlHandler>();
-        services.TryAddSingleton<IsNamedValueNameInSourceControl>(provider => provider.GetRequiredService<IsNamedValueNameInSourceControlHandler>().Handle);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
+
+        builder.Services.TryAddSingleton(GetPutNamedValueInApim);
     }
 
-    public static void ConfigurePutNamedValue(IServiceCollection services)
+    private static PutNamedValueInApim GetPutNamedValueInApim(IServiceProvider provider)
     {
-        ConfigureFindNamedValueDto(services);
-        ConfigurePutNamedValueInApim(services);
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
 
-        services.TryAddSingleton<PutNamedValueHandler>();
-        services.TryAddSingleton<PutNamedValue>(provider => provider.GetRequiredService<PutNamedValueHandler>().Handle);
+        return async (name, dto, cancellationToken) =>
+        {
+            // Don't put secret named values without a value or keyvault identifier
+            if (dto.Properties.Secret is true && dto.Properties.Value is null && dto.Properties.KeyVault?.SecretIdentifier is null)
+            {
+                logger.LogWarning("Named value {NamedValueName} is secret, but no value or keyvault identifier was specified. Skipping it...", name);
+                return;
+            }
+
+            logger.LogInformation("Putting named value {NamedValueName}...", name);
+
+            await NamedValueUri.From(name, serviceUri)
+                               .PutDto(dto, pipeline, cancellationToken);
+        };
     }
 
-    private static void ConfigureFindNamedValueDto(IServiceCollection services)
+    public static void ConfigureDeleteNamedValues(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<FindNamedValueDtoHandler>();
-        services.TryAddSingleton<FindNamedValueDto>(provider => provider.GetRequiredService<FindNamedValueDtoHandler>().Handle);
+        CommonModule.ConfigureGetPublisherFiles(builder);
+        ConfigureTryParseNamedValueName(builder);
+        ConfigureIsNamedValueNameInSourceControl(builder);
+        ConfigureDeleteNamedValue(builder);
+
+        builder.Services.TryAddSingleton(GetDeleteNamedValues);
     }
 
-    private static void ConfigurePutNamedValueInApim(IServiceCollection services)
+    private static DeleteNamedValues GetDeleteNamedValues(IServiceProvider provider)
     {
-        services.TryAddSingleton<PutNamedValueInApimHandler>();
-        services.TryAddSingleton<PutNamedValueInApim>(provider => provider.GetRequiredService<PutNamedValueInApimHandler>().Handle);
+        var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
+        var tryParseName = provider.GetRequiredService<TryParseNamedValueName>();
+        var isNameInSourceControl = provider.GetRequiredService<IsNamedValueNameInSourceControl>();
+        var delete = provider.GetRequiredService<DeleteNamedValue>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteNamedValues));
+
+            logger.LogInformation("Deleting named values...");
+
+            await getPublisherFiles()
+                    .Choose(tryParseName.Invoke)
+                    .Where(name => isNameInSourceControl(name) is false)
+                    .Distinct()
+                    .IterParallel(delete.Invoke, cancellationToken);
+        };
     }
 
-    public static void ConfigureProcessDeletedNamedValues(IServiceCollection services)
+    private static void ConfigureDeleteNamedValue(IHostApplicationBuilder builder)
     {
-        ConfigureTryParseNamedValueName(services);
-        ConfigureIsNamedValueNameInSourceControl(services);
-        ConfigureDeleteNamedValue(services);
+        ConfigureDeleteNamedValueFromApim(builder);
 
-        services.TryAddSingleton<ProcessDeletedNamedValuesHandler>();
-        services.TryAddSingleton<ProcessDeletedNamedValues>(provider => provider.GetRequiredService<ProcessDeletedNamedValuesHandler>().Handle);
+        builder.Services.TryAddSingleton(GetDeleteNamedValue);
     }
 
-    private static void ConfigureDeleteNamedValue(IServiceCollection services)
+    private static DeleteNamedValue GetDeleteNamedValue(IServiceProvider provider)
     {
-        ConfigureDeleteNamedValueFromApim(services);
+        var deleteFromApim = provider.GetRequiredService<DeleteNamedValueFromApim>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        services.TryAddSingleton<DeleteNamedValueHandler>();
-        services.TryAddSingleton<DeleteNamedValue>(provider => provider.GetRequiredService<DeleteNamedValueHandler>().Handle);
+        return async (name, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(DeleteNamedValue))
+                                       ?.AddTag("named_value.name", name);
+
+            await deleteFromApim(name, cancellationToken);
+        };
     }
 
-    private static void ConfigureDeleteNamedValueFromApim(IServiceCollection services)
+    private static void ConfigureDeleteNamedValueFromApim(IHostApplicationBuilder builder)
     {
-        services.TryAddSingleton<DeleteNamedValueFromApimHandler>();
-        services.TryAddSingleton<DeleteNamedValueFromApim>(provider => provider.GetRequiredService<DeleteNamedValueFromApimHandler>().Handle);
-    }
-}
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory factory) =>
-        factory.CreateLogger("NamedValuePublisher");
+        builder.Services.TryAddSingleton(GetDeleteNamedValueFromApim);
+    }
+
+    private static DeleteNamedValueFromApim GetDeleteNamedValueFromApim(IServiceProvider provider)
+    {
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, cancellationToken) =>
+        {
+            logger.LogInformation("Deleting named value {NamedValueName}...", name);
+
+            await NamedValueUri.From(name, serviceUri)
+                               .Delete(pipeline, cancellationToken);
+        };
+    }
 }

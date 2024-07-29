@@ -2,90 +2,105 @@
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
-internal delegate ValueTask ExtractProductGroups(ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask ExtractProductGroups(ProductName productName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(GroupName Name, ProductGroupDto Dto)> ListProductGroups(ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask WriteProductGroupArtifacts(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
+public delegate ValueTask WriteProductGroupInformationFile(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
 
-file delegate IAsyncEnumerable<(GroupName Name, ProductGroupDto Dto)> ListProductGroups(ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteProductGroupArtifacts(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
-
-file delegate ValueTask WriteProductGroupInformationFile(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken);
-
-file sealed class ExtractProductGroupsHandler(ListProductGroups list, WriteProductGroupArtifacts writeArtifacts)
+internal static class ProductGroupModule
 {
-    public async ValueTask Handle(ProductName productName, CancellationToken cancellationToken) =>
-        await list(productName, cancellationToken)
-                .IterParallel(async productgroup => await writeArtifacts(productgroup.Name, productgroup.Dto, productName, cancellationToken),
-                              cancellationToken);
-}
-
-file sealed class ListProductGroupsHandler(ManagementServiceUri serviceUri, HttpPipeline pipeline)
-{
-    public IAsyncEnumerable<(GroupName, ProductGroupDto)> Handle(ProductName productName, CancellationToken cancellationToken) =>
-        ProductGroupsUri.From(productName, serviceUri).List(pipeline, cancellationToken);
-}
-
-file sealed class WriteProductGroupArtifactsHandler(WriteProductGroupInformationFile writeGroupFile)
-{
-    public async ValueTask Handle(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken)
+    public static void ConfigureExtractProductGroups(IHostApplicationBuilder builder)
     {
-        await writeGroupFile(name, dto, productName, cancellationToken);
-    }
-}
+        ConfigureListProductGroups(builder);
+        GroupModule.ConfigureShouldExtractGroup(builder);
+        ConfigureWriteProductGroupArtifacts(builder);
 
-file sealed class WriteProductGroupInformationFileHandler(ILoggerFactory loggerFactory, ManagementServiceDirectory serviceDirectory)
-{
-    private readonly ILogger logger = Common.GetLogger(loggerFactory);
-
-    public async ValueTask Handle(GroupName name, ProductGroupDto dto, ProductName productName, CancellationToken cancellationToken)
-    {
-        var informationFile = ProductGroupInformationFile.From(name, productName, serviceDirectory);
-
-        logger.LogInformation("Writing product group information file {ProductGroupInformationFile}...", informationFile);
-        await informationFile.WriteDto(dto, cancellationToken);
-    }
-}
-
-internal static class ProductGroupServices
-{
-    public static void ConfigureExtractProductGroups(IServiceCollection services)
-    {
-        ConfigureListProductGroups(services);
-        ConfigureWriteProductGroupArtifacts(services);
-
-        services.TryAddSingleton<ExtractProductGroupsHandler>();
-        services.TryAddSingleton<ExtractProductGroups>(provider => provider.GetRequiredService<ExtractProductGroupsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetExtractProductGroups);
     }
 
-    private static void ConfigureListProductGroups(IServiceCollection services)
+    private static ExtractProductGroups GetExtractProductGroups(IServiceProvider provider)
     {
-        services.TryAddSingleton<ListProductGroupsHandler>();
-        services.TryAddSingleton<ListProductGroups>(provider => provider.GetRequiredService<ListProductGroupsHandler>().Handle);
+        var list = provider.GetRequiredService<ListProductGroups>();
+        var shouldExtractGroup = provider.GetRequiredService<ShouldExtractGroup>();
+        var writeArtifacts = provider.GetRequiredService<WriteProductGroupArtifacts>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (productName, cancellationToken) =>
+        {
+            using var _ = activitySource.StartActivity(nameof(ExtractProductGroups));
+
+            logger.LogInformation("Extracting groups for product {ProductName}...", productName);
+
+            await list(productName, cancellationToken)
+                    .Where(group => shouldExtractGroup(group.Name))
+                    .IterParallel(async productgroup => await writeArtifacts(productgroup.Name, productgroup.Dto, productName, cancellationToken),
+                                  cancellationToken);
+        };
     }
 
-    private static void ConfigureWriteProductGroupArtifacts(IServiceCollection services)
+    private static void ConfigureListProductGroups(IHostApplicationBuilder builder)
     {
-        ConfigureWriteProductGroupInformationFile(services);
+        AzureModule.ConfigureManagementServiceUri(builder);
+        AzureModule.ConfigureHttpPipeline(builder);
 
-        services.TryAddSingleton<WriteProductGroupArtifactsHandler>();
-        services.TryAddSingleton<WriteProductGroupArtifacts>(provider => provider.GetRequiredService<WriteProductGroupArtifactsHandler>().Handle);
+        builder.Services.TryAddSingleton(GetListProductGroups);
     }
 
-    private static void ConfigureWriteProductGroupInformationFile(IServiceCollection services)
+    private static ListProductGroups GetListProductGroups(IServiceProvider provider)
     {
-        services.TryAddSingleton<WriteProductGroupInformationFileHandler>();
-        services.TryAddSingleton<WriteProductGroupInformationFile>(provider => provider.GetRequiredService<WriteProductGroupInformationFileHandler>().Handle);
-    }
-}
+        var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
+        var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-file static class Common
-{
-    public static ILogger GetLogger(ILoggerFactory loggerFactory) =>
-        loggerFactory.CreateLogger("ProductGroupExtractor");
+        return (productName, cancellationToken) =>
+            ProductGroupsUri.From(productName, serviceUri)
+                          .List(pipeline, cancellationToken);
+    }
+
+    private static void ConfigureWriteProductGroupArtifacts(IHostApplicationBuilder builder)
+    {
+        ConfigureWriteProductGroupInformationFile(builder);
+
+        builder.Services.TryAddSingleton(GetWriteProductGroupArtifacts);
+    }
+
+    private static WriteProductGroupArtifacts GetWriteProductGroupArtifacts(IServiceProvider provider)
+    {
+        var writeInformationFile = provider.GetRequiredService<WriteProductGroupInformationFile>();
+
+        return async (name, dto, productName, cancellationToken) =>
+        {
+            await writeInformationFile(name, dto, productName, cancellationToken);
+        };
+    }
+
+    public static void ConfigureWriteProductGroupInformationFile(IHostApplicationBuilder builder)
+    {
+        builder.Services.TryAddSingleton(GetWriteProductGroupInformationFile);
+    }
+
+    private static WriteProductGroupInformationFile GetWriteProductGroupInformationFile(IServiceProvider provider)
+    {
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return async (name, dto, productName, cancellationToken) =>
+        {
+            var informationFile = ProductGroupInformationFile.From(name, productName, serviceDirectory);
+
+            logger.LogInformation("Writing product group information file {ProductGroupInformationFile}...", informationFile);
+            await informationFile.WriteDto(dto, cancellationToken);
+        };
+    }
 }

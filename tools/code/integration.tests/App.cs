@@ -1,30 +1,43 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using common;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using System;
 using System.Diagnostics;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal delegate ValueTask RunApplication(CancellationToken cancellationToken);
-
-file sealed class RunApplicationHandler(ActivitySource activitySource, RunTests runTests)
+internal static class AppModule
 {
-    public async ValueTask Handle(CancellationToken cancellationToken)
+    public static void ConfigureRunApplication(IHostApplicationBuilder builder)
     {
-        using var _ = activitySource.StartActivity(nameof(RunApplication));
+        TestModule.ConfigureTestExtractor(builder);
+        TestModule.ConfigureTestExtractThenPublish(builder);
+        TestModule.ConfigureTestPublisher(builder);
+        TestModule.ConfigureCleanUpTests(builder);
+        //TestModule.ConfigureTestWorkspaces(builder);
 
-        await runTests(cancellationToken);
+        builder.Services.TryAddSingleton(GetRunApplication);
     }
-}
 
-internal static class AppServices
-{
-    public static void ConfigureRunApplication(IServiceCollection services)
+    private static RunApplication GetRunApplication(IServiceProvider provider)
     {
-        TestServices.ConfigureRunTests(services);
+        var testExtractor = provider.GetRequiredService<TestExtractor>();
+        var testExtractThenPublish = provider.GetRequiredService<TestExtractThenPublish>();
+        var testPublisher = provider.GetRequiredService<TestPublisher>();
+        //var testWorkspaces = provider.GetRequiredService<TestWorkspaces>();
+        var cleanUpTests = provider.GetRequiredService<CleanUpTests>();
+        var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        services.TryAddSingleton<RunApplicationHandler>();
-        services.TryAddSingleton<RunApplication>(provider => provider.GetRequiredService<RunApplicationHandler>().Handle);
+        return async cancellationToken =>
+        {
+            using var _ = activitySource.StartActivity(nameof(RunApplication));
+
+            await testExtractor(cancellationToken);
+            await testExtractThenPublish(cancellationToken);
+            await testPublisher(cancellationToken);
+            await cleanUpTests(cancellationToken);
+            //await testWorkspaces(cancellationToken);
+        };
     }
 }
