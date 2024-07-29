@@ -90,7 +90,7 @@ public static class HostingModule
         }
         catch (Exception exception)
         {
-            var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(RunApplication));
+            var logger = host.Services.GetRequiredService<ILogger>();
             logger.LogCritical(exception, "Application failed.");
             Environment.ExitCode = -1;
             throw;
