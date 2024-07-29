@@ -11,7 +11,9 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace common; public sealed record WorkspaceName : ResourceName
+namespace common;
+
+public sealed record WorkspaceName : ResourceName
 {
     private WorkspaceName(string value) : base(value) { }
 
