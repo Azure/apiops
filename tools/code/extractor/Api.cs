@@ -197,7 +197,7 @@ internal static class ApiModule
 
         return async (name, dto, cancellationToken) =>
         {
-            var informationFile = ApiInformationFile.From(name, provider.GetRequiredService<ManagementServiceDirectory>());
+            var informationFile = ApiInformationFile.From(name, serviceDirectory);
 
             logger.LogInformation("Writing API information file {ApiInformationFile}...", informationFile);
             await informationFile.WriteDto(dto, cancellationToken);
