@@ -596,7 +596,9 @@ internal static class ApiModule
 
         var taskDictionary = new ConcurrentDictionary<ApiName, AsyncLazy<Unit>>();
 
-        return async (name, cancellationToken) =>
+        return deleteApi;
+
+        async ValueTask deleteApi(ApiName name, CancellationToken cancellationToken)
         {
             using var _ = activitySource.StartActivity(nameof(DeleteApi))
                                        ?.AddTag("api.name", name);
@@ -610,39 +612,40 @@ internal static class ApiModule
                                 .WithCancellation(cancellationToken);
         };
 
-        async ValueTask deleteApiInner(ApiName name, CancellationToken cancellationToken)
-        {
-            if (await isApiRevisionNumberCurrentInSourceControl(name, cancellationToken))
-            {
-                logger.LogInformation("API {ApiName} is the current revision in source control. Skipping deletion...", name);
-                return;
-            }
-
-            await deleteFromApim(name, cancellationToken);
-        }
-
-        /// <summary>
-        /// We don't want to delete a revision if it was just made current. For instance:
-        /// 1. Dev has apiA  with revision 1 (current) and revision 2. Artifacts folder has:
-        ///     - /apis/apiA/apiInformation.json with revision 1 as current
-        ///     - /apis/apiA;rev=2/apiInformation.json
-        /// 2. User makes revision 2 current in dev APIM.
-        /// 3. User runs extractor for dev APIM. Artifacts folder has:
-        ///     - /apis/apiA/apiInformation.json with revision 2 as current
-        ///     - /apis/apiA;rev=1/apiInformation.json
-        ///     - /apis/apiA;rev=2 folder gets deleted.
-        /// 4. User runs publisher to prod APIM. We don't want to handle the deletion of folder /apis/apiA;rev=2, as it's the current revision.
-        async ValueTask<bool> isApiRevisionNumberCurrentInSourceControl(ApiName name, CancellationToken cancellationToken) =>
+        async ValueTask deleteApiInner(ApiName name, CancellationToken cancellationToken) =>
             await ApiName.TryParseRevisionedName(name)
-                         .Match(async _ => await ValueTask.FromResult(false),
-                                async api =>
-                                {
-                                    var (rootName, revisionNumber) = api;
-                                    var sourceControlRevisionNumberOption = await tryGetRevisionNumberInSourceControl(rootName, cancellationToken);
-                                    return sourceControlRevisionNumberOption
-                                           .Map(sourceControlRevisionNumber => sourceControlRevisionNumber == revisionNumber)
-                                           .IfNone(false);
-                                });
+                         .Map(async api => await processRevisionedApi(api.RootName, api.RevisionNumber, cancellationToken))
+                         .IfLeft(async _ => await processRootApi(name, cancellationToken));
+
+        async ValueTask processRootApi(ApiName name, CancellationToken cancellationToken) =>
+            await deleteFromApim(name, cancellationToken);
+
+        async ValueTask processRevisionedApi(ApiName name, ApiRevisionNumber revisionNumber, CancellationToken cancellationToken)
+        {
+            var rootName = ApiName.GetRootName(name);
+            var currentRevisionNumberOption = await tryGetRevisionNumberInSourceControl(rootName, cancellationToken);
+
+            await currentRevisionNumberOption.Match(// If the current revision in source control has a different revision number, delete this revision.
+                                                    // We don't want to delete a revision if it was just made current. For instance:
+                                                    // 1. Dev has apiA  with revision 1 (current) and revision 2. Artifacts folder has:
+                                                    //     - /apis/apiA/apiInformation.json with revision 1 as current
+                                                    //     - /apis/apiA;rev=2/apiInformation.json
+                                                    // 2. User makes revision 2 current in dev APIM.
+                                                    // 3. User runs extractor for dev APIM. Artifacts folder has:
+                                                    //     - /apis/apiA/apiInformation.json with revision 2 as current
+                                                    //     - /apis/apiA;rev=1/apiInformation.json
+                                                    //     - /apis/apiA;rev=2 folder gets deleted.
+                                                    // 4. User runs publisher to prod APIM. We don't want to handle the deletion of folder /apis/apiA;rev=2, as it's the current revision.
+                                                    async currentRevisionNumber =>
+                                                    {
+                                                        if (currentRevisionNumber != revisionNumber)
+                                                        {
+                                                            await deleteFromApim(name, cancellationToken);
+                                                        }
+                                                    },
+                                                    // If there is no current revision in source control, process the root API deletion
+                                                    async () => await deleteApi(rootName, cancellationToken));
+        }
 
         async ValueTask<Option<ApiRevisionNumber>> tryGetRevisionNumberInSourceControl(ApiName name, CancellationToken cancellationToken)
         {
@@ -670,8 +673,11 @@ internal static class ApiModule
         {
             logger.LogInformation("Deleting API {ApiName}...", name);
 
-            await ApiUri.From(name, serviceUri)
-                        .Delete(pipeline, cancellationToken);
+            var apiUri = ApiUri.From(name, serviceUri);
+
+            await (ApiName.IsRevisioned(name)
+                    ? apiUri.Delete(pipeline, cancellationToken)
+                    : apiUri.DeleteAllRevisions(pipeline, cancellationToken));
         };
     }
 }
