@@ -57,7 +57,7 @@ internal static class PolicyFragmentModule
     {
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
-        PolicySpecificationModule.ConfigureDefaultPolicySpecification(builder);
+        PolicyContentFormatModule.ConfigureDefaultPolicyContentFormat(builder);
 
         builder.Services.TryAddSingleton(GetListPolicyFragments);
     }
@@ -66,11 +66,11 @@ internal static class PolicyFragmentModule
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
-        var policySpecificationFormat = provider.GetRequiredService<DefaultPolicySpecification>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         return cancellationToken =>
             PolicyFragmentsUri.From(serviceUri)
-                              .List(pipeline, cancellationToken, policySpecificationFormat.PolicyFormat);
+                              .List(pipeline, cancellationToken, policyContentFormat);
     }
 
     private static void ConfigureShouldExtractPolicyFragment(IHostApplicationBuilder builder)

@@ -164,18 +164,18 @@ public static class WorkspacePolicyFragmentModule
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
                 .Select(PolicyFragmentName.From);
 
-    public static IAsyncEnumerable<(PolicyFragmentName Name, WorkspacePolicyFragmentDto Dto)> List(this WorkspacePolicyFragmentsUri workspacePolicyFragmentsUri, HttpPipeline pipeline, CancellationToken cancellationToken, string policyFormat) =>
+    public static IAsyncEnumerable<(PolicyFragmentName Name, WorkspacePolicyFragmentDto Dto)> List(this WorkspacePolicyFragmentsUri workspacePolicyFragmentsUri, HttpPipeline pipeline, CancellationToken cancellationToken, PolicyContentFormat policyContentFormat) =>
         workspacePolicyFragmentsUri.ListNames(pipeline, cancellationToken)
                                    .SelectAwait(async name =>
                                    {
                                        var uri = new WorkspacePolicyFragmentUri { Parent = workspacePolicyFragmentsUri, Name = name };
-                                       var dto = await uri.GetDto(pipeline, cancellationToken, policyFormat);
+                                       var dto = await uri.GetDto(pipeline, cancellationToken, policyContentFormat);
                                        return (name, dto);
                                    });
 
-    public static async ValueTask<WorkspacePolicyFragmentDto> GetDto(this WorkspacePolicyFragmentUri uri, HttpPipeline pipeline, CancellationToken cancellationToken, string policyFormat)
+    public static async ValueTask<WorkspacePolicyFragmentDto> GetDto(this WorkspacePolicyFragmentUri uri, HttpPipeline pipeline, CancellationToken cancellationToken, PolicyContentFormat policyContentFormat)
     {
-        var contentUri = uri.ToUri().AppendQueryParam("format", policyFormat).ToUri();
+        var contentUri = uri.ToUri().AppendQueryParam("format", policyContentFormat.GetPolicyContentFormat).ToUri();
         var content = await pipeline.GetContent(contentUri, cancellationToken);
         return content.ToObjectFromJson<WorkspacePolicyFragmentDto>();
     }
