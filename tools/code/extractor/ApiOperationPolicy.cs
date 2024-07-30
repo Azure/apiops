@@ -50,6 +50,7 @@ internal static class ApiOperationPolicyModule
     {
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
+        PolicySpecificationModule.ConfigureDefaultPolicySpecification(builder);
 
         builder.Services.TryAddSingleton(GetListApiOperationPolicies);
     }
@@ -58,10 +59,11 @@ internal static class ApiOperationPolicyModule
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var policySpecificationFormat = provider.GetRequiredService<DefaultPolicySpecification>();
 
         return (operationName, apiName, cancellationToken) =>
             ApiOperationPoliciesUri.From(operationName, apiName, serviceUri)
-                                   .List(pipeline, cancellationToken);
+                                   .List(pipeline, cancellationToken, policySpecificationFormat.PolicyFormat);
     }
 
     private static void ConfigureWriteApiOperationPolicyArtifacts(IHostApplicationBuilder builder)

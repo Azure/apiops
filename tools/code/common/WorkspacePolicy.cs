@@ -117,18 +117,18 @@ public static class WorkspacePolicyModule
         }
     }
 
-    public static IAsyncEnumerable<(WorkspacePolicyName Name, WorkspacePolicyDto Dto)> List(this WorkspacePoliciesUri workspacePoliciesUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<(WorkspacePolicyName Name, WorkspacePolicyDto Dto)> List(this WorkspacePoliciesUri workspacePoliciesUri, HttpPipeline pipeline, CancellationToken cancellationToken, string policyFormat) =>
         workspacePoliciesUri.ListNames(pipeline, cancellationToken)
                             .SelectAwait(async name =>
                             {
                                 var uri = new WorkspacePolicyUri { Parent = workspacePoliciesUri, Name = name };
-                                var dto = await uri.GetDto(pipeline, cancellationToken);
+                                var dto = await uri.GetDto(pipeline, cancellationToken, policyFormat);
                                 return (name, dto);
                             });
 
-    public static async ValueTask<WorkspacePolicyDto> GetDto(this WorkspacePolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    public static async ValueTask<WorkspacePolicyDto> GetDto(this WorkspacePolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken, string policyFormat)
     {
-        var contentUri = uri.ToUri().AppendQueryParam("format", "rawxml").ToUri();
+        var contentUri = uri.ToUri().AppendQueryParam("format", policyFormat).ToUri();
         var content = await pipeline.GetContent(contentUri, cancellationToken);
         return content.ToObjectFromJson<WorkspacePolicyDto>();
     }
