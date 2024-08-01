@@ -385,6 +385,7 @@ public class CommonRetryPolicy : RetryPolicy
                 {
                     ({ Response.Status: 422 or 409 }, _) when HasManagementApiRequestFailedError(message.Response) => true,
                     ({ Response.Status: 412 }, _) => true,
+                    ({ Response.Status: 429 }, _) => true,
                     _ => false
                 };
         }
