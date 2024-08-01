@@ -28,7 +28,7 @@ internal static class ApiPolicyModule
         {
             Properties = new ApiPolicyDto.ApiPolicyContract
             {
-                Format = "rawxml",
+                Format = PolicyContentFormat.Default.GetPolicyContentFormat,
                 Value = model.Content
             }
         };
@@ -74,7 +74,7 @@ internal static class ApiPolicyModule
     {
         var uri = ApiPoliciesUri.From(apiName, serviceUri);
 
-        return await uri.List(pipeline, cancellationToken)
+        return await uri.List(pipeline, cancellationToken, new PolicyContentFormat.RawXml())
                         .ToFrozenDictionary(cancellationToken);
     }
 
@@ -86,7 +86,8 @@ internal static class ApiPolicyModule
                                                                 {
                                                                     Properties = new ApiPolicyDto.ApiPolicyContract
                                                                     {
-                                                                        Value = await file.ReadPolicy(cancellationToken)
+                                                                        Value = await file.ReadPolicy(cancellationToken),
+                                                                        Format = PolicyContentFormat.Default.GetPolicyContentFormat
                                                                     }
                                                                 }))
                                     .ToFrozenDictionary(cancellationToken);
@@ -143,7 +144,8 @@ internal static class ApiPolicyModule
                 {
                     Properties = new ApiPolicyDto.ApiPolicyContract
                     {
-                        Value = data.ToString()
+                        Value = data.ToString(),
+                        Format = PolicyContentFormat.Default.GetPolicyContentFormat
                     }
                 };
                 return (name, dto);

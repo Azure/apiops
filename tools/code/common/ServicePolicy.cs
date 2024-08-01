@@ -3,6 +3,7 @@ using Flurl;
 using LanguageExt;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -87,7 +88,7 @@ public sealed record ServicePolicyDto
 
         [JsonPropertyName("format")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public string? Format { get; init; }
+        public string? Format { get ; init ; }
 
         [JsonPropertyName("value")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -130,7 +131,8 @@ public static class ServicePolicyModule
     public static async ValueTask PutDto(this ServicePolicyUri uri, ServicePolicyDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = BinaryData.FromObjectAsJson(dto);
-        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+        var contentUri = string.IsNullOrEmpty(dto.Properties.Format) ? uri.ToUri() : uri.ToUri().AppendQueryParam("format", dto.Properties.Format).ToUri();
+        await pipeline.PutContent(contentUri, content, cancellationToken);
     }
 
     public static IEnumerable<ServicePolicyFile> ListPolicyFiles(ManagementServiceDirectory serviceDirectory) =>

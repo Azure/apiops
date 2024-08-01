@@ -136,6 +136,7 @@ internal static class ApiOperationPolicyModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         return async (name, operationName, apiName, cancellationToken) =>
         {
@@ -146,7 +147,7 @@ internal static class ApiOperationPolicyModule
                    {
                        Properties = new ApiOperationPolicyDto.ApiOperationPolicyContract
                        {
-                           Format = "rawxml",
+                           Format = policyContentFormat.GetPolicyContentFormat,
                            Value = contents.ToString()
                        }
                    };

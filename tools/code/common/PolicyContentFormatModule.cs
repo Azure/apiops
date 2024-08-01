@@ -5,10 +5,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using System;
+using System.Globalization;
+using System.Text.Json.Serialization;
+using System.Text.Json;
 
-namespace extractor;
+namespace common;
 
-internal static class PolicyContentFormatModule
+public static class PolicyContentFormatModule
 {
     public static void ConfigureDefaultPolicyContentFormat(IHostApplicationBuilder builder)
     {
@@ -32,3 +35,30 @@ internal static class PolicyContentFormatModule
         return specification;
     }
 }
+
+//public class PolicyContentFormatJsonConverter : JsonConverter<PolicyContentFormat>
+//{
+//    public override PolicyContentFormat Read(
+//        ref Utf8JsonReader reader,
+//        Type typeToConvert,
+//        JsonSerializerOptions options)
+//    {
+//        return reader.GetString() switch
+//        {
+//            "rawxml" => new PolicyContentFormat.RawXml(),
+//            "xml" => new PolicyContentFormat.Xml(),
+//            "rawxml-link" => new PolicyContentFormat.RawXmlLink(),
+//            "xml-link" => new PolicyContentFormat.XmlLink(),
+//            _ => throw new NotSupportedException()
+//        };
+//    }
+
+//    public override void Write(
+//        Utf8JsonWriter writer,
+//        PolicyContentFormat value, 
+//        JsonSerializerOptions options)
+//    {
+//        // switch on PolicyContentFormat to determine the string to render
+//        writer.WriteStringValue(value.GetPolicyContentFormat);
+//    }
+//}

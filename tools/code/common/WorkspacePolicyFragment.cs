@@ -1,6 +1,7 @@
 ﻿using Azure.Core.Pipeline;
 using Flurl;
 using LanguageExt;
+using Microsoft.AspNetCore.Http;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -186,7 +187,8 @@ public static class WorkspacePolicyFragmentModule
     public static async ValueTask PutDto(this WorkspacePolicyFragmentUri uri, WorkspacePolicyFragmentDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = BinaryData.FromObjectAsJson(dto);
-        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+        var contentUri = string.IsNullOrEmpty(dto.Properties.Format) ? uri.ToUri() : uri.ToUri().AppendQueryParam("format", dto.Properties.Format).ToUri();
+        await pipeline.PutContent(contentUri, content, cancellationToken);
     }
 
     public static async ValueTask WriteDto(this WorkspacePolicyFragmentInformationFile file, WorkspacePolicyFragmentDto dto, CancellationToken cancellationToken)

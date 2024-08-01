@@ -197,7 +197,8 @@ public static class PolicyFragmentModule
     public static async ValueTask PutDto(this PolicyFragmentUri uri, PolicyFragmentDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = BinaryData.FromObjectAsJson(dto);
-        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+        var contentUri = string.IsNullOrEmpty(dto.Properties.Format) ? uri.ToUri() : uri.ToUri().AppendQueryParam("format", dto.Properties.Format).ToUri();
+        await pipeline.PutContent(contentUri, content, cancellationToken);
     }
 
     public static IEnumerable<PolicyFragmentDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory)

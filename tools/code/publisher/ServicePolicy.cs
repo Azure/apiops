@@ -136,6 +136,7 @@ internal static class ServicePolicyModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
         var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         var overrideDto = overrideFactory.Create<ServicePolicyName, ServicePolicyDto>();
 
@@ -148,7 +149,7 @@ internal static class ServicePolicyModule
                    {
                        Properties = new ServicePolicyDto.ServicePolicyContract
                        {
-                           Format = "rawxml",
+                           Format = policyContentFormat.GetPolicyContentFormat,
                            Value = contents.ToString()
                        }
                    }

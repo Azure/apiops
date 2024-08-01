@@ -8,6 +8,9 @@ namespace common
 {
     public abstract record PolicyContentFormat
     {
+        private static readonly Lazy<PolicyContentFormat> instance = new Lazy<PolicyContentFormat>(() => new RawXml());
+
+        public static PolicyContentFormat Default => instance.Value;
 
         public sealed record RawXml : PolicyContentFormat;
         public sealed record Xml : PolicyContentFormat;

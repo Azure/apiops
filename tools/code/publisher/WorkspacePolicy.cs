@@ -135,6 +135,7 @@ internal static class WorkspacePolicyModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         return async (name, workspaceName, cancellationToken) =>
         {
@@ -145,7 +146,7 @@ internal static class WorkspacePolicyModule
                    {
                        Properties = new WorkspacePolicyDto.WorkspacePolicyContract
                        {
-                           Format = "rawxml",
+                           Format = policyContentFormat.GetPolicyContentFormat,
                            Value = contents.ToString()
                        }
                    };

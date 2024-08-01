@@ -1,6 +1,7 @@
 ﻿using Azure.Core.Pipeline;
 using Flurl;
 using LanguageExt;
+using Microsoft.AspNetCore.Http;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -139,7 +140,8 @@ public static class WorkspacePolicyModule
     public static async ValueTask PutDto(this WorkspacePolicyUri uri, WorkspacePolicyDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = BinaryData.FromObjectAsJson(dto);
-        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+        var contentUri = string.IsNullOrEmpty(dto.Properties.Format) ? uri.ToUri() : uri.ToUri().AppendQueryParam("format", dto.Properties.Format).ToUri();
+        await pipeline.PutContent(contentUri, content, cancellationToken);
     }
 
     public static IEnumerable<WorkspacePolicyFile> ListPolicyFiles(WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory)

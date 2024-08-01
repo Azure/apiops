@@ -13,6 +13,7 @@ internal static class AppModule
 {
     public static void ConfigureRunApplication(IHostApplicationBuilder builder)
     {
+        PolicyContentFormatModule.ConfigureDefaultPolicyContentFormat(builder);
         NamedValueModule.ConfigurePutNamedValues(builder);
         GatewayModule.ConfigurePutGateways(builder);
         BackendModule.ConfigurePutBackends(builder);

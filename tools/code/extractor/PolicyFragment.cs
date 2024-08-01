@@ -120,6 +120,7 @@ internal static class PolicyFragmentModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var logger = provider.GetRequiredService<ILogger>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         return async (name, dto, cancellationToken) =>
         {

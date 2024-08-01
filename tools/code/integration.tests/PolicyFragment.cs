@@ -101,7 +101,7 @@ public static class PolicyFragmentModule
                 Properties = new PolicyFragmentDto.PolicyFragmentContract
                 {
                     Description = model.Description.ValueUnsafe(),
-                    Format = "rawxml",
+                    Format = PolicyContentFormat.Default.GetPolicyContentFormat,
                     Value = model.Content
                 }
             };
@@ -173,7 +173,7 @@ public static class PolicyFragmentModule
             var serviceUri = getServiceUri(serviceName);
 
             return await PolicyFragmentsUri.From(serviceUri)
-                                           .List(pipeline, cancellationToken)
+                                           .List(pipeline, cancellationToken, new PolicyContentFormat.RawXml())
                                            .ToFrozenDictionary(cancellationToken);
         };
     }
@@ -274,7 +274,7 @@ public static class PolicyFragmentModule
                 Properties = new PolicyFragmentDto.PolicyFragmentContract
                 {
                     Description = model.Description.ValueUnsafe(),
-                    Format = "rawxml",
+                    Format = PolicyContentFormat.Default.GetPolicyContentFormat,
                     Value = model.Content
                 }
             };
@@ -344,7 +344,7 @@ public static class PolicyFragmentModule
             Properties = new PolicyFragmentDto.PolicyFragmentContract
             {
                 Description = description.ValueUnsafe(),
-                Format = "rawxml",
+                Format = PolicyContentFormat.Default.GetPolicyContentFormat,
                 Value = content
             }
         };
@@ -358,7 +358,7 @@ public static class PolicyFragmentModule
             Properties = new PolicyFragmentDto.PolicyFragmentContract
             {
                 Description = model.Description.ValueUnsafe(),
-                Format = "rawxml",
+                Format = PolicyContentFormat.Default.GetPolicyContentFormat,
                 Value = model.Content
             }
         };
