@@ -152,6 +152,7 @@ internal static class WorkspacePolicyFragmentModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         return async (name, workspaceName, cancellationToken) =>
         {
@@ -184,12 +185,12 @@ internal static class WorkspacePolicyFragmentModule
                 return Option<WorkspacePolicyFragmentDto>.None;
             }
 
-            var dto = informationFileDtoOption.IfNone(() => new WorkspacePolicyFragmentDto { Properties = new WorkspacePolicyFragmentDto.PolicyFragmentContract() });
+            var dto = informationFileDtoOption.IfNone(() => new WorkspacePolicyFragmentDto { Properties = new WorkspacePolicyFragmentDto.PolicyFragmentContract()  });
             policyContentsOption.Iter(contents => dto = dto with
             {
                 Properties = dto.Properties with
                 {
-                    Format = "rawxml",
+                    Format = policyContentFormat.GetPolicyContentFormat,
                     Value = contents.ToString()
                 }
             });

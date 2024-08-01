@@ -153,6 +153,7 @@ internal static class PolicyFragmentModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
         var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         var overrideDto = overrideFactory.Create<PolicyFragmentName, PolicyFragmentDto>();
 
@@ -192,7 +193,7 @@ internal static class PolicyFragmentModule
             {
                 Properties = dto.Properties with
                 {
-                    Format = "rawxml",
+                    Format = policyContentFormat.GetPolicyContentFormat,
                     Value = contents.ToString()
                 }
             });

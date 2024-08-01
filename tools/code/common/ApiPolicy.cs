@@ -106,18 +106,18 @@ public static class ApiPolicyModule
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
                 .Select(ApiPolicyName.From);
 
-    public static IAsyncEnumerable<(ApiPolicyName Name, ApiPolicyDto Dto)> List(this ApiPoliciesUri apiPoliciesUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<(ApiPolicyName Name, ApiPolicyDto Dto)> List(this ApiPoliciesUri apiPoliciesUri, HttpPipeline pipeline, CancellationToken cancellationToken, PolicyContentFormat policyContentFormat) =>
         apiPoliciesUri.ListNames(pipeline, cancellationToken)
                           .SelectAwait(async name =>
                           {
                               var uri = new ApiPolicyUri { Parent = apiPoliciesUri, Name = name };
-                              var dto = await uri.GetDto(pipeline, cancellationToken);
+                              var dto = await uri.GetDto(pipeline, cancellationToken, policyContentFormat);
                               return (name, dto);
                           });
 
-    public static async ValueTask<ApiPolicyDto> GetDto(this ApiPolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    public static async ValueTask<ApiPolicyDto> GetDto(this ApiPolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken, PolicyContentFormat policyContentFormat)
     {
-        var contentUri = uri.ToUri().AppendQueryParam("format", "rawxml").ToUri();
+        var contentUri = uri.ToUri().AppendQueryParam("format", policyContentFormat.GetPolicyContentFormat).ToUri();
         var content = await pipeline.GetContent(contentUri, cancellationToken);
         return content.ToObjectFromJson<ApiPolicyDto>();
     }
@@ -135,7 +135,8 @@ public static class ApiPolicyModule
     public static async ValueTask PutDto(this ApiPolicyUri uri, ApiPolicyDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = BinaryData.FromObjectAsJson(dto);
-        await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
+        var contentUri = string.IsNullOrEmpty(dto.Properties.Format) ? uri.ToUri() : uri.ToUri().AppendQueryParam("format", dto.Properties.Format).ToUri();
+        await pipeline.PutContent(contentUri, content, cancellationToken);
     }
 
     public static IEnumerable<ApiPolicyFile> ListPolicyFiles(ApiName apiName, ManagementServiceDirectory serviceDirectory)

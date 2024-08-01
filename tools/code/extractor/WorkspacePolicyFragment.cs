@@ -52,6 +52,7 @@ internal static class WorkspacePolicyFragmentModule
     {
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
+        PolicyContentFormatModule.ConfigureDefaultPolicyContentFormat(builder);
 
         builder.Services.TryAddSingleton(GetListWorkspacePolicyFragments);
     }
@@ -60,10 +61,11 @@ internal static class WorkspacePolicyFragmentModule
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         return (workspaceName, cancellationToken) =>
             WorkspacePolicyFragmentsUri.From(workspaceName, serviceUri)
-                                       .List(pipeline, cancellationToken);
+                                       .List(pipeline, cancellationToken, policyContentFormat);
     }
 
     private static void ConfigureWriteWorkspacePolicyFragmentArtifacts(IHostApplicationBuilder builder)
@@ -97,6 +99,7 @@ internal static class WorkspacePolicyFragmentModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var logger = provider.GetRequiredService<ILogger>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
         {

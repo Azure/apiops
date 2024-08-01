@@ -50,6 +50,7 @@ internal static class ServicePolicyModule
     {
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
+        PolicyContentFormatModule.ConfigureDefaultPolicyContentFormat(builder);
 
         builder.Services.TryAddSingleton(GetListServicePolicies);
     }
@@ -58,10 +59,11 @@ internal static class ServicePolicyModule
     {
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
+        var policyContentFormat = provider.GetRequiredService<PolicyContentFormat>();
 
         return cancellationToken =>
             ServicePoliciesUri.From(serviceUri)
-                              .List(pipeline, cancellationToken);
+                              .List(pipeline, cancellationToken, policyContentFormat);
     }
 
     private static void ConfigureWriteServicePolicyArtifacts(IHostApplicationBuilder builder)

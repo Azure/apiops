@@ -100,7 +100,7 @@ public static class ServicePolicyModule
             {
                 Properties = new ServicePolicyDto.ServicePolicyContract
                 {
-                    Format = "rawxml",
+                    Format = PolicyContentFormat.Default.GetPolicyContentFormat,
                     Value = model.Content
                 }
             };
@@ -174,7 +174,7 @@ public static class ServicePolicyModule
             var serviceUri = getServiceUri(serviceName);
 
             return await ServicePoliciesUri.From(serviceUri)
-                                           .List(pipeline, cancellationToken)
+                                           .List(pipeline, cancellationToken, new PolicyContentFormat.RawXml())
                                            .ToFrozenDictionary(cancellationToken);
         };
     }
@@ -224,7 +224,8 @@ public static class ServicePolicyModule
                     {
                         Properties = new ServicePolicyDto.ServicePolicyContract
                         {
-                            Value = data.ToString()
+                            Value = data.ToString(),
+                            Format = PolicyContentFormat.Default.GetPolicyContentFormat
                         }
                     };
                     return (name, dto);
@@ -243,7 +244,8 @@ public static class ServicePolicyModule
                                                                                {
                                                                                    Properties = new ServicePolicyDto.ServicePolicyContract
                                                                                    {
-                                                                                       Value = await file.ReadPolicy(cancellationToken)
+                                                                                       Value = await file.ReadPolicy(cancellationToken),
+                                                                                       Format = PolicyContentFormat.Default.GetPolicyContentFormat,
                                                                                    }
                                                                                }))
                                                    .ToFrozenDictionary(cancellationToken);
@@ -336,7 +338,8 @@ public static class ServicePolicyModule
         {
             Properties = new ServicePolicyDto.ServicePolicyContract
             {
-                Value = content
+                Value = content,
+                Format = PolicyContentFormat.Default.GetPolicyContentFormat
             }
         };
 
@@ -348,7 +351,7 @@ public static class ServicePolicyModule
         {
             Properties = new ServicePolicyDto.ServicePolicyContract
             {
-                Format = "rawxml",
+                Format = PolicyContentFormat.Default.GetPolicyContentFormat,
                 Value = model.Content
             }
         };
