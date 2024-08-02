@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record TagName : ResourceName
+public sealed record TagName : ResourceName, IResourceName<TagName>
 {
     private TagName(string value) : base(value) { }
 
@@ -145,6 +145,12 @@ public static class TagModule
                    var dto = await uri.GetDto(pipeline, cancellationToken);
                    return (name, dto);
                });
+
+    public static async ValueTask<Option<TagDto>> TryGetDto(this TagUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<TagDto>());
+    }
 
     public static async ValueTask<TagDto> GetDto(this TagUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

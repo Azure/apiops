@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -9,6 +8,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -16,7 +17,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractGateways(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(GatewayName Name, GatewayDto Dto)> ListGateways(CancellationToken cancellationToken);
-public delegate bool ShouldExtractGateway(GatewayName name);
 public delegate ValueTask WriteGatewayArtifacts(GatewayName name, GatewayDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WriteGatewayInformationFile(GatewayName name, GatewayDto dto, CancellationToken cancellationToken);
 
@@ -25,8 +25,8 @@ internal static class GatewayModule
     public static void ConfigureExtractGateways(IHostApplicationBuilder builder)
     {
         ConfigureListGateways(builder);
-        ConfigureShouldExtractGateway(builder);
         ConfigureWriteGatewayArtifacts(builder);
+        GatewayApiModule.ConfigureExtractGatewayApis(builder);
 
         builder.Services.TryAddSingleton(GetExtractGateways);
     }
@@ -34,8 +34,8 @@ internal static class GatewayModule
     private static ExtractGateways GetExtractGateways(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListGateways>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractGateway>();
         var writeArtifacts = provider.GetRequiredService<WriteGatewayArtifacts>();
+        var extractGatewayApis = provider.GetRequiredService<ExtractGatewayApis>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -46,14 +46,20 @@ internal static class GatewayModule
             logger.LogInformation("Extracting gateways...");
 
             await list(cancellationToken)
-                    .Where(gateway => shouldExtract(gateway.Name))
-                    .IterParallel(async gateway => await writeArtifacts(gateway.Name, gateway.Dto, cancellationToken),
+                    .IterParallel(async resource => await extractGateway(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
+
+        async ValueTask extractGateway(GatewayName name, GatewayDto dto, CancellationToken cancellationToken)
+        {
+            await writeArtifacts(name, dto, cancellationToken);
+            await extractGatewayApis(name, cancellationToken);
+        }
     }
 
     private static void ConfigureListGateways(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -62,28 +68,36 @@ internal static class GatewayModule
 
     private static ListGateways GetListGateways(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<GatewayName>();
+
         return cancellationToken =>
-            GatewaysUri.From(serviceUri)
-                       .List(pipeline, cancellationToken);
-    }
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
 
-    private static void ConfigureShouldExtractGateway(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        IAsyncEnumerable<(GatewayName, GatewayDto)> listFromSet(IEnumerable<GatewayName> names, CancellationToken cancellationToken) =>
+            names.Select(name => GatewayUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 })
+                 .Catch((HttpRequestException exception) =>
+                            exception.StatusCode == HttpStatusCode.InternalServerError
+                            && exception.Message.Contains("Request processing failed", StringComparison.OrdinalIgnoreCase)
+                                ? AsyncEnumerable.Empty<(GatewayName, GatewayDto)>()
+                                : throw exception);
 
-        builder.Services.TryAddSingleton(GetShouldExtractGateway);
-    }
-
-    private static ShouldExtractGateway GetShouldExtractGateway(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<GatewayName>();
-
-        return name => shouldExtract(name);
+        IAsyncEnumerable<(GatewayName, GatewayDto)> listAll(CancellationToken cancellationToken)
+        {
+            var gatewaysUri = GatewaysUri.From(serviceUri);
+            return gatewaysUri.List(pipeline, cancellationToken);
+        }
     }
 
     private static void ConfigureWriteGatewayArtifacts(IHostApplicationBuilder builder)

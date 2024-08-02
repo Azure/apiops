@@ -23,7 +23,6 @@ internal static class ProductGroupModule
     public static void ConfigureExtractProductGroups(IHostApplicationBuilder builder)
     {
         ConfigureListProductGroups(builder);
-        GroupModule.ConfigureShouldExtractGroup(builder);
         ConfigureWriteProductGroupArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractProductGroups);
@@ -32,7 +31,6 @@ internal static class ProductGroupModule
     private static ExtractProductGroups GetExtractProductGroups(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListProductGroups>();
-        var shouldExtractGroup = provider.GetRequiredService<ShouldExtractGroup>();
         var writeArtifacts = provider.GetRequiredService<WriteProductGroupArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -44,14 +42,14 @@ internal static class ProductGroupModule
             logger.LogInformation("Extracting groups for product {ProductName}...", productName);
 
             await list(productName, cancellationToken)
-                    .Where(group => shouldExtractGroup(group.Name))
-                    .IterParallel(async productgroup => await writeArtifacts(productgroup.Name, productgroup.Dto, productName, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, productName, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListProductGroups(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -60,12 +58,23 @@ internal static class ProductGroupModule
 
     private static ListProductGroups GetListProductGroups(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationGroups = findConfigurationNamesFactory.Create<GroupName>();
+
         return (productName, cancellationToken) =>
-            ProductGroupsUri.From(productName, serviceUri)
-                          .List(pipeline, cancellationToken);
+        {
+            var productGroupsUri = ProductGroupsUri.From(productName, serviceUri);
+            var resources = productGroupsUri.List(pipeline, cancellationToken);
+            return resources.Where(resource => shouldExtractGroup(resource.Name));
+        };
+
+        bool shouldExtractGroup(GroupName name) =>
+            findConfigurationGroups()
+                .Map(names => names.Contains(name))
+                .IfNone(true);
     }
 
     private static void ConfigureWriteProductGroupArtifacts(IHostApplicationBuilder builder)
@@ -80,13 +89,13 @@ internal static class ProductGroupModule
         var writeInformationFile = provider.GetRequiredService<WriteProductGroupInformationFile>();
 
         return async (name, dto, productName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, productName, cancellationToken);
-        };
     }
 
-    public static void ConfigureWriteProductGroupInformationFile(IHostApplicationBuilder builder)
+    private static void ConfigureWriteProductGroupInformationFile(IHostApplicationBuilder builder)
     {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
         builder.Services.TryAddSingleton(GetWriteProductGroupInformationFile);
     }
 

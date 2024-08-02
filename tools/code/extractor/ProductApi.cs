@@ -23,7 +23,6 @@ internal static class ProductApiModule
     public static void ConfigureExtractProductApis(IHostApplicationBuilder builder)
     {
         ConfigureListProductApis(builder);
-        ApiModule.ConfigureShouldExtractApiName(builder);
         ConfigureWriteProductApiArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractProductApis);
@@ -32,7 +31,6 @@ internal static class ProductApiModule
     private static ExtractProductApis GetExtractProductApis(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListProductApis>();
-        var shouldExtractApi = provider.GetRequiredService<ShouldExtractApiName>();
         var writeArtifacts = provider.GetRequiredService<WriteProductApiArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -44,14 +42,14 @@ internal static class ProductApiModule
             logger.LogInformation("Extracting APIs for product {ProductName}...", productName);
 
             await list(productName, cancellationToken)
-                    .Where(api => shouldExtractApi(api.Name))
-                    .IterParallel(async productapi => await writeArtifacts(productapi.Name, productapi.Dto, productName, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, productName, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListProductApis(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -60,12 +58,23 @@ internal static class ProductApiModule
 
     private static ListProductApis GetListProductApis(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationApis = findConfigurationNamesFactory.Create<ApiName>();
+
         return (productName, cancellationToken) =>
-            ProductApisUri.From(productName, serviceUri)
-                          .List(pipeline, cancellationToken);
+        {
+            var productApisUri = ProductApisUri.From(productName, serviceUri);
+            var resources = productApisUri.List(pipeline, cancellationToken);
+            return resources.Where(resource => shouldExtractApi(resource.Name));
+        };
+
+        bool shouldExtractApi(ApiName name) =>
+            findConfigurationApis()
+                .Map(names => names.Contains(name))
+                .IfNone(true);
     }
 
     private static void ConfigureWriteProductApiArtifacts(IHostApplicationBuilder builder)
@@ -80,13 +89,13 @@ internal static class ProductApiModule
         var writeInformationFile = provider.GetRequiredService<WriteProductApiInformationFile>();
 
         return async (name, dto, productName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, productName, cancellationToken);
-        };
     }
 
-    public static void ConfigureWriteProductApiInformationFile(IHostApplicationBuilder builder)
+    private static void ConfigureWriteProductApiInformationFile(IHostApplicationBuilder builder)
     {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
         builder.Services.TryAddSingleton(GetWriteProductApiInformationFile);
     }
 

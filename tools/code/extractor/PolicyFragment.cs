@@ -16,7 +16,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractPolicyFragments(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(PolicyFragmentName Name, PolicyFragmentDto Dto)> ListPolicyFragments(CancellationToken cancellationToken);
-public delegate bool ShouldExtractPolicyFragment(PolicyFragmentName name);
 public delegate ValueTask WritePolicyFragmentArtifacts(PolicyFragmentName name, PolicyFragmentDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WritePolicyFragmentInformationFile(PolicyFragmentName name, PolicyFragmentDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WritePolicyFragmentPolicyFile(PolicyFragmentName name, PolicyFragmentDto dto, CancellationToken cancellationToken);
@@ -26,7 +25,6 @@ internal static class PolicyFragmentModule
     public static void ConfigureExtractPolicyFragments(IHostApplicationBuilder builder)
     {
         ConfigureListPolicyFragments(builder);
-        ConfigureShouldExtractPolicyFragment(builder);
         ConfigureWritePolicyFragmentArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractPolicyFragments);
@@ -35,7 +33,6 @@ internal static class PolicyFragmentModule
     private static ExtractPolicyFragments GetExtractPolicyFragments(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListPolicyFragments>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractPolicyFragment>();
         var writeArtifacts = provider.GetRequiredService<WritePolicyFragmentArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -47,14 +44,14 @@ internal static class PolicyFragmentModule
             logger.LogInformation("Extracting policy fragments...");
 
             await list(cancellationToken)
-                    .Where(policyfragment => shouldExtract(policyfragment.Name))
-                    .IterParallel(async policyfragment => await writeArtifacts(policyfragment.Name, policyfragment.Dto, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListPolicyFragments(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -63,28 +60,31 @@ internal static class PolicyFragmentModule
 
     private static ListPolicyFragments GetListPolicyFragments(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<PolicyFragmentName>();
+
         return cancellationToken =>
-            PolicyFragmentsUri.From(serviceUri)
-                              .List(pipeline, cancellationToken);
-    }
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
 
-    private static void ConfigureShouldExtractPolicyFragment(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        IAsyncEnumerable<(PolicyFragmentName, PolicyFragmentDto)> listFromSet(IEnumerable<PolicyFragmentName> names, CancellationToken cancellationToken) =>
+            names.Select(name => PolicyFragmentUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
 
-        builder.Services.TryAddSingleton(GetShouldExtractPolicyFragment);
-    }
-
-    private static ShouldExtractPolicyFragment GetShouldExtractPolicyFragment(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<PolicyFragmentName>();
-
-        return name => shouldExtract(name);
+        IAsyncEnumerable<(PolicyFragmentName, PolicyFragmentDto)> listAll(CancellationToken cancellationToken)
+        {
+            var policyFragmentsUri = PolicyFragmentsUri.From(serviceUri);
+            return policyFragmentsUri.List(pipeline, cancellationToken);
+        }
     }
 
     private static void ConfigureWritePolicyFragmentArtifacts(IHostApplicationBuilder builder)

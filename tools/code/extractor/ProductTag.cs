@@ -23,7 +23,6 @@ internal static class ProductTagModule
     public static void ConfigureExtractProductTags(IHostApplicationBuilder builder)
     {
         ConfigureListProductTags(builder);
-        TagModule.ConfigureShouldExtractTag(builder);
         ConfigureWriteProductTagArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractProductTags);
@@ -32,7 +31,6 @@ internal static class ProductTagModule
     private static ExtractProductTags GetExtractProductTags(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListProductTags>();
-        var shouldExtractTag = provider.GetRequiredService<ShouldExtractTag>();
         var writeArtifacts = provider.GetRequiredService<WriteProductTagArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -44,14 +42,14 @@ internal static class ProductTagModule
             logger.LogInformation("Extracting tags for product {ProductName}...", productName);
 
             await list(productName, cancellationToken)
-                    .Where(tag => shouldExtractTag(tag.Name))
-                    .IterParallel(async producttag => await writeArtifacts(producttag.Name, producttag.Dto, productName, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, productName, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListProductTags(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -60,12 +58,23 @@ internal static class ProductTagModule
 
     private static ListProductTags GetListProductTags(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationTags = findConfigurationNamesFactory.Create<TagName>();
+
         return (productName, cancellationToken) =>
-            ProductTagsUri.From(productName, serviceUri)
-                          .List(pipeline, cancellationToken);
+        {
+            var productTagsUri = ProductTagsUri.From(productName, serviceUri);
+            var resources = productTagsUri.List(pipeline, cancellationToken);
+            return resources.Where(resource => shouldExtractTag(resource.Name));
+        };
+
+        bool shouldExtractTag(TagName name) =>
+            findConfigurationTags()
+                .Map(names => names.Contains(name))
+                .IfNone(true);
     }
 
     private static void ConfigureWriteProductTagArtifacts(IHostApplicationBuilder builder)
@@ -80,12 +89,10 @@ internal static class ProductTagModule
         var writeInformationFile = provider.GetRequiredService<WriteProductTagInformationFile>();
 
         return async (name, dto, productName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, productName, cancellationToken);
-        };
     }
 
-    public static void ConfigureWriteProductTagInformationFile(IHostApplicationBuilder builder)
+    private static void ConfigureWriteProductTagInformationFile(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
 

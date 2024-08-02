@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -16,7 +15,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractGroups(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(GroupName Name, GroupDto Dto)> ListGroups(CancellationToken cancellationToken);
-public delegate bool ShouldExtractGroup(GroupName name);
 public delegate ValueTask WriteGroupArtifacts(GroupName name, GroupDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WriteGroupInformationFile(GroupName name, GroupDto dto, CancellationToken cancellationToken);
 
@@ -25,7 +23,6 @@ internal static class GroupModule
     public static void ConfigureExtractGroups(IHostApplicationBuilder builder)
     {
         ConfigureListGroups(builder);
-        ConfigureShouldExtractGroup(builder);
         ConfigureWriteGroupArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractGroups);
@@ -34,7 +31,6 @@ internal static class GroupModule
     private static ExtractGroups GetExtractGroups(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListGroups>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractGroup>();
         var writeArtifacts = provider.GetRequiredService<WriteGroupArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -46,14 +42,14 @@ internal static class GroupModule
             logger.LogInformation("Extracting groups...");
 
             await list(cancellationToken)
-                    .Where(group => shouldExtract(group.Name))
-                    .IterParallel(async group => await writeArtifacts(group.Name, group.Dto, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListGroups(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -62,28 +58,31 @@ internal static class GroupModule
 
     private static ListGroups GetListGroups(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<GroupName>();
+
         return cancellationToken =>
-            GroupsUri.From(serviceUri)
-                     .List(pipeline, cancellationToken);
-    }
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
 
-    public static void ConfigureShouldExtractGroup(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        IAsyncEnumerable<(GroupName, GroupDto)> listFromSet(IEnumerable<GroupName> names, CancellationToken cancellationToken) =>
+            names.Select(name => GroupUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
 
-        builder.Services.TryAddSingleton(GetShouldExtractGroup);
-    }
-
-    private static ShouldExtractGroup GetShouldExtractGroup(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<GroupName>();
-
-        return name => shouldExtract(name);
+        IAsyncEnumerable<(GroupName, GroupDto)> listAll(CancellationToken cancellationToken)
+        {
+            var groupsUri = GroupsUri.From(serviceUri);
+            return groupsUri.List(pipeline, cancellationToken);
+        }
     }
 
     private static void ConfigureWriteGroupArtifacts(IHostApplicationBuilder builder)
@@ -98,9 +97,7 @@ internal static class GroupModule
         var writeInformationFile = provider.GetRequiredService<WriteGroupInformationFile>();
 
         return async (name, dto, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteGroupInformationFile(IHostApplicationBuilder builder)

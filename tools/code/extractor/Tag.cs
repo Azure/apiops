@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -16,7 +15,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractTags(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(TagName Name, TagDto Dto)> ListTags(CancellationToken cancellationToken);
-public delegate bool ShouldExtractTag(TagName name);
 public delegate ValueTask WriteTagArtifacts(TagName name, TagDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WriteTagInformationFile(TagName name, TagDto dto, CancellationToken cancellationToken);
 
@@ -25,7 +23,6 @@ internal static class TagModule
     public static void ConfigureExtractTags(IHostApplicationBuilder builder)
     {
         ConfigureListTags(builder);
-        ConfigureShouldExtractTag(builder);
         ConfigureWriteTagArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractTags);
@@ -34,7 +31,6 @@ internal static class TagModule
     private static ExtractTags GetExtractTags(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListTags>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractTag>();
         var writeArtifacts = provider.GetRequiredService<WriteTagArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -46,14 +42,14 @@ internal static class TagModule
             logger.LogInformation("Extracting tags...");
 
             await list(cancellationToken)
-                    .Where(tag => shouldExtract(tag.Name))
-                    .IterParallel(async tag => await writeArtifacts(tag.Name, tag.Dto, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListTags(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -62,28 +58,31 @@ internal static class TagModule
 
     private static ListTags GetListTags(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<TagName>();
+
         return cancellationToken =>
-            TagsUri.From(serviceUri)
-                       .List(pipeline, cancellationToken);
-    }
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
 
-    public static void ConfigureShouldExtractTag(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        IAsyncEnumerable<(TagName, TagDto)> listFromSet(IEnumerable<TagName> names, CancellationToken cancellationToken) =>
+            names.Select(name => TagUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
 
-        builder.Services.TryAddSingleton(GetShouldExtractTag);
-    }
-
-    private static ShouldExtractTag GetShouldExtractTag(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<TagName>();
-
-        return name => shouldExtract(name);
+        IAsyncEnumerable<(TagName, TagDto)> listAll(CancellationToken cancellationToken)
+        {
+            var tagsUri = TagsUri.From(serviceUri);
+            return tagsUri.List(pipeline, cancellationToken);
+        }
     }
 
     private static void ConfigureWriteTagArtifacts(IHostApplicationBuilder builder)

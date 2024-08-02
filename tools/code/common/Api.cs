@@ -43,7 +43,7 @@ public sealed record ApiRevisionNumber
         : Option<ApiRevisionNumber>.None;
 }
 
-public sealed record ApiName : ResourceName
+public sealed record ApiName : ResourceName, IResourceName<ApiName>
 {
     private const string RevisionSeparator = ";rev=";
 
@@ -423,6 +423,12 @@ public static class ApiModule
                    var dto = await uri.GetDto(pipeline, cancellationToken);
                    return (name, dto);
                });
+
+    public static async ValueTask<Option<ApiDto>> TryGetDto(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<ApiDto>());
+    }
 
     public static async ValueTask<ApiDto> GetDto(this ApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

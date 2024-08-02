@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record GroupName : ResourceName
+public sealed record GroupName : ResourceName, IResourceName<GroupName>
 {
     private GroupName(string value) : base(value) { }
 
@@ -162,6 +162,12 @@ public static class GroupModule
                      var dto = await uri.GetDto(pipeline, cancellationToken);
                      return (name, dto);
                  });
+
+    public static async ValueTask<Option<GroupDto>> TryGetDto(this GroupUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<GroupDto>());
+    }
 
     public static async ValueTask<GroupDto> GetDto(this GroupUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

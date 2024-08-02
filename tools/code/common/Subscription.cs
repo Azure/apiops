@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record SubscriptionName : ResourceName
+public sealed record SubscriptionName : ResourceName, IResourceName<SubscriptionName>
 {
     private SubscriptionName(string value) : base(value) { }
 
@@ -174,6 +174,12 @@ public static class SubscriptionModule
                var dto = await resourceUri.GetDto(pipeline, cancellationToken);
                return (name, dto);
            });
+
+    public static async ValueTask<Option<SubscriptionDto>> TryGetDto(this SubscriptionUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<SubscriptionDto>());
+    }
 
     public static async ValueTask<SubscriptionDto> GetDto(this SubscriptionUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -16,7 +15,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractNamedValues(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(NamedValueName Name, NamedValueDto Dto)> ListNamedValues(CancellationToken cancellationToken);
-public delegate bool ShouldExtractNamedValue(NamedValueName name);
 public delegate ValueTask WriteNamedValueArtifacts(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WriteNamedValueInformationFile(NamedValueName name, NamedValueDto dto, CancellationToken cancellationToken);
 
@@ -25,7 +23,6 @@ internal static class NamedValueModule
     public static void ConfigureExtractNamedValues(IHostApplicationBuilder builder)
     {
         ConfigureListNamedValues(builder);
-        ConfigureShouldExtractNamedValue(builder);
         ConfigureWriteNamedValueArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractNamedValues);
@@ -34,7 +31,6 @@ internal static class NamedValueModule
     private static ExtractNamedValues GetExtractNamedValues(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListNamedValues>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractNamedValue>();
         var writeArtifacts = provider.GetRequiredService<WriteNamedValueArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -46,14 +42,14 @@ internal static class NamedValueModule
             logger.LogInformation("Extracting named values...");
 
             await list(cancellationToken)
-                    .Where(namedvalue => shouldExtract(namedvalue.Name))
-                    .IterParallel(async namedvalue => await writeArtifacts(namedvalue.Name, namedvalue.Dto, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListNamedValues(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -62,28 +58,31 @@ internal static class NamedValueModule
 
     private static ListNamedValues GetListNamedValues(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<NamedValueName>();
+
         return cancellationToken =>
-            NamedValuesUri.From(serviceUri)
-                          .List(pipeline, cancellationToken);
-    }
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
 
-    private static void ConfigureShouldExtractNamedValue(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        IAsyncEnumerable<(NamedValueName, NamedValueDto)> listFromSet(IEnumerable<NamedValueName> names, CancellationToken cancellationToken) =>
+            names.Select(name => NamedValueUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
 
-        builder.Services.TryAddSingleton(GetShouldExtractNamedValue);
-    }
-
-    private static ShouldExtractNamedValue GetShouldExtractNamedValue(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<NamedValueName>();
-
-        return name => shouldExtract(name);
+        IAsyncEnumerable<(NamedValueName, NamedValueDto)> listAll(CancellationToken cancellationToken)
+        {
+            var namedValuesUri = NamedValuesUri.From(serviceUri);
+            return namedValuesUri.List(pipeline, cancellationToken);
+        }
     }
 
     private static void ConfigureWriteNamedValueArtifacts(IHostApplicationBuilder builder)

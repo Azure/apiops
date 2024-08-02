@@ -23,7 +23,6 @@ internal static class GatewayApiModule
     public static void ConfigureExtractGatewayApis(IHostApplicationBuilder builder)
     {
         ConfigureListGatewayApis(builder);
-        ApiModule.ConfigureShouldExtractApiName(builder);
         ConfigureWriteGatewayApiArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractGatewayApis);
@@ -32,7 +31,6 @@ internal static class GatewayApiModule
     private static ExtractGatewayApis GetExtractGatewayApis(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListGatewayApis>();
-        var shouldExtractApi = provider.GetRequiredService<ShouldExtractApiName>();
         var writeArtifacts = provider.GetRequiredService<WriteGatewayApiArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -44,14 +42,14 @@ internal static class GatewayApiModule
             logger.LogInformation("Extracting APIs for gateway {GatewayName}...", gatewayName);
 
             await list(gatewayName, cancellationToken)
-                    .Where(api => shouldExtractApi(api.Name))
-                    .IterParallel(async gatewayapi => await writeArtifacts(gatewayapi.Name, gatewayapi.Dto, gatewayName, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, gatewayName, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListGatewayApis(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -60,12 +58,23 @@ internal static class GatewayApiModule
 
     private static ListGatewayApis GetListGatewayApis(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationApis = findConfigurationNamesFactory.Create<ApiName>();
+
         return (gatewayName, cancellationToken) =>
-            GatewayApisUri.From(gatewayName, serviceUri)
-                          .List(pipeline, cancellationToken);
+        {
+            var gatewayApisUri = GatewayApisUri.From(gatewayName, serviceUri);
+            var resources = gatewayApisUri.List(pipeline, cancellationToken);
+            return resources.Where(resource => shouldExtractApi(resource.Name));
+        };
+
+        bool shouldExtractApi(ApiName name) =>
+            findConfigurationApis()
+                .Map(names => names.Contains(name))
+                .IfNone(true);
     }
 
     private static void ConfigureWriteGatewayApiArtifacts(IHostApplicationBuilder builder)
@@ -80,13 +89,13 @@ internal static class GatewayApiModule
         var writeInformationFile = provider.GetRequiredService<WriteGatewayApiInformationFile>();
 
         return async (name, dto, gatewayName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, gatewayName, cancellationToken);
-        };
     }
 
-    public static void ConfigureWriteGatewayApiInformationFile(IHostApplicationBuilder builder)
+    private static void ConfigureWriteGatewayApiInformationFile(IHostApplicationBuilder builder)
     {
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+
         builder.Services.TryAddSingleton(GetWriteGatewayApiInformationFile);
     }
 

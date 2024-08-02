@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record GatewayName : ResourceName
+public sealed record GatewayName : ResourceName, IResourceName<GatewayName>
 {
     private GatewayName(string value) : base(value) { }
 
@@ -184,6 +184,12 @@ public static class GatewayModule
                           var dto = await uri.GetDto(pipeline, cancellationToken);
                           return (name, dto);
                       });
+
+    public static async ValueTask<Option<GatewayDto>> TryGetDto(this GatewayUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<GatewayDto>());
+    }
 
     public static async ValueTask<GatewayDto> GetDto(this GatewayUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

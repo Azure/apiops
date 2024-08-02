@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record NamedValueName : ResourceName
+public sealed record NamedValueName : ResourceName, IResourceName<NamedValueName>
 {
     private NamedValueName(string value) : base(value) { }
 
@@ -178,6 +178,12 @@ public static class NamedValueModule
                           var dto = await uri.GetDto(pipeline, cancellationToken);
                           return (name, dto);
                       });
+
+    public static async ValueTask<Option<NamedValueDto>> TryGetDto(this NamedValueUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<NamedValueDto>());
+    }
 
     public static async ValueTask<NamedValueDto> GetDto(this NamedValueUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

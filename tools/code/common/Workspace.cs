@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record WorkspaceName : ResourceName
+public sealed record WorkspaceName : ResourceName, IResourceName<WorkspaceName>
 {
     private WorkspaceName(string value) : base(value) { }
 
@@ -174,6 +174,12 @@ public static class WorkspaceModule
                var dto = await resourceUri.GetDto(pipeline, cancellationToken);
                return (name, dto);
            });
+
+    public static async ValueTask<Option<WorkspaceDto>> TryGetDto(this WorkspaceUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<WorkspaceDto>());
+    }
 
     public static async ValueTask<WorkspaceDto> GetDto(this WorkspaceUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

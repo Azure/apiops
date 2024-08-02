@@ -15,7 +15,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractBackends(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(BackendName Name, BackendDto Dto)> ListBackends(CancellationToken cancellationToken);
-public delegate bool ShouldExtractBackend(BackendName name);
 public delegate ValueTask WriteBackendArtifacts(BackendName name, BackendDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WriteBackendInformationFile(BackendName name, BackendDto dto, CancellationToken cancellationToken);
 
@@ -24,7 +23,6 @@ internal static class BackendModule
     public static void ConfigureExtractBackends(IHostApplicationBuilder builder)
     {
         ConfigureListBackends(builder);
-        ConfigureShouldExtractBackend(builder);
         ConfigureWriteBackendArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractBackends);
@@ -33,7 +31,6 @@ internal static class BackendModule
     private static ExtractBackends GetExtractBackends(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListBackends>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractBackend>();
         var writeArtifacts = provider.GetRequiredService<WriteBackendArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -45,7 +42,6 @@ internal static class BackendModule
             logger.LogInformation("Extracting backends...");
 
             await list(cancellationToken)
-                    .Where(resource => shouldExtract(resource.Name))
                     .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
@@ -53,38 +49,39 @@ internal static class BackendModule
 
     private static void ConfigureListBackends(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
         builder.Services.TryAddSingleton(GetListBackends);
     }
-
     private static ListBackends GetListBackends(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<BackendName>();
+
         return cancellationToken =>
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
+
+        IAsyncEnumerable<(BackendName, BackendDto)> listFromSet(IEnumerable<BackendName> names, CancellationToken cancellationToken) =>
+            names.Select(name => BackendUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
+
+        IAsyncEnumerable<(BackendName, BackendDto)> listAll(CancellationToken cancellationToken)
         {
             var backendsUri = BackendsUri.From(serviceUri);
             return backendsUri.List(pipeline, cancellationToken);
-        };
-    }
-
-    private static void ConfigureShouldExtractBackend(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
-
-        builder.Services.TryAddSingleton(GetShouldExtractBackend);
-    }
-
-    private static ShouldExtractBackend GetShouldExtractBackend(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<BackendName>();
-
-        return name => shouldExtract(name);
+        }
     }
 
     private static void ConfigureWriteBackendArtifacts(IHostApplicationBuilder builder)

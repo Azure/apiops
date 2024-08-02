@@ -6,14 +6,13 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record DiagnosticName : ResourceName
+public sealed record DiagnosticName : ResourceName, IResourceName<DiagnosticName>
 {
     private DiagnosticName(string value) : base(value) { }
 
@@ -254,6 +253,12 @@ public static class DiagnosticModule
                           var dto = await uri.GetDto(pipeline, cancellationToken);
                           return (name, dto);
                       });
+
+    public static async ValueTask<Option<DiagnosticDto>> TryGetDto(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<DiagnosticDto>());
+    }
 
     public static async ValueTask<DiagnosticDto> GetDto(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

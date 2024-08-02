@@ -23,6 +23,22 @@ public static class JsonValueExtensions
                  .Bind(uriString => Uri.TryCreate(uriString, UriKind.Absolute, out var uri)
                                      ? Either<string, Uri>.Right(uri)
                                      : $"JSON value '{uriString}' is not a valid absolute URI.");
+
+    public static Either<string, int> TryAsInt(this JsonValue? jsonValue) =>
+        jsonValue is null
+        ? "JSON value is null."
+        : jsonValue.TryGetValue<int>(out var intValue)
+          || (jsonValue.TryGetValue<string>(out var stringValue) && int.TryParse(stringValue, out intValue))
+            ? intValue
+            : "JSON value is not an integer.";
+
+    public static Either<string, bool> TryAsBool(this JsonValue? jsonValue) =>
+        jsonValue is null
+        ? "JSON value is null."
+        : jsonValue.TryGetValue<bool>(out var boolValue)
+          || (jsonValue.TryGetValue<string>(out var stringValue) && bool.TryParse(stringValue, out boolValue))
+            ? boolValue
+            : "JSON value is not a boolean.";
 }
 
 public static class JsonNodeExtensions
@@ -49,6 +65,14 @@ public static class JsonNodeExtensions
     public static Either<string, Uri> TryAsAbsoluteUri(this JsonNode? node) =>
         node.TryAsJsonValue()
             .Bind(jsonValue => jsonValue.TryAsAbsoluteUri());
+
+    public static Either<string, int> TryAsInt(this JsonNode? node) =>
+        node.TryAsJsonValue()
+            .Bind(jsonValue => jsonValue.TryAsInt());
+
+    public static Either<string, bool> TryAsBool(this JsonNode? node) =>
+        node.TryAsJsonValue()
+            .Bind(jsonValue => jsonValue.TryAsBool());
 }
 
 public static class JsonArrayExtensions
@@ -134,7 +158,25 @@ public static class JsonObjectExtensions
     public static string GetStringProperty(this JsonObject jsonObject, string propertyName) =>
         jsonObject.TryGetStringProperty(propertyName)
                   .IfLeftThrow();
-    
+
+    public static int GetIntProperty(this JsonObject jsonObject, string propertyName) =>
+        jsonObject.TryGetIntProperty(propertyName)
+                  .IfLeftThrow();
+
+    public static Either<string, int> TryGetIntProperty(this JsonObject? jsonObject, string propertyName) =>
+        jsonObject.TryGetProperty(propertyName)
+                  .Bind(JsonNodeExtensions.TryAsInt)
+                  .BindPropertyError(propertyName);
+
+    public static bool GetBoolProperty(this JsonObject jsonObject, string propertyName) =>
+        jsonObject.TryGetBoolProperty(propertyName)
+                  .IfLeftThrow();
+
+    public static Either<string, bool> TryGetBoolProperty(this JsonObject? jsonObject, string propertyName) =>
+        jsonObject.TryGetProperty(propertyName)
+                  .Bind(JsonNodeExtensions.TryAsBool)
+                  .BindPropertyError(propertyName);
+
     public static JsonObject Parse<T>(T obj) =>
         TryParse(obj)
             .IfLeft(() => throw new JsonException($"Could not parse {typeof(T).Name} as a JSON object."));

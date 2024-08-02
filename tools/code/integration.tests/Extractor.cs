@@ -150,8 +150,8 @@ public sealed record ExtractorOptions
     private static JsonObject AddNamesToExport<T>(Option<FrozenSet<T>> names, JsonObject jsonObject) where T : ResourceName =>
         names.Map(names =>
         {
-            var sectionName = ShouldExtractFactory.GetConfigurationSectionName<T>();
-            var getNameToWrite = (T name) => (JsonNode?)ShouldExtractFactory.GetNameToFind(name);
+            var sectionName = FindConfigurationNamesFactory.GetConfigurationSectionName<T>();
+            var getNameToWrite = (T name) => (JsonNode?)FindConfigurationNamesFactory.GetNameToFind(name);
             var namesToWrite = names.Select(getNameToWrite)
                                     .ToJsonArray();
             return jsonObject.SetProperty(sectionName, namesToWrite);
@@ -177,7 +177,7 @@ public sealed record ExtractorOptions
     public static bool ShouldExtract<T>(T name, Option<FrozenSet<T>> namesToExport) where T : ResourceName =>
         namesToExport.Match(names =>
         {
-            var nameToFindString = ShouldExtractFactory.GetNameToFind(name);
+            var nameToFindString = FindConfigurationNamesFactory.GetNameToFind(name);
 
             // Run T.From(nameToFindString)
             var nameToFind = Expression.Lambda<Func<T>>(Expression.Call(typeof(T), "From", [], Expression.Constant(nameToFindString))).Compile()();

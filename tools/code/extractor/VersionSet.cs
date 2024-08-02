@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -16,7 +15,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractVersionSets(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(VersionSetName Name, VersionSetDto Dto)> ListVersionSets(CancellationToken cancellationToken);
-public delegate bool ShouldExtractVersionSet(VersionSetName name);
 public delegate ValueTask WriteVersionSetArtifacts(VersionSetName name, VersionSetDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WriteVersionSetInformationFile(VersionSetName name, VersionSetDto dto, CancellationToken cancellationToken);
 
@@ -25,7 +23,6 @@ internal static class VersionSetModule
     public static void ConfigureExtractVersionSets(IHostApplicationBuilder builder)
     {
         ConfigureListVersionSets(builder);
-        ConfigureShouldExtractVersionSet(builder);
         ConfigureWriteVersionSetArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractVersionSets);
@@ -34,7 +31,6 @@ internal static class VersionSetModule
     private static ExtractVersionSets GetExtractVersionSets(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListVersionSets>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractVersionSet>();
         var writeArtifacts = provider.GetRequiredService<WriteVersionSetArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -46,14 +42,14 @@ internal static class VersionSetModule
             logger.LogInformation("Extracting version sets...");
 
             await list(cancellationToken)
-                    .Where(versionset => shouldExtract(versionset.Name))
-                    .IterParallel(async versionset => await writeArtifacts(versionset.Name, versionset.Dto, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListVersionSets(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -62,28 +58,31 @@ internal static class VersionSetModule
 
     private static ListVersionSets GetListVersionSets(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<VersionSetName>();
+
         return cancellationToken =>
-            VersionSetsUri.From(serviceUri)
-                          .List(pipeline, cancellationToken);
-    }
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
 
-    private static void ConfigureShouldExtractVersionSet(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        IAsyncEnumerable<(VersionSetName, VersionSetDto)> listFromSet(IEnumerable<VersionSetName> names, CancellationToken cancellationToken) =>
+            names.Select(name => VersionSetUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
 
-        builder.Services.TryAddSingleton(GetShouldExtractVersionSet);
-    }
-
-    private static ShouldExtractVersionSet GetShouldExtractVersionSet(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<VersionSetName>();
-
-        return name => shouldExtract(name);
+        IAsyncEnumerable<(VersionSetName, VersionSetDto)> listAll(CancellationToken cancellationToken)
+        {
+            var versionSetsUri = VersionSetsUri.From(serviceUri);
+            return versionSetsUri.List(pipeline, cancellationToken);
+        }
     }
 
     private static void ConfigureWriteVersionSetArtifacts(IHostApplicationBuilder builder)

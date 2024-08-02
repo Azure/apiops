@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -16,7 +15,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractSubscriptions(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(SubscriptionName Name, SubscriptionDto Dto)> ListSubscriptions(CancellationToken cancellationToken);
-public delegate bool ShouldExtractSubscription(SubscriptionName name, SubscriptionDto dto);
 public delegate ValueTask WriteSubscriptionArtifacts(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WriteSubscriptionInformationFile(SubscriptionName name, SubscriptionDto dto, CancellationToken cancellationToken);
 
@@ -25,7 +23,6 @@ internal static class SubscriptionModule
     public static void ConfigureExtractSubscriptions(IHostApplicationBuilder builder)
     {
         ConfigureListSubscriptions(builder);
-        ConfigureShouldExtractSubscription(builder);
         ConfigureWriteSubscriptionArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractSubscriptions);
@@ -34,7 +31,6 @@ internal static class SubscriptionModule
     private static ExtractSubscriptions GetExtractSubscriptions(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListSubscriptions>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractSubscription>();
         var writeArtifacts = provider.GetRequiredService<WriteSubscriptionArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -46,14 +42,14 @@ internal static class SubscriptionModule
             logger.LogInformation("Extracting subscriptions...");
 
             await list(cancellationToken)
-                    .Where(subscription => shouldExtract(subscription.Name, subscription.Dto))
-                    .IterParallel(async subscription => await writeArtifacts(subscription.Name, subscription.Dto, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListSubscriptions(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -62,44 +58,59 @@ internal static class SubscriptionModule
 
     private static ListSubscriptions GetListSubscriptions(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationSubscriptions = findConfigurationNamesFactory.Create<SubscriptionName>();
+        var findConfigurationApis = findConfigurationNamesFactory.Create<ApiName>();
+        var findConfigurationProducts = findConfigurationNamesFactory.Create<ProductName>();
+
         return cancellationToken =>
-            SubscriptionsUri.From(serviceUri)
-                            .List(pipeline, cancellationToken);
-    }
+            findConfigurationSubscriptions()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken))
+                .Where(resource => shouldExtractSubscription(resource.Name, resource.Dto));
 
-    private static void ConfigureShouldExtractSubscription(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
-        ApiModule.ConfigureShouldExtractApiName(builder);
-        ProductModule.ConfigureShouldExtractProduct(builder);
+        IAsyncEnumerable<(SubscriptionName Name, SubscriptionDto Dto)> listFromSet(IEnumerable<SubscriptionName> names, CancellationToken cancellationToken) =>
+            names.Select(name => SubscriptionUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
 
-        builder.Services.TryAddSingleton(GetShouldExtractSubscription);
-    }
+        IAsyncEnumerable<(SubscriptionName, SubscriptionDto)> listAll(CancellationToken cancellationToken)
+        {
+            var subscriptionsUri = SubscriptionsUri.From(serviceUri);
+            return subscriptionsUri.List(pipeline, cancellationToken);
+        }
 
-    private static ShouldExtractSubscription GetShouldExtractSubscription(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-        var shouldExtractApi = provider.GetRequiredService<ShouldExtractApiName>();
-        var shouldExtractProduct = provider.GetRequiredService<ShouldExtractProduct>();
+        bool shouldExtractSubscription(SubscriptionName name, SubscriptionDto dto)
+        {
+            var apiNamesOption = findConfigurationApis();
+            var productNamesOption = findConfigurationProducts();
 
-        var shouldExtractSubscriptionName = shouldExtractFactory.Create<SubscriptionName>();
+            var shouldExtractApi = (ApiName apiName) =>
+                apiNamesOption.Map(names => names.Contains(apiName))
+                              .IfNone(true);
 
-        return (name, dto) =>
+            var shouldExtractProduct = (ProductName productName) =>
+                productNamesOption.Map(names => names.Contains(productName))
+                                  .IfNone(true);
+
             // Don't extract the master subscription
-            name != SubscriptionName.From("master")
-            // Check name from configuration override
-            && shouldExtractSubscriptionName(name)
-            // Don't extract subscription if its API should not be extracted
-            && common.SubscriptionModule.TryGetApiName(dto)
-                                        .Map(shouldExtractApi.Invoke)
-                                        .IfNone(true)
-            // Don't extract subscription if its product should not be extracted
-            && common.SubscriptionModule.TryGetProductName(dto)
-                                        .Map(shouldExtractProduct.Invoke)
-                                        .IfNone(true);
+            return name != SubscriptionName.From("master")
+                    // Don't extract subscription if its API should not be extracted
+                    && common.SubscriptionModule.TryGetApiName(dto)
+                                                .Map(shouldExtractApi)
+                                                .IfNone(true)
+                    // Don't extract subscription if its product should not be extracted
+                    && common.SubscriptionModule.TryGetProductName(dto)
+                                                .Map(shouldExtractProduct)
+                                                .IfNone(true);
+        }
     }
 
     private static void ConfigureWriteSubscriptionArtifacts(IHostApplicationBuilder builder)

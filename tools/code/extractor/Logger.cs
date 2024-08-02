@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -16,7 +15,6 @@ namespace extractor;
 
 public delegate ValueTask ExtractLoggers(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(LoggerName Name, LoggerDto Dto)> ListLoggers(CancellationToken cancellationToken);
-public delegate bool ShouldExtractLogger(LoggerName name);
 public delegate ValueTask WriteLoggerArtifacts(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
 public delegate ValueTask WriteLoggerInformationFile(LoggerName name, LoggerDto dto, CancellationToken cancellationToken);
 
@@ -25,7 +23,6 @@ internal static class LoggerModule
     public static void ConfigureExtractLoggers(IHostApplicationBuilder builder)
     {
         ConfigureListLoggers(builder);
-        ConfigureShouldExtractLogger(builder);
         ConfigureWriteLoggerArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractLoggers);
@@ -34,7 +31,6 @@ internal static class LoggerModule
     private static ExtractLoggers GetExtractLoggers(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListLoggers>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractLogger>();
         var writeArtifacts = provider.GetRequiredService<WriteLoggerArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -46,14 +42,14 @@ internal static class LoggerModule
             logger.LogInformation("Extracting loggers...");
 
             await list(cancellationToken)
-                    .Where(logger => shouldExtract(logger.Name))
-                    .IterParallel(async logger => await writeArtifacts(logger.Name, logger.Dto, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListLoggers(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -62,28 +58,31 @@ internal static class LoggerModule
 
     private static ListLoggers GetListLoggers(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<LoggerName>();
+
         return cancellationToken =>
-            LoggersUri.From(serviceUri)
-                      .List(pipeline, cancellationToken);
-    }
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
 
-    public static void ConfigureShouldExtractLogger(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        IAsyncEnumerable<(LoggerName, LoggerDto)> listFromSet(IEnumerable<LoggerName> names, CancellationToken cancellationToken) =>
+            names.Select(name => LoggerUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
 
-        builder.Services.TryAddSingleton(GetShouldExtractLogger);
-    }
-
-    private static ShouldExtractLogger GetShouldExtractLogger(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<LoggerName>();
-
-        return name => shouldExtract(name);
+        IAsyncEnumerable<(LoggerName, LoggerDto)> listAll(CancellationToken cancellationToken)
+        {
+            var loggersUri = LoggersUri.From(serviceUri);
+            return loggersUri.List(pipeline, cancellationToken);
+        }
     }
 
     private static void ConfigureWriteLoggerArtifacts(IHostApplicationBuilder builder)

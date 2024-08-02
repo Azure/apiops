@@ -23,7 +23,6 @@ internal static class ApiTagModule
     public static void ConfigureExtractApiTags(IHostApplicationBuilder builder)
     {
         ConfigureListApiTags(builder);
-        TagModule.ConfigureShouldExtractTag(builder);
         ConfigureWriteApiTagArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractApiTags);
@@ -32,7 +31,6 @@ internal static class ApiTagModule
     private static ExtractApiTags GetExtractApiTags(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListApiTags>();
-        var shouldExtractTag = provider.GetRequiredService<ShouldExtractTag>();
         var writeArtifacts = provider.GetRequiredService<WriteApiTagArtifacts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -44,14 +42,14 @@ internal static class ApiTagModule
             logger.LogInformation("Extracting tags for API {ApiName}...", apiName);
 
             await list(apiName, cancellationToken)
-                    .Where(tag => shouldExtractTag(tag.Name))
-                    .IterParallel(async tag => await writeArtifacts(tag.Name, tag.Dto, apiName, cancellationToken),
+                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, apiName, cancellationToken),
                                   cancellationToken);
         };
     }
 
     private static void ConfigureListApiTags(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -60,12 +58,23 @@ internal static class ApiTagModule
 
     private static ListApiTags GetListApiTags(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationTags = findConfigurationNamesFactory.Create<TagName>();
+
         return (apiName, cancellationToken) =>
-            ApiTagsUri.From(apiName, serviceUri)
-                      .List(pipeline, cancellationToken);
+        {
+            var apiTagsUri = ApiTagsUri.From(apiName, serviceUri);
+            var resources = apiTagsUri.List(pipeline, cancellationToken);
+            return resources.Where(resource => shouldExtractTag(resource.Name));
+        };
+
+        bool shouldExtractTag(TagName name) =>
+            findConfigurationTags()
+                .Map(names => names.Contains(name))
+                .IfNone(true);
     }
 
     private static void ConfigureWriteApiTagArtifacts(IHostApplicationBuilder builder)
@@ -99,7 +108,7 @@ internal static class ApiTagModule
         {
             var informationFile = ApiTagInformationFile.From(name, apiName, serviceDirectory);
 
-            logger.LogInformation("Writing API tag information file {InformationFile}", informationFile);
+            logger.LogInformation("Writing API tag information file {ApiTagInformationFile}...", informationFile);
             await informationFile.WriteDto(dto, cancellationToken);
         };
     }

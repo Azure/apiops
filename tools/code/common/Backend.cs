@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record BackendName : ResourceName
+public sealed record BackendName : ResourceName, IResourceName<BackendName>
 {
     private BackendName(string value) : base(value) { }
 
@@ -299,6 +299,12 @@ public static class BackendModule
                var dto = await backendUri.GetDto(pipeline, cancellationToken);
                return (name, dto);
            });
+
+    public static async ValueTask<Option<BackendDto>> TryGetDto(this BackendUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<BackendDto>());
+    }
 
     public static async ValueTask<BackendDto> GetDto(this BackendUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

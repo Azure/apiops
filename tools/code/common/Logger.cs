@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record LoggerName : ResourceName
+public sealed record LoggerName : ResourceName, IResourceName<LoggerName>
 {
     private LoggerName(string value) : base(value) { }
 
@@ -167,6 +167,12 @@ public static class LoggerModule
                           var dto = await uri.GetDto(pipeline, cancellationToken);
                           return (name, dto);
                       });
+
+    public static async ValueTask<Option<LoggerDto>> TryGetDto(this LoggerUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<LoggerDto>());
+    }
 
     public static async ValueTask<LoggerDto> GetDto(this LoggerUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

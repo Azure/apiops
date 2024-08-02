@@ -16,17 +16,12 @@ namespace extractor;
 
 public delegate ValueTask ExtractWorkspaces(CancellationToken cancellationToken);
 public delegate IAsyncEnumerable<(WorkspaceName Name, WorkspaceDto Dto)> ListWorkspaces(CancellationToken cancellationToken);
-public delegate bool ShouldExtractWorkspace(WorkspaceName name);
-public delegate ValueTask WriteWorkspaceArtifacts(WorkspaceName name, WorkspaceDto dto, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceInformationFile(WorkspaceName name, WorkspaceDto dto, CancellationToken cancellationToken);
 
 internal static class WorkspaceModule
 {
     public static void ConfigureExtractWorkspaces(IHostApplicationBuilder builder)
     {
         ConfigureListWorkspaces(builder);
-        ConfigureShouldExtractWorkspace(builder);
-        ConfigureWriteWorkspaceArtifacts(builder);
         WorkspaceNamedValueModule.ConfigureExtractWorkspaceNamedValues(builder);
         WorkspaceBackendModule.ConfigureExtractWorkspaceBackends(builder);
         WorkspaceTagModule.ConfigureExtractWorkspaceTags(builder);
@@ -46,8 +41,6 @@ internal static class WorkspaceModule
     private static ExtractWorkspaces GetExtractWorkspaces(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListWorkspaces>();
-        var shouldExtract = provider.GetRequiredService<ShouldExtractWorkspace>();
-        var writeArtifacts = provider.GetRequiredService<WriteWorkspaceArtifacts>();
         var extractWorkspaceNamedValues = provider.GetRequiredService<ExtractWorkspaceNamedValues>();
         var extractWorkspaceBackends = provider.GetRequiredService<ExtractWorkspaceBackends>();
         var extractWorkspaceTags = provider.GetRequiredService<ExtractWorkspaceTags>();
@@ -70,14 +63,12 @@ internal static class WorkspaceModule
             logger.LogInformation("Extracting workspaces...");
 
             await list(cancellationToken)
-                    .Where(workspace => shouldExtract(workspace.Name))
                     .IterParallel(async workspace => await extractWorkspace(workspace.Name, workspace.Dto, cancellationToken),
                                   cancellationToken);
         };
 
         async ValueTask extractWorkspace(WorkspaceName name, WorkspaceDto dto, CancellationToken cancellationToken)
         {
-            //await writeArtifacts(name, dto, cancellationToken); // TODO: Revisit support for writing workspace artifacts
             await extractWorkspaceNamedValues(name, cancellationToken);
             await extractWorkspaceBackends(name, cancellationToken);
             await extractWorkspaceTags(name, cancellationToken);
@@ -95,6 +86,7 @@ internal static class WorkspaceModule
 
     private static void ConfigureListWorkspaces(IHostApplicationBuilder builder)
     {
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
         AzureModule.ConfigureManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -103,63 +95,30 @@ internal static class WorkspaceModule
 
     private static ListWorkspaces GetListWorkspaces(IServiceProvider provider)
     {
+        var findConfigurationNamesFactory = provider.GetRequiredService<FindConfigurationNamesFactory>();
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
+        var findConfigurationNames = findConfigurationNamesFactory.Create<WorkspaceName>();
+
         return cancellationToken =>
-            WorkspacesUri.From(serviceUri)
-                         .List(pipeline, cancellationToken);
-    }
+            findConfigurationNames()
+                .Map(names => listFromSet(names, cancellationToken))
+                .IfNone(() => listAll(cancellationToken));
 
-    private static void ConfigureShouldExtractWorkspace(IHostApplicationBuilder builder)
-    {
-        ShouldExtractModule.ConfigureShouldExtractFactory(builder);
+        IAsyncEnumerable<(WorkspaceName, WorkspaceDto)> listFromSet(IEnumerable<WorkspaceName> names, CancellationToken cancellationToken) =>
+            names.Select(name => WorkspaceUri.From(name, serviceUri))
+                 .ToAsyncEnumerable()
+                 .Choose(async uri =>
+                 {
+                     var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
+                     return dtoOption.Map(dto => (uri.Name, dto));
+                 });
 
-        builder.Services.TryAddSingleton(GetShouldExtractWorkspace);
-    }
-
-    private static ShouldExtractWorkspace GetShouldExtractWorkspace(IServiceProvider provider)
-    {
-        var shouldExtractFactory = provider.GetRequiredService<ShouldExtractFactory>();
-
-        var shouldExtract = shouldExtractFactory.Create<WorkspaceName>();
-
-        return name => shouldExtract(name);
-    }
-
-    private static void ConfigureWriteWorkspaceArtifacts(IHostApplicationBuilder builder)
-    {
-        ConfigureWriteWorkspaceInformationFile(builder);
-
-        builder.Services.TryAddSingleton(GetWriteWorkspaceArtifacts);
-    }
-
-    private static WriteWorkspaceArtifacts GetWriteWorkspaceArtifacts(IServiceProvider provider)
-    {
-        var writeInformationFile = provider.GetRequiredService<WriteWorkspaceInformationFile>();
-
-        return async (name, dto, cancellationToken) =>
-            await writeInformationFile(name, dto, cancellationToken);
-    }
-
-    private static void ConfigureWriteWorkspaceInformationFile(IHostApplicationBuilder builder)
-    {
-        AzureModule.ConfigureManagementServiceDirectory(builder);
-
-        builder.Services.TryAddSingleton(GetWriteWorkspaceInformationFile);
-    }
-
-    private static WriteWorkspaceInformationFile GetWriteWorkspaceInformationFile(IServiceProvider provider)
-    {
-        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
-        var logger = provider.GetRequiredService<ILogger>();
-
-        return async (name, dto, cancellationToken) =>
+        IAsyncEnumerable<(WorkspaceName, WorkspaceDto)> listAll(CancellationToken cancellationToken)
         {
-            var informationFile = WorkspaceInformationFile.From(name, serviceDirectory);
-
-            logger.LogInformation("Writing workspace information file {WorkspaceInformationFile}...", informationFile);
-            await informationFile.WriteDto(dto, cancellationToken);
-        };
+            var workspacesUri = WorkspacesUri.From(serviceUri);
+            return workspacesUri.List(pipeline, cancellationToken);
+        }
     }
 }

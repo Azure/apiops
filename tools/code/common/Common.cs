@@ -25,6 +25,11 @@ public abstract record ResourceName : NonEmptyString
     public override int GetHashCode() => Value.GetHashCode(StringComparison.OrdinalIgnoreCase);
 }
 
+public interface IResourceName<T>
+{
+    public abstract static T From(string value);
+}
+
 public abstract record ResourceDirectory
 {
     protected abstract DirectoryInfo Value { get; }

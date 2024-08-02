@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record PolicyFragmentName : ResourceName
+public sealed record PolicyFragmentName : ResourceName, IResourceName<PolicyFragmentName>
 {
     private PolicyFragmentName(string value) : base(value) { }
 
@@ -183,6 +183,13 @@ public static class PolicyFragmentModule
                           var dto = await uri.GetDto(pipeline, cancellationToken);
                           return (name, dto);
                       });
+
+    public static async ValueTask<Option<PolicyFragmentDto>> TryGetDto(this PolicyFragmentUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentUri = uri.ToUri().AppendQueryParam("format", "rawxml").ToUri();
+        var contentOption = await pipeline.GetContentOption(contentUri, cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<PolicyFragmentDto>());
+    }
 
     public static async ValueTask<PolicyFragmentDto> GetDto(this PolicyFragmentUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record VersionSetName : ResourceName
+public sealed record VersionSetName : ResourceName, IResourceName<VersionSetName>
 {
     private VersionSetName(string value) : base(value) { }
 
@@ -166,6 +166,12 @@ public static class VersionSetModule
                           var dto = await uri.GetDto(pipeline, cancellationToken);
                           return (name, dto);
                       });
+
+    public static async ValueTask<Option<VersionSetDto>> TryGetDto(this VersionSetUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
+        return contentOption.Map(content => content.ToObjectFromJson<VersionSetDto>());
+    }
 
     public static async ValueTask<VersionSetDto> GetDto(this VersionSetUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
