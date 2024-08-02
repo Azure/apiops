@@ -87,6 +87,7 @@ internal static class GatewayModule
                      var dtoOption = await uri.TryGetDto(pipeline, cancellationToken);
                      return dtoOption.Map(dto => (uri.Name, dto));
                  })
+                 // Handle scenarios where the SKU doesn't support gateways
                  .Catch((HttpRequestException exception) =>
                             exception.StatusCode == HttpStatusCode.InternalServerError
                             && exception.Message.Contains("Request processing failed", StringComparison.OrdinalIgnoreCase)
