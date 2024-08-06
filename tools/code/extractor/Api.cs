@@ -53,7 +53,7 @@ internal static class ApiModule
             await list(cancellationToken)
                     // Group APIs by version set (https://github.com/Azure/apiops/issues/316).
                     // We'll process each group in parallel, but each API within a group sequentially.
-                    .GroupBy(api => api.Dto.Properties.ApiVersionSetId ?? string.Empty)
+                    .GroupBy(api => api.Dto.Properties.ApiVersionSetId ?? Guid.NewGuid().ToString())
                     .IterParallel(async group => await group.Iter(async api => await extractApi(api.Name, api.Dto, api.SpecificationOption, cancellationToken),
                                                                   cancellationToken),
                                   cancellationToken);
