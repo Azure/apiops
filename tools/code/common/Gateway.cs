@@ -15,6 +15,8 @@ namespace common;
 
 public sealed record GatewayName : ResourceName, IResourceName<GatewayName>
 {
+    public static GatewayName Managed { get; } = From("managed");
+
     private GatewayName(string value) : base(value) { }
 
     public static GatewayName From(string value) => new(value);
