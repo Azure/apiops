@@ -65,15 +65,15 @@ steps:
 
   # replacetokens@3 task will need to be installed to use
   - ${{ if ne(parameters.CONFIGURATION_YAML_PATH, '') }}:
-      - task: qetza.replacetokens.replacetokens-task.replacetokens@3
+      - task: qetza.replacetokens.replacetokens-task.replacetokens@6
         displayName: "Perform namevalue secret substitution in ${{ parameters.CONFIGURATION_YAML_PATH }}"
         inputs:
           targetFiles: ${{ parameters.CONFIGURATION_YAML_PATH }}
           encoding: "auto"
           writeBOM: true
-          verbosity: "off"
-          actionOnMissing: "warn"
-          keepToken: false
+          logLevel: "warn"
+          missingVarLog: "warn"
+          missingVarAction : none
           tokenPrefix: "{#"
           tokenSuffix: "#}"
 
