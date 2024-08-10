@@ -63,7 +63,7 @@ steps:
       addSpnToEnvironment: true
       failOnStandardError: true
 
-  # replacetokens@3 task will need to be installed to use
+  # replacetokens@6 task will need to be installed to use
   - ${{ if ne(parameters.CONFIGURATION_YAML_PATH, '') }}:
       - task: qetza.replacetokens.replacetokens-task.replacetokens@6
         displayName: "Perform namevalue secret substitution in ${{ parameters.CONFIGURATION_YAML_PATH }}"
