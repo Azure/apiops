@@ -24,6 +24,10 @@ internal static class ProductModule
     {
         ConfigureListProducts(builder);
         ConfigureWriteProductArtifacts(builder);
+        ProductPolicyModule.ConfigureExtractProductPolicies(builder);
+        ProductGroupModule.ConfigureExtractProductGroups(builder);
+        ProductTagModule.ConfigureExtractProductTags(builder);
+        ProductApiModule.ConfigureExtractProductApis(builder);
 
         builder.Services.TryAddSingleton(GetExtractProducts);
     }
@@ -32,6 +36,10 @@ internal static class ProductModule
     {
         var list = provider.GetRequiredService<ListProducts>();
         var writeArtifacts = provider.GetRequiredService<WriteProductArtifacts>();
+        var extractPolicies = provider.GetRequiredService<ExtractProductPolicies>();
+        var extractGroups = provider.GetRequiredService<ExtractProductGroups>();
+        var extractTags = provider.GetRequiredService<ExtractProductTags>();
+        var extractApis = provider.GetRequiredService<ExtractProductApis>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -42,9 +50,18 @@ internal static class ProductModule
             logger.LogInformation("Extracting products...");
 
             await list(cancellationToken)
-                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
+                    .IterParallel(async resource => await extractProduct(resource.Name, resource.Dto, cancellationToken),
                                   cancellationToken);
         };
+
+        async ValueTask extractProduct(ProductName name, ProductDto dto, CancellationToken cancellationToken)
+        {
+            await writeArtifacts(name, dto, cancellationToken);
+            await extractPolicies(name, cancellationToken);
+            await extractGroups(name, cancellationToken);
+            await extractTags(name, cancellationToken);
+            await extractApis(name, cancellationToken);
+        }
     }
 
     private static void ConfigureListProducts(IHostApplicationBuilder builder)
