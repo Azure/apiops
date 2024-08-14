@@ -85,8 +85,16 @@ internal static class ApiModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
-        return file => from informationFile in ApiInformationFile.TryParse(file, serviceDirectory)
-                       select informationFile.Parent.Name;
+        return file => tryParseNameFromInformationFile(file) | tryParseNameFromSpecificationFile(file);
+
+        Option<ApiName> tryParseNameFromInformationFile(FileInfo file) =>
+            from informationFile in ApiInformationFile.TryParse(file, serviceDirectory)
+            select informationFile.Parent.Name;
+
+        Option<ApiName> tryParseNameFromSpecificationFile(FileInfo file) =>
+            from apiDirectory in ApiDirectory.TryParse(file.Directory, serviceDirectory)
+            where Common.SpecificationFileNames.Contains(file.Name)
+            select apiDirectory.Name;
     }
 
     private static void ConfigureIsApiNameInSourceControl(IHostApplicationBuilder builder)
