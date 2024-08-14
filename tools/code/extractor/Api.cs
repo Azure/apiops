@@ -29,6 +29,7 @@ internal static class ApiModule
         ConfigureWriteApiArtifacts(builder);
         ApiPolicyModule.ConfigureExtractApiPolicies(builder);
         ApiTagModule.ConfigureExtractApiTags(builder);
+        ApiDiagnosticModule.ConfigureExtractApiDiagnostics(builder);
         ApiOperationModule.ConfigureExtractApiOperations(builder);
 
         builder.Services.TryAddSingleton(GetExtractApis);
@@ -40,6 +41,7 @@ internal static class ApiModule
         var writeArtifacts = provider.GetRequiredService<WriteApiArtifacts>();
         var extractApiPolicies = provider.GetRequiredService<ExtractApiPolicies>();
         var extractApiTags = provider.GetRequiredService<ExtractApiTags>();
+        var extractApiDiagnostics = provider.GetRequiredService<ExtractApiDiagnostics>();
         var extractApiOperations = provider.GetRequiredService<ExtractApiOperations>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
@@ -64,6 +66,7 @@ internal static class ApiModule
             await writeArtifacts(name, dto, specificationOption, cancellationToken);
             await extractApiPolicies(name, cancellationToken);
             await extractApiTags(name, cancellationToken);
+            await extractApiDiagnostics(name, cancellationToken);
             await extractApiOperations(name, cancellationToken);
         }
     }

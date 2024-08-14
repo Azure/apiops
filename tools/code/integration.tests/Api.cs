@@ -54,14 +54,15 @@ public static class ApiModule
             logger.LogInformation("Deleting all APIs in {ServiceName}...", serviceName);
 
             var serviceUri = getServiceUri(serviceName);
+            var apisUri = ApisUri.From(serviceUri);
 
-            await ApisUri.From(serviceUri)
-                         .DeleteAll(pipeline, cancellationToken);
+            await apisUri.DeleteAll(pipeline, cancellationToken);
         };
     }
 
     public static void ConfigurePutApiModels(IHostApplicationBuilder builder)
     {
+        ApiDiagnosticModule.ConfigurePutApiDiagnosticModels(builder);
         ManagementServiceModule.ConfigureGetManagementServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
@@ -70,6 +71,7 @@ public static class ApiModule
 
     private static PutApiModels GetPutApiModels(IServiceProvider provider)
     {
+        var putDiagnostics = provider.GetRequiredService<PutApiDiagnosticModels>();
         var getServiceUri = provider.GetRequiredService<GetManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
@@ -83,23 +85,26 @@ public static class ApiModule
 
             await models.IterParallel(async model =>
             {
-                async ValueTask putRevision(ApiRevision revision) => await put(model.Name, model.Type, model.Path, model.Version, revision, serviceName, cancellationToken);
+                var serviceUri = getServiceUri(serviceName);
+
+                async ValueTask putRevision(ApiRevision revision) => await put(model.Name, model.Type, model.Path, model.Version, revision, serviceUri, cancellationToken);
 
                 // Put first revision to make sure it's the current revision.
                 await model.Revisions.HeadOrNone().IterTask(putRevision);
 
                 // Put other revisions
                 await model.Revisions.Skip(1).IterParallel(putRevision, cancellationToken);
+
+                await putDiagnostics(model.Diagnostics, model.Name, serviceName, cancellationToken);
             }, cancellationToken);
         };
 
-        async ValueTask put(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision, ManagementServiceName serviceName, CancellationToken cancellationToken)
+        async ValueTask put(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision, ManagementServiceUri serviceUri, CancellationToken cancellationToken)
         {
             var rootName = ApiName.GetRootName(name);
             var dto = getDto(rootName, type, path, version, revision);
             var revisionedName = ApiName.GetRevisionedName(rootName, revision.Number);
 
-            var serviceUri = getServiceUri(serviceName);
             var uri = ApiUri.From(revisionedName, serviceUri);
             await uri.PutDto(dto, pipeline, cancellationToken);
 
@@ -158,6 +163,7 @@ public static class ApiModule
         ConfigureGetApimApis(builder);
         ConfigureTryGetApimGraphQlSchema(builder);
         ConfigureGetFileApis(builder);
+        ApiDiagnosticModule.ConfigureValidateExtractedApiDiagnostics(builder);
 
         builder.Services.TryAddSingleton(GetValidateExtractedApis);
     }
@@ -167,6 +173,7 @@ public static class ApiModule
         var getApimResources = provider.GetRequiredService<GetApimApis>();
         var tryGetApimGraphQlSchema = provider.GetRequiredService<TryGetApimGraphQlSchema>();
         var getFileResources = provider.GetRequiredService<GetFileApis>();
+        var validateDiagnostics = provider.GetRequiredService<ValidateExtractedApiDiagnostics>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -180,6 +187,14 @@ public static class ApiModule
 
             await validateExtractedInformationFiles(expected, serviceDirectory, cancellationToken);
             await validateExtractedSpecificationFiles(expected, defaultApiSpecification, serviceName, serviceDirectory, cancellationToken);
+
+            await expected.WhereKey(name => ApiName.IsNotRevisioned(name))
+                          .IterParallel(async kvp =>
+                          {
+                              var apiName = kvp.Key;
+
+                              await validateDiagnostics(apiName, serviceName, serviceDirectory, cancellationToken);
+                          }, cancellationToken);
         };
 
         async ValueTask<FrozenDictionary<ApiName, ApiDto>> getExpectedResources(Option<FrozenSet<ApiName>> apiNamesOption, Option<FrozenSet<VersionSetName>> versionSetNamesOption, ManagementServiceName serviceName, CancellationToken cancellationToken)
@@ -379,11 +394,14 @@ public static class ApiModule
 
     public static void ConfigureWriteApiModels(IHostApplicationBuilder builder)
     {
+        ApiDiagnosticModule.ConfigureWriteApiDiagnosticModels(builder);
+
         builder.Services.TryAddSingleton(GetWriteApiModels);
     }
 
     private static WriteApiModels GetWriteApiModels(IServiceProvider provider)
     {
+        var writeDiagnostics = provider.GetRequiredService<WriteApiDiagnosticModels>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -396,6 +414,8 @@ public static class ApiModule
             await models.IterParallel(async model =>
             {
                 await writeRevisionArtifacts(model, serviceDirectory, cancellationToken);
+
+                await writeDiagnostics(model.Diagnostics, model.Name, serviceDirectory, cancellationToken);
             }, cancellationToken);
         };
 
@@ -497,6 +517,7 @@ public static class ApiModule
     {
         ConfigureGetFileApis(builder);
         ConfigureGetApimApis(builder);
+        ApiDiagnosticModule.ConfigureValidatePublishedApiDiagnostics(builder);
 
         builder.Services.TryAddSingleton(GetValidatePublishedApis);
     }
@@ -505,6 +526,7 @@ public static class ApiModule
     {
         var getFileResources = provider.GetRequiredService<GetFileApis>();
         var getApimResources = provider.GetRequiredService<GetApimApis>();
+        var validateDiagnostics = provider.GetRequiredService<ValidatePublishedApiDiagnostics>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -525,6 +547,14 @@ public static class ApiModule
                                       .ToFrozenDictionary();
 
             actual.Should().BeEquivalentTo(expected);
+
+            await expected.WhereKey(name => ApiName.IsNotRevisioned(name))
+                          .IterParallel(async kvp =>
+                          {
+                              var apiName = kvp.Key;
+
+                              await validateDiagnostics(apiName, commitIdOption, serviceName, serviceDirectory, cancellationToken);
+                          }, cancellationToken);
         };
 
         static string normalizeDto(ApiDto dto) =>

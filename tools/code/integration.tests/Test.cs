@@ -267,7 +267,7 @@ public static class TestModule
             from servicePolicies in Generator.GenerateNewSet(initialModel.ServicePolicies, ServicePolicyModel.GenerateSet(), ServicePolicyModule.GenerateUpdate)
             from groups in Generator.GenerateNewSet(initialModel.Groups, GroupModel.GenerateSet(), GroupModule.GenerateUpdate)
             from apis in from apiSet in Generator.GenerateNewSet(initialModel.Apis, ApiModel.GenerateSet(), ApiModule.GenerateUpdate)
-                         from updatedApis in ServiceModel.UpdateApis(apiSet, versionSets, tags)
+                         from updatedApis in ServiceModel.UpdateApis(apiSet, versionSets, tags, loggers)
                          select updatedApis
             from products in from productSet in Generator.GenerateNewSet(initialModel.Products, ProductModel.GenerateSet(), ProductModule.GenerateUpdate)
                              from updatedProductGroups in ServiceModel.UpdateProducts(productSet, groups, tags, apis)

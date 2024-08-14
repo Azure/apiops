@@ -16,8 +16,8 @@ public abstract record ApiType
     public static Gen<ApiType> Generate() =>
         Gen.OneOfConst<ApiType>(new GraphQl(),
                                 new Http());
-                                //new WebSocket(),
-                                //new Soap());
+    //new WebSocket(),
+    //new Soap());
 }
 
 public record ApiRevision
@@ -106,6 +106,7 @@ public record ApiModel
     public required ApiType Type { get; init; }
     public required string Path { get; init; }
     public required FrozenSet<ApiRevision> Revisions { get; init; }
+    public required FrozenSet<ApiDiagnosticModel> Diagnostics { get; init; }
     public Option<ApiVersion> Version { get; init; } = Option<ApiVersion>.None;
 
     public static Gen<ApiModel> Generate() =>
@@ -113,12 +114,14 @@ public record ApiModel
         from name in GenerateName(type)
         from path in GeneratePath()
         from revisions in ApiRevision.GenerateSet(type, name)
+        from diagnostics in ApiDiagnosticModel.GenerateSet()
         select new ApiModel
         {
             Name = name,
             Type = type,
             Path = path,
-            Revisions = revisions
+            Revisions = revisions,
+            Diagnostics = diagnostics
         };
 
     public static Gen<ApiName> GenerateName(ApiType type) =>

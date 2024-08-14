@@ -36,7 +36,7 @@ public record ServiceModel
         from policyFragments in PolicyFragmentModel.GenerateSet()
         from servicePolicies in ServicePolicyModel.GenerateSet()
         from apis in from originalApis in ApiModel.GenerateSet()
-                     from updatedApis in UpdateApis(originalApis, versionSets, tags)
+                     from updatedApis in UpdateApis(originalApis, versionSets, tags, loggers)
                      select updatedApis
         from groups in GroupModel.GenerateSet()
         from products in from originalProducts in ProductModel.GenerateSet()
@@ -67,9 +67,11 @@ public record ServiceModel
 
     public static Gen<FrozenSet<ApiModel>> UpdateApis(FrozenSet<ApiModel> apis,
                                                       ICollection<VersionSetModel> versionSets,
-                                                      ICollection<TagModel> tags) =>
+                                                      ICollection<TagModel> tags,
+                                                      ICollection<LoggerModel> loggers) =>
         apis.Select(api => from version in UpdateApiVersion(versionSets)
                            from revisions in UpdateApiRevisions(api.Revisions, tags)
+                           from diagnostics in ApiDiagnosticModel.GenerateSet(api.Diagnostics, loggers)
                            select api with
                            {
                                Version = version,
