@@ -32,7 +32,7 @@ public record ConfigurationJson
 
     private static JsonNode? SerializeConfiguration(IConfiguration configuration)
     {
-        var jsonObject = new JsonObject();
+        var jsonObject = new JsonObject(nodeOptions);
 
         foreach (var child in configuration.GetChildren())
         {
@@ -107,7 +107,7 @@ public record ConfigurationJson
 
     private static JsonObject OverrideWith(JsonObject current, JsonObject other)
     {
-        var merged = new JsonObject();
+        var merged = new JsonObject(nodeOptions);
 
         foreach (var property in current)
         {

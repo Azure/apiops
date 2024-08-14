@@ -89,7 +89,8 @@ public sealed class OverrideDtoFactory(ConfigurationJson configurationJson)
 
     private static JsonObject Override(JsonObject current, JsonObject other)
     {
-        var merged = new JsonObject();
+        var nodeOptions = new JsonNodeOptions { PropertyNameCaseInsensitive = true };
+        var merged = new JsonObject(nodeOptions);
 
         foreach (var property in current)
         {
