@@ -129,6 +129,10 @@ public sealed record BackendDto
 
     public record BackendContract
     {
+        [JsonPropertyName("circuitBreaker")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendCircuitBreaker? CircuitBreaker { get; init; }
+
         [JsonPropertyName("credentials")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public BackendCredentialsContract? Credentials { get; init; }
@@ -136,6 +140,10 @@ public sealed record BackendDto
         [JsonPropertyName("description")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public string? Description { get; init; }
+
+        [JsonPropertyName("pool")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public Pool? Pool { get; init; }
 
         [JsonPropertyName("properties")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -161,11 +169,75 @@ public sealed record BackendDto
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public BackendTlsProperties? Tls { get; init; }
 
+        [JsonPropertyName("type")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Type { get; init; }
+
         [JsonPropertyName("url")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
 #pragma warning disable CA1056 // URI-like properties should not be strings
         public string? Url { get; init; }
 #pragma warning restore CA1056 // URI-like properties should not be strings
+    }
+
+    public record BackendCircuitBreaker
+    {
+        [JsonPropertyName("rules")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<CircuitBreakerRule>? Rules { get; init; }
+    }
+
+    public record CircuitBreakerRule
+    {
+        [JsonPropertyName("acceptRetryAfter")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? AcceptRetryAfter { get; init; }
+
+        [JsonPropertyName("failureCondition")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public CircuitBreakerFailureCondition? FailureCondition { get; init; }
+
+        [JsonPropertyName("name")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Name { get; init; }
+
+        [JsonPropertyName("tripDuration")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? TripDuration { get; init; }
+    }
+
+    public record CircuitBreakerFailureCondition
+    {
+        [JsonPropertyName("count")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Count { get; init; }
+
+        [JsonPropertyName("errorReasons")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<string>? ErrorReasons { get; init; }
+
+        [JsonPropertyName("interval")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Interval { get; init; }
+
+        [JsonPropertyName("percentage")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Percentage { get; init; }
+
+        [JsonPropertyName("statusCodeRanges")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<FailureStatusCodeRange>? StatusCodeRanges { get; init; }
+    }
+
+    public record FailureStatusCodeRange
+    {
+        [JsonPropertyName("max")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Max { get; init; }
+
+        [JsonPropertyName("min")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Min { get; init; }
     }
 
     public record BackendCredentialsContract
@@ -176,11 +248,11 @@ public sealed record BackendDto
 
         [JsonPropertyName("certificate")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<string>? Certificate { get; init; }
+        public ImmutableArray<string>? Certificate { get; init; }
 
         [JsonPropertyName("certificateIds")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<string>? CertificateIds { get; init; }
+        public ImmutableArray<string>? CertificateIds { get; init; }
 
         [JsonPropertyName("header")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -238,7 +310,7 @@ public sealed record BackendDto
 
         [JsonPropertyName("managementEndpoints")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<string>? ManagementEndpoints { get; init; }
+        public ImmutableArray<string>? ManagementEndpoints { get; init; }
 
         [JsonPropertyName("maxPartitionResolutionRetries")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -246,11 +318,33 @@ public sealed record BackendDto
 
         [JsonPropertyName("serverCertificateThumbprints")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<string>? ServerCertificateThumbprints { get; init; }
+        public ImmutableArray<string>? ServerCertificateThumbprints { get; init; }
 
         [JsonPropertyName("serverX509Names")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<X509CertificateName>? ServerX509Names { get; init; }
+        public ImmutableArray<X509CertificateName>? ServerX509Names { get; init; }
+    }
+
+    public record Pool
+    {
+        [JsonPropertyName("services")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<BackendPoolItem>? Services { get; init; }
+    }
+
+    public record BackendPoolItem
+    {
+        [JsonPropertyName("id")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Id { get; init; }
+
+        [JsonPropertyName("priority")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Priority { get; init; }
+
+        [JsonPropertyName("weight")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Weight { get; init; }
     }
 
     public record BackendTlsProperties
