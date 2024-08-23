@@ -253,7 +253,7 @@ public static class HttpPipelineExtensions
     private static async ValueTask<Response> WaitForLongRunningOperation(this HttpPipeline pipeline, Response response, CancellationToken cancellationToken)
     {
         var updatedResponse = response;
-        while ((updatedResponse.Status == ((int)HttpStatusCode.Accepted))
+        while (updatedResponse.Status is (int)HttpStatusCode.OK or (int)HttpStatusCode.Created or (int)HttpStatusCode.Accepted
                && updatedResponse.Headers.TryGetValue("Location", out var locationHeaderValue)
                && Uri.TryCreate(locationHeaderValue, UriKind.Absolute, out var locationUri)
                && locationUri is not null)
