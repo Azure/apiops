@@ -13,17 +13,16 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspacePolicyFragments(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(PolicyFragmentName Name, WorkspacePolicyFragmentDto Dto)> ListWorkspacePolicyFragments(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspacePolicyFragmentArtifacts(PolicyFragmentName name, WorkspacePolicyFragmentDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspacePolicyFragmentInformationFile(PolicyFragmentName name, WorkspacePolicyFragmentDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspacePolicyFragmentPolicyFile(PolicyFragmentName name, WorkspacePolicyFragmentDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspacePolicyFragmentName Name, WorkspacePolicyFragmentDto Dto)> ListWorkspacePolicyFragments(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspacePolicyFragmentArtifacts(WorkspacePolicyFragmentName name, WorkspacePolicyFragmentDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspacePolicyFragmentInformationFile(WorkspacePolicyFragmentName name, WorkspacePolicyFragmentDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspacePolicyFragmentPolicyFile(WorkspacePolicyFragmentName name, WorkspacePolicyFragmentDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspacePolicyFragmentModule
 {
     public static void ConfigureExtractWorkspacePolicyFragments(IHostApplicationBuilder builder)
     {
         ConfigureListWorkspacePolicyFragments(builder);
-        ConfigureWriteWorkspacePolicyFragmentArtifacts(builder);
         ConfigureWriteWorkspacePolicyFragmentArtifacts(builder);
 
         builder.Services.TryAddSingleton(GetExtractWorkspacePolicyFragments);
@@ -40,11 +39,13 @@ internal static class WorkspacePolicyFragmentModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspacePolicyFragments));
 
-            logger.LogInformation("Extracting policy fragments for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting policy fragments in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async policyFragment => await writeArtifacts(policyFragment.Name, policyFragment.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -62,8 +63,10 @@ internal static class WorkspacePolicyFragmentModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspacePolicyFragmentsUri.From(workspaceName, serviceUri)
-                                       .List(pipeline, cancellationToken);
+        {
+            var workspacePolicyFragmentsUri = WorkspacePolicyFragmentsUri.From(workspaceName, serviceUri);
+            return workspacePolicyFragmentsUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspacePolicyFragmentArtifacts(IHostApplicationBuilder builder)
@@ -127,6 +130,7 @@ internal static class WorkspacePolicyFragmentModule
             var policyFile = WorkspacePolicyFragmentPolicyFile.From(name, workspaceName, serviceDirectory);
 
             logger.LogInformation("Writing workspace policy fragment policy file {WorkspacePolicyFragmentPolicyFile}...", policyFile);
+
             var policy = dto.Properties.Value ?? string.Empty;
             await policyFile.WritePolicy(policy, cancellationToken);
         };

@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceBackends(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(BackendName Name, WorkspaceBackendDto Dto)> ListWorkspaceBackends(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceBackendArtifacts(BackendName name, WorkspaceBackendDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceBackendInformationFile(BackendName name, WorkspaceBackendDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceBackendName Name, WorkspaceBackendDto Dto)> ListWorkspaceBackends(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceBackendArtifacts(WorkspaceBackendName name, WorkspaceBackendDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceBackendInformationFile(WorkspaceBackendName name, WorkspaceBackendDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceBackendModule
 {
@@ -38,11 +38,13 @@ internal static class WorkspaceBackendModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceBackends));
 
-            logger.LogInformation("Extracting backends for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting backends in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 

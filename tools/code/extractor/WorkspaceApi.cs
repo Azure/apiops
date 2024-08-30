@@ -15,10 +15,10 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceApis(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(ApiName Name, WorkspaceApiDto Dto, Option<(ApiSpecification Specification, BinaryData Contents)> SpecificationOption)> ListWorkspaceApis(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceApiArtifacts(ApiName name, WorkspaceApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceApiInformationFile(ApiName name, WorkspaceApiDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceApiSpecificationFile(ApiName name, ApiSpecification specification, BinaryData contents, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceApiName Name, WorkspaceApiDto Dto, Option<(ApiSpecification Specification, BinaryData Contents)> SpecificationOption)> ListWorkspaceApis(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceApiArtifacts(WorkspaceApiName name, WorkspaceApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceApiInformationFile(WorkspaceApiName name, WorkspaceApiDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceApiSpecificationFile(WorkspaceApiName name, ApiSpecification specification, BinaryData contents, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceApiModule
 {
@@ -26,6 +26,9 @@ internal static class WorkspaceApiModule
     {
         ConfigureListWorkspaceApis(builder);
         ConfigureWriteWorkspaceApiArtifacts(builder);
+        WorkspaceApiDiagnosticModule.ConfigureExtractWorkspaceApiDiagnostics(builder);
+        WorkspaceApiOperationModule.ConfigureExtractWorkspaceApiOperations(builder);
+        WorkspaceApiPolicyModule.ConfigureExtractWorkspaceApiPolicies(builder);
 
         builder.Services.TryAddSingleton(GetExtractWorkspaceApis);
     }
@@ -34,6 +37,9 @@ internal static class WorkspaceApiModule
     {
         var list = provider.GetRequiredService<ListWorkspaceApis>();
         var writeArtifacts = provider.GetRequiredService<WriteWorkspaceApiArtifacts>();
+        var extractDiagnostics = provider.GetRequiredService<ExtractWorkspaceApiDiagnostics>();
+        var extractOperations = provider.GetRequiredService<ExtractWorkspaceApiOperations>();
+        var extractPolicies = provider.GetRequiredService<ExtractWorkspaceApiPolicies>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -41,21 +47,20 @@ internal static class WorkspaceApiModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceApis));
 
-            logger.LogInformation("Extracting APIs for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting APIs in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
                     // Group APIs by version set (https://github.com/Azure/apiops/issues/316).
                     // We'll process each group in parallel, but each API within a group sequentially.
-                    .GroupBy(api => api.Dto.Properties.ApiVersionSetId ?? string.Empty)
-                    .IterParallel(async group => await group.Iter(async api => await extractApi(api.Name, api.Dto, api.SpecificationOption, workspaceName, cancellationToken),
-                                                                  cancellationToken),
-                                  cancellationToken);
+                    .GroupBy(api => api.Dto.Properties.ApiVersionSetId ?? Guid.NewGuid().ToString())
+                    .IterParallel(async group => await group.Iter(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, resource.SpecificationOption, workspaceName, cancellationToken);
+                        await extractDiagnostics(resource.Name, workspaceName, cancellationToken);
+                        await extractOperations(resource.Name, workspaceName, cancellationToken);
+                        await extractPolicies(resource.Name, workspaceName, cancellationToken);
+                    }, cancellationToken), cancellationToken);
         };
-
-        async ValueTask extractApi(ApiName name, WorkspaceApiDto dto, Option<(ApiSpecification Specification, BinaryData Contents)> specificationOption, WorkspaceName workspaceName, CancellationToken cancellationToken)
-        {
-            await writeArtifacts(name, dto, specificationOption, workspaceName, cancellationToken);
-        }
     }
 
     private static void ConfigureListWorkspaceApis(IHostApplicationBuilder builder)
@@ -86,7 +91,7 @@ internal static class WorkspaceApiModule
                                    });
         };
 
-        async ValueTask<Option<(ApiSpecification, BinaryData)>> tryGetSpecificationContents(ApiName name, WorkspaceApiDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask<Option<(ApiSpecification, BinaryData)>> tryGetSpecificationContents(WorkspaceApiName name, WorkspaceApiDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
             var specificationOption = tryGetSpecification(dto);
 

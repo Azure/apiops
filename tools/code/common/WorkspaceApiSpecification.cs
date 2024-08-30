@@ -12,7 +12,7 @@ public abstract record WorkspaceApiSpecificationFile : ResourceFile
     public required WorkspaceApiDirectory Parent { get; init; }
     public abstract ApiSpecification Specification { get; }
 
-    public static WorkspaceApiSpecificationFile From(ApiSpecification specification, ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceApiSpecificationFile From(ApiSpecification specification, WorkspaceApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         specification switch
         {
             ApiSpecification.GraphQl => WorkspaceGraphQlSpecificationFile.From(apiName, workspaceName, serviceDirectory),
@@ -55,7 +55,7 @@ public sealed record WorkspaceGraphQlSpecificationFile : WorkspaceApiSpecificati
 
     protected override FileInfo Value => new(Path.Combine(Parent.ToDirectoryInfo().FullName, Name));
 
-    public static WorkspaceGraphQlSpecificationFile From(ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceGraphQlSpecificationFile From(WorkspaceApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new() { Parent = WorkspaceApiDirectory.From(apiName, workspaceName, serviceDirectory) };
 
     public static Option<WorkspaceGraphQlSpecificationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
@@ -73,7 +73,7 @@ public sealed record WorkspaceWadlSpecificationFile : WorkspaceApiSpecificationF
 
     protected override FileInfo Value => new(Path.Combine(Parent.ToDirectoryInfo().FullName, Name));
 
-    public static WorkspaceWadlSpecificationFile From(ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceWadlSpecificationFile From(WorkspaceApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new() { Parent = WorkspaceApiDirectory.From(apiName, workspaceName, serviceDirectory) };
 
     public static Option<WorkspaceWadlSpecificationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
@@ -91,7 +91,7 @@ public sealed record WorkspaceWsdlSpecificationFile : WorkspaceApiSpecificationF
 
     protected override FileInfo Value => new(Path.Combine(Parent.ToDirectoryInfo().FullName, Name));
 
-    public static WorkspaceWsdlSpecificationFile From(ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceWsdlSpecificationFile From(WorkspaceApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new() { Parent = WorkspaceApiDirectory.From(apiName, workspaceName, serviceDirectory) };
 
     public static Option<WorkspaceWsdlSpecificationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
@@ -106,11 +106,11 @@ public abstract record WorkspaceOpenApiSpecificationFile : WorkspaceApiSpecifica
     public abstract OpenApiFormat Format { get; }
     public required OpenApiVersion Version { get; init; }
 
-    public static WorkspaceOpenApiSpecificationFile From(ApiSpecification.OpenApi openApi, ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceOpenApiSpecificationFile From(ApiSpecification.OpenApi openApi, WorkspaceApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         openApi.Format switch
         {
-            OpenApiFormat.Json => JsonWorkspaceOpenApiSpecificationFile.From(openApi.Version, apiName, workspaceName, serviceDirectory),
-            OpenApiFormat.Yaml => YamlWorkspaceOpenApiSpecificationFile.From(openApi.Version, apiName, workspaceName, serviceDirectory),
+            OpenApiFormat.Json => WorkspaceJsonOpenApiSpecificationFile.From(openApi.Version, apiName, workspaceName, serviceDirectory),
+            OpenApiFormat.Yaml => WorkspaceYamlOpenApiSpecificationFile.From(openApi.Version, apiName, workspaceName, serviceDirectory),
             _ => throw new NotImplementedException()
         };
 
@@ -122,10 +122,10 @@ public abstract record WorkspaceOpenApiSpecificationFile : WorkspaceApiSpecifica
 
     public static new async ValueTask<Option<WorkspaceOpenApiSpecificationFile>> TryParse(FileInfo? file, Func<FileInfo, ValueTask<BinaryData>> getFileContents, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
     {
-        var tryParseYaml = async () => from yaml in await YamlWorkspaceOpenApiSpecificationFile.TryParse(file, getFileContents, serviceDirectory, cancellationToken)
+        var tryParseYaml = async () => from yaml in await WorkspaceYamlOpenApiSpecificationFile.TryParse(file, getFileContents, serviceDirectory, cancellationToken)
                                        select yaml as WorkspaceOpenApiSpecificationFile;
 
-        var tryParseJson = async () => from json in await JsonWorkspaceOpenApiSpecificationFile.TryParse(file, getFileContents, serviceDirectory, cancellationToken)
+        var tryParseJson = async () => from json in await WorkspaceJsonOpenApiSpecificationFile.TryParse(file, getFileContents, serviceDirectory, cancellationToken)
                                        select json as WorkspaceOpenApiSpecificationFile;
 
         return await ImmutableArray.Create(tryParseYaml, tryParseJson)
@@ -133,7 +133,7 @@ public abstract record WorkspaceOpenApiSpecificationFile : WorkspaceApiSpecifica
     }
 }
 
-public sealed record YamlWorkspaceOpenApiSpecificationFile : WorkspaceOpenApiSpecificationFile
+public sealed record WorkspaceYamlOpenApiSpecificationFile : WorkspaceOpenApiSpecificationFile
 {
     public override OpenApiFormat Format { get; } = new OpenApiFormat.Yaml();
     public override ApiSpecification Specification => new ApiSpecification.OpenApi
@@ -145,32 +145,32 @@ public sealed record YamlWorkspaceOpenApiSpecificationFile : WorkspaceOpenApiSpe
 
     protected override FileInfo Value => new(Path.Combine(Parent.ToDirectoryInfo().FullName, Name));
 
-    public static YamlWorkspaceOpenApiSpecificationFile From(OpenApiVersion version, ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceYamlOpenApiSpecificationFile From(OpenApiVersion version, WorkspaceApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
             Parent = WorkspaceApiDirectory.From(apiName, workspaceName, serviceDirectory),
             Version = version
         };
 
-    public static new async ValueTask<Option<YamlWorkspaceOpenApiSpecificationFile>> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+    public static new async ValueTask<Option<WorkspaceYamlOpenApiSpecificationFile>> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
         await TryParse(file,
                        getFileContents: async file => await file.ReadAsBinaryData(cancellationToken),
                        serviceDirectory,
                        cancellationToken);
 
-    public static new async ValueTask<Option<YamlWorkspaceOpenApiSpecificationFile>> TryParse(FileInfo? file, Func<FileInfo, ValueTask<BinaryData>> getFileContents, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+    public static new async ValueTask<Option<WorkspaceYamlOpenApiSpecificationFile>> TryParse(FileInfo? file, Func<FileInfo, ValueTask<BinaryData>> getFileContents, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
         file is not null && file.Name == Name
         ? await WorkspaceApiDirectory.TryParse(file.Directory, serviceDirectory)
                                      .BindTask(async parent => from version in await OpenApiVersion.TryParse(await getFileContents(file), cancellationToken)
-                                                               select new YamlWorkspaceOpenApiSpecificationFile
+                                                               select new WorkspaceYamlOpenApiSpecificationFile
                                                                {
                                                                    Parent = parent,
                                                                    Version = version
                                                                })
-        : Option<YamlWorkspaceOpenApiSpecificationFile>.None;
+        : Option<WorkspaceYamlOpenApiSpecificationFile>.None;
 }
 
-public sealed record JsonWorkspaceOpenApiSpecificationFile : WorkspaceOpenApiSpecificationFile
+public sealed record WorkspaceJsonOpenApiSpecificationFile : WorkspaceOpenApiSpecificationFile
 {
     public override OpenApiFormat Format { get; } = new OpenApiFormat.Json();
     public override ApiSpecification Specification => new ApiSpecification.OpenApi
@@ -183,27 +183,33 @@ public sealed record JsonWorkspaceOpenApiSpecificationFile : WorkspaceOpenApiSpe
 
     protected override FileInfo Value => new(Path.Combine(Parent.ToDirectoryInfo().FullName, Name));
 
-    public static JsonWorkspaceOpenApiSpecificationFile From(OpenApiVersion version, ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceJsonOpenApiSpecificationFile From(OpenApiVersion version, WorkspaceApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
             Parent = WorkspaceApiDirectory.From(apiName, workspaceName, serviceDirectory),
             Version = version
         };
 
-    public static new async ValueTask<Option<JsonWorkspaceOpenApiSpecificationFile>> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+    public static new async ValueTask<Option<WorkspaceJsonOpenApiSpecificationFile>> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
         await TryParse(file,
                        getFileContents: async file => await file.ReadAsBinaryData(cancellationToken),
                        serviceDirectory,
                        cancellationToken);
 
-    public static new async ValueTask<Option<JsonWorkspaceOpenApiSpecificationFile>> TryParse(FileInfo? file, Func<FileInfo, ValueTask<BinaryData>> getFileContents, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
+    public static new async ValueTask<Option<WorkspaceJsonOpenApiSpecificationFile>> TryParse(FileInfo? file, Func<FileInfo, ValueTask<BinaryData>> getFileContents, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
         file is not null && file.Name == Name
         ? await WorkspaceApiDirectory.TryParse(file.Directory, serviceDirectory)
                                      .BindTask(async parent => from version in await OpenApiVersion.TryParse(await getFileContents(file), cancellationToken)
-                                                               select new JsonWorkspaceOpenApiSpecificationFile
+                                                               select new WorkspaceJsonOpenApiSpecificationFile
                                                                {
                                                                    Parent = parent,
                                                                    Version = version
                                                                })
-        : Option<JsonWorkspaceOpenApiSpecificationFile>.None;
+        : Option<WorkspaceJsonOpenApiSpecificationFile>.None;
+}
+
+public static class WorkspaceApiSpecificationModule
+{
+    public static async ValueTask WriteSpecification(this WorkspaceApiSpecificationFile file, BinaryData contents, CancellationToken cancellationToken) =>
+        await file.ToFileInfo().OverwriteWithBinaryData(contents, cancellationToken);
 }

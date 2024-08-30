@@ -31,7 +31,7 @@ public delegate bool IsApiNameInSourceControl(ApiName name);
 public delegate ValueTask PutApi(ApiName name, CancellationToken cancellationToken);
 public delegate ValueTask<Option<ApiDto>> FindApiInformationFileDto(ApiName name, CancellationToken cancellationToken);
 public delegate ValueTask<Option<(ApiSpecification Specification, BinaryData Contents)>> FindApiSpecificationContents(ApiName name, CancellationToken cancellationToken);
-public delegate ValueTask CorrectApimRevisionNumber(ApiName name, ApiDto Dto, CancellationToken cancellationToken);
+public delegate ValueTask CorrectApimRevisionNumber(ApiName name, ApiDto dto, CancellationToken cancellationToken);
 public delegate FrozenDictionary<ApiName, Func<CancellationToken, ValueTask<Option<ApiDto>>>> GetApiDtosInPreviousCommit();
 public delegate ValueTask MakeApiRevisionCurrent(ApiName name, ApiRevisionNumber revisionNumber, CancellationToken cancellationToken);
 public delegate ValueTask PutApiInApim(ApiName name, ApiDto dto, Option<(ApiSpecification.GraphQl Specification, BinaryData Contents)> graphQlSpecificationContentsOption, CancellationToken cancellationToken);
@@ -633,7 +633,7 @@ internal static class ApiModule
             var rootName = ApiName.GetRootName(name);
             var currentRevisionNumberOption = await tryGetRevisionNumberInSourceControl(rootName, cancellationToken);
 
-            await currentRevisionNumberOption.Match(// If the current revision in source control has a different revision number, delete this revision.
+            await currentRevisionNumberOption.Match(// Only delete this revision if its number differs from the current source control revision number.
                                                     // We don't want to delete a revision if it was just made current. For instance:
                                                     // 1. Dev has apiA  with revision 1 (current) and revision 2. Artifacts folder has:
                                                     //     - /apis/apiA/apiInformation.json with revision 1 as current

@@ -15,21 +15,21 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutWorkspacePolicyFragments(CancellationToken cancellationToken);
-public delegate Option<(PolicyFragmentName Name, WorkspaceName WorkspaceName)> TryParseWorkspacePolicyFragmentName(FileInfo file);
-public delegate bool IsWorkspacePolicyFragmentNameInSourceControl(PolicyFragmentName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspacePolicyFragment(PolicyFragmentName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspacePolicyFragmentDto>> FindWorkspacePolicyFragmentDto(PolicyFragmentName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspacePolicyFragmentInApim(PolicyFragmentName name, WorkspacePolicyFragmentDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspacePolicyFragments(CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspacePolicyFragment(PolicyFragmentName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspacePolicyFragmentFromApim(PolicyFragmentName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspacePolicyFragmentName WorkspacePolicyFragmentName, WorkspaceName WorkspaceName)> TryParseWorkspacePolicyFragmentName(FileInfo file);
+public delegate bool IsWorkspacePolicyFragmentNameInSourceControl(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspacePolicyFragment(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspacePolicyFragmentDto>> FindWorkspacePolicyFragmentDto(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspacePolicyFragmentInApim(WorkspacePolicyFragmentName name, WorkspacePolicyFragmentDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspacePolicyFragment(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspacePolicyFragmentFromApim(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspacePolicyFragmentModule
 {
     public static void ConfigurePutWorkspacePolicyFragments(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParsePolicyFragmentName(builder);
+        ConfigureTryParseWorkspacePolicyFragmentName(builder);
         ConfigureIsWorkspacePolicyFragmentNameInSourceControl(builder);
         ConfigurePutWorkspacePolicyFragment(builder);
 
@@ -53,13 +53,13 @@ internal static class WorkspacePolicyFragmentModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(tag => isNameInSourceControl(tag.Name, tag.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspacePolicyFragmentName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
     }
 
-    private static void ConfigureTryWorkspaceParsePolicyFragmentName(IHostApplicationBuilder builder)
+    private static void ConfigureTryParseWorkspacePolicyFragmentName(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
@@ -72,11 +72,11 @@ internal static class WorkspacePolicyFragmentModule
 
         return file => tryParseFromInformationFile(file) | tryParseFromPolicyFile(file);
 
-        Option<(PolicyFragmentName Name, WorkspaceName WorkspaceName)> tryParseFromInformationFile(FileInfo file) =>
+        Option<(WorkspacePolicyFragmentName, WorkspaceName)> tryParseFromInformationFile(FileInfo file) =>
             from informationFile in WorkspacePolicyFragmentInformationFile.TryParse(file, serviceDirectory)
             select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
 
-        Option<(PolicyFragmentName Name, WorkspaceName WorkspaceName)> tryParseFromPolicyFile(FileInfo file) =>
+        Option<(WorkspacePolicyFragmentName, WorkspaceName)> tryParseFromPolicyFile(FileInfo file) =>
             from policyFile in WorkspacePolicyFragmentPolicyFile.TryParse(file, serviceDirectory)
             select (policyFile.Parent.Name, policyFile.Parent.Parent.Parent.Name);
     }
@@ -86,30 +86,30 @@ internal static class WorkspacePolicyFragmentModule
         CommonModule.ConfigureGetArtifactFiles(builder);
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        builder.Services.TryAddSingleton(GetIsPolicyFragmentNameInSourceControl);
+        builder.Services.TryAddSingleton(GetIsWorkspacePolicyFragmentNameInSourceControl);
     }
 
-    private static IsWorkspacePolicyFragmentNameInSourceControl GetIsPolicyFragmentNameInSourceControl(IServiceProvider provider)
+    private static IsWorkspacePolicyFragmentNameInSourceControl GetIsWorkspacePolicyFragmentNameInSourceControl(IServiceProvider provider)
     {
         var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
-        return (name, workspaceName) =>
-            doesInformationFileExist(name, workspaceName)
-            || doesPolicyFileExist(name, workspaceName);
+        return (workspacePolicyFragmentName, workspaceName) =>
+            doesInformationFileExist(workspacePolicyFragmentName, workspaceName)
+            || doesPolicyFileExist(workspacePolicyFragmentName, workspaceName);
 
-        bool doesInformationFileExist(PolicyFragmentName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var informationFile = WorkspacePolicyFragmentInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspacePolicyFragmentInformationFile.From(workspacePolicyFragmentName, workspaceName, serviceDirectory);
 
             return artifactFiles.Contains(informationFile.ToFileInfo());
         }
 
-        bool doesPolicyFileExist(PolicyFragmentName name, WorkspaceName workspaceName)
+        bool doesPolicyFileExist(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var policyFile = WorkspacePolicyFragmentPolicyFile.From(name, workspaceName, serviceDirectory);
+            var policyFile = WorkspacePolicyFragmentPolicyFile.From(workspacePolicyFragmentName, workspaceName, serviceDirectory);
 
             return artifactFiles.Contains(policyFile.ToFileInfo());
         }
@@ -129,14 +129,12 @@ internal static class WorkspacePolicyFragmentModule
         var putInApim = provider.GetRequiredService<PutWorkspacePolicyFragmentInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspacePolicyFragmentName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspacePolicyFragment))
-                                       ?.AddTag("workspace_policy_fragment.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspacePolicyFragment));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspacePolicyFragmentName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspacePolicyFragmentName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -153,26 +151,26 @@ internal static class WorkspacePolicyFragmentModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspacePolicyFragmentName, workspaceName, cancellationToken) =>
         {
-            var informationFileDtoOption = await tryGetInformationFileDto(name, workspaceName, cancellationToken);
-            var policyContentsOption = await tryGetPolicyContents(name, workspaceName, cancellationToken);
+            var informationFileDtoOption = await tryGetInformationFileDto(workspacePolicyFragmentName, workspaceName, cancellationToken);
+            var policyContentsOption = await tryGetPolicyContents(workspacePolicyFragmentName, workspaceName, cancellationToken);
 
             return tryGetDto(informationFileDtoOption, policyContentsOption);
         };
 
-        async ValueTask<Option<WorkspacePolicyFragmentDto>> tryGetInformationFileDto(PolicyFragmentName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask<Option<WorkspacePolicyFragmentDto>> tryGetInformationFileDto(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
-            var informationFile = WorkspacePolicyFragmentInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspacePolicyFragmentInformationFile.From(workspacePolicyFragmentName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
                    select contents.ToObjectFromJson<WorkspacePolicyFragmentDto>();
         }
 
-        async ValueTask<Option<BinaryData>> tryGetPolicyContents(PolicyFragmentName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask<Option<BinaryData>> tryGetPolicyContents(WorkspacePolicyFragmentName workspacePolicyFragmentName, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
-            var policyFile = WorkspacePolicyFragmentPolicyFile.From(name, workspaceName, serviceDirectory);
+            var policyFile = WorkspacePolicyFragmentPolicyFile.From(workspacePolicyFragmentName, workspaceName, serviceDirectory);
 
             return await tryGetFileContents(policyFile.ToFileInfo(), cancellationToken);
         }
@@ -212,19 +210,19 @@ internal static class WorkspacePolicyFragmentModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspacePolicyFragmentName, dto, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Adding policy fragment {PolicyFragmentName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting policy fragment {WorkspacePolicyFragmentName} in workspace {WorkspaceName}...", workspacePolicyFragmentName, workspaceName);
 
-            await WorkspacePolicyFragmentUri.From(name, workspaceName, serviceUri)
-                                            .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = WorkspacePolicyFragmentUri.From(workspacePolicyFragmentName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
     public static void ConfigureDeleteWorkspacePolicyFragments(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParsePolicyFragmentName(builder);
+        ConfigureTryParseWorkspacePolicyFragmentName(builder);
         ConfigureIsWorkspacePolicyFragmentNameInSourceControl(builder);
         ConfigureDeleteWorkspacePolicyFragment(builder);
 
@@ -248,7 +246,7 @@ internal static class WorkspacePolicyFragmentModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(policyFragment => isNameInSourceControl(policyFragment.Name, policyFragment.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspacePolicyFragmentName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -266,13 +264,11 @@ internal static class WorkspacePolicyFragmentModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspacePolicyFragmentFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspacePolicyFragmentName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspacePolicyFragment))
-                                       ?.AddTag("workspace_policy_fragment.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspacePolicyFragment));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspacePolicyFragmentName, workspaceName, cancellationToken);
         };
     }
 
@@ -290,12 +286,12 @@ internal static class WorkspacePolicyFragmentModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspacePolicyFragmentName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing policy fragment {PolicyFragmentName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting policy fragment {WorkspacePolicyFragmentName} in workspace {WorkspaceName}...", workspacePolicyFragmentName, workspaceName);
 
-            await WorkspacePolicyFragmentUri.From(name, workspaceName, serviceUri)
-                                            .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspacePolicyFragmentUri.From(workspacePolicyFragmentName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

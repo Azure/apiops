@@ -3,7 +3,6 @@ using Flurl;
 using LanguageExt;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
@@ -12,77 +11,88 @@ using System.Threading.Tasks;
 
 namespace common;
 
+public sealed record WorkspaceVersionSetName : ResourceName, IResourceName<WorkspaceVersionSetName>
+{
+    private WorkspaceVersionSetName(string value) : base(value) { }
+
+    public static WorkspaceVersionSetName From(string value) => new(value);
+}
+
 public sealed record WorkspaceVersionSetsUri : ResourceUri
 {
     public required WorkspaceUri Parent { get; init; }
 
     private static string PathSegment { get; } = "apiVersionSets";
 
-    protected override Uri Value => Parent.ToUri().AppendPathSegment(PathSegment).ToUri();
+    protected override Uri Value =>
+        Parent.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public static WorkspaceVersionSetsUri From(WorkspaceName name, ManagementServiceUri serviceUri) =>
-        new() { Parent = WorkspaceUri.From(name, serviceUri) };
+    public static WorkspaceVersionSetsUri From(WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+        new() { Parent = WorkspaceUri.From(workspaceName, serviceUri) };
 }
 
 public sealed record WorkspaceVersionSetUri : ResourceUri
 {
     public required WorkspaceVersionSetsUri Parent { get; init; }
-    public required VersionSetName Name { get; init; }
 
-    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+    public required WorkspaceVersionSetName Name { get; init; }
 
-    public static WorkspaceVersionSetUri From(VersionSetName name, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+    protected override Uri Value =>
+        Parent.ToUri().AppendPathSegment(Name.Value).ToUri();
+
+    public static WorkspaceVersionSetUri From(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
         new()
         {
             Parent = WorkspaceVersionSetsUri.From(workspaceName, serviceUri),
-            Name = name
+            Name = workspaceVersionSetName
         };
 }
 
 public sealed record WorkspaceVersionSetsDirectory : ResourceDirectory
 {
     public required WorkspaceDirectory Parent { get; init; }
+
     private static string Name { get; } = "version sets";
 
     protected override DirectoryInfo Value =>
         Parent.ToDirectoryInfo().GetChildDirectory(Name);
 
-    public static WorkspaceVersionSetsDirectory From(WorkspaceName name, ManagementServiceDirectory serviceDirectory) =>
-        new() { Parent = WorkspaceDirectory.From(name, serviceDirectory) };
+    public static WorkspaceVersionSetsDirectory From(WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+        new() { Parent = WorkspaceDirectory.From(workspaceName, serviceDirectory) };
 
     public static Option<WorkspaceVersionSetsDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        IsDirectoryNameValid(directory)
+        directory?.Name == Name
             ? from parent in WorkspaceDirectory.TryParse(directory.Parent, serviceDirectory)
               select new WorkspaceVersionSetsDirectory { Parent = parent }
             : Option<WorkspaceVersionSetsDirectory>.None;
-
-    internal static bool IsDirectoryNameValid([NotNullWhen(true)] DirectoryInfo? directory) =>
-        directory?.Name == Name;
 }
 
 public sealed record WorkspaceVersionSetDirectory : ResourceDirectory
 {
     public required WorkspaceVersionSetsDirectory Parent { get; init; }
 
-    public required VersionSetName Name { get; init; }
+    public required WorkspaceVersionSetName Name { get; init; }
 
     protected override DirectoryInfo Value =>
-        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.Value);
 
-    public static WorkspaceVersionSetDirectory From(VersionSetName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceVersionSetDirectory From(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
             Parent = WorkspaceVersionSetsDirectory.From(workspaceName, serviceDirectory),
-            Name = name
+            Name = workspaceVersionSetName
         };
 
     public static Option<WorkspaceVersionSetDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        from parent in WorkspaceVersionSetsDirectory.TryParse(directory?.Parent, serviceDirectory)
-        select new WorkspaceVersionSetDirectory
-        {
-            Parent = parent,
-            Name = VersionSetName.From(directory!.Name)
-        };
+        directory is null
+            ? Option<WorkspaceVersionSetDirectory>.None
+            : from parent in WorkspaceVersionSetsDirectory.TryParse(directory.Parent, serviceDirectory)
+              let name = WorkspaceVersionSetName.From(directory.Name)
+              select new WorkspaceVersionSetDirectory
+              {
+                  Parent = parent,
+                  Name = name
+              };
 }
 
 public sealed record WorkspaceVersionSetInformationFile : ResourceFile
@@ -94,20 +104,20 @@ public sealed record WorkspaceVersionSetInformationFile : ResourceFile
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile(Name);
 
-    public static WorkspaceVersionSetInformationFile From(VersionSetName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceVersionSetInformationFile From(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = WorkspaceVersionSetDirectory.From(name, workspaceName, serviceDirectory)
+            Parent = WorkspaceVersionSetDirectory.From(workspaceVersionSetName, workspaceName, serviceDirectory)
         };
 
     public static Option<WorkspaceVersionSetInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
-        IsFileNameValid(file)
+        file?.Name == Name
             ? from parent in WorkspaceVersionSetDirectory.TryParse(file.Directory, serviceDirectory)
-              select new WorkspaceVersionSetInformationFile { Parent = parent }
+              select new WorkspaceVersionSetInformationFile
+              {
+                  Parent = parent
+              }
             : Option<WorkspaceVersionSetInformationFile>.None;
-
-    internal static bool IsFileNameValid([NotNullWhen(true)] FileInfo? file) =>
-        file?.Name == Name;
 }
 
 public sealed record WorkspaceVersionSetDto
@@ -142,19 +152,19 @@ public sealed record WorkspaceVersionSetDto
 
 public static class WorkspaceVersionSetModule
 {
-    public static IAsyncEnumerable<VersionSetName> ListNames(this WorkspaceVersionSetsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<WorkspaceVersionSetName> ListNames(this WorkspaceVersionSetsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
-                .Select(VersionSetName.From);
+                .Select(WorkspaceVersionSetName.From);
 
-    public static IAsyncEnumerable<(VersionSetName Name, WorkspaceVersionSetDto Dto)> List(this WorkspaceVersionSetsUri workspaceVersionSetsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        workspaceVersionSetsUri.ListNames(pipeline, cancellationToken)
-                               .SelectAwait(async name =>
-                               {
-                                   var uri = new WorkspaceVersionSetUri { Parent = workspaceVersionSetsUri, Name = name };
-                                   var dto = await uri.GetDto(pipeline, cancellationToken);
-                                   return (name, dto);
-                               });
+    public static IAsyncEnumerable<(WorkspaceVersionSetName Name, WorkspaceVersionSetDto Dto)> List(this WorkspaceVersionSetsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        uri.ListNames(pipeline, cancellationToken)
+           .SelectAwait(async name =>
+           {
+               var resourceUri = new WorkspaceVersionSetUri { Parent = uri, Name = name };
+               var dto = await resourceUri.GetDto(pipeline, cancellationToken);
+               return (name, dto);
+           });
 
     public static async ValueTask<WorkspaceVersionSetDto> GetDto(this WorkspaceVersionSetUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
@@ -170,6 +180,24 @@ public static class WorkspaceVersionSetModule
         var content = BinaryData.FromObjectAsJson(dto);
         await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
     }
+
+    public static IEnumerable<WorkspaceVersionSetDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory) =>
+        from workspaceDirectory in WorkspaceModule.ListDirectories(serviceDirectory)
+        let workspaceVersionSetsDirectory = new WorkspaceVersionSetsDirectory { Parent = workspaceDirectory }
+        where workspaceVersionSetsDirectory.ToDirectoryInfo().Exists()
+        from workspaceVersionSetDirectoryInfo in workspaceVersionSetsDirectory.ToDirectoryInfo().ListDirectories("*")
+        let name = WorkspaceVersionSetName.From(workspaceVersionSetDirectoryInfo.Name)
+        select new WorkspaceVersionSetDirectory
+        {
+            Parent = workspaceVersionSetsDirectory,
+            Name = name
+        };
+
+    public static IEnumerable<WorkspaceVersionSetInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
+        from workspaceVersionSetDirectory in ListDirectories(serviceDirectory)
+        let informationFile = new WorkspaceVersionSetInformationFile { Parent = workspaceVersionSetDirectory }
+        where informationFile.ToFileInfo().Exists()
+        select informationFile;
 
     public static async ValueTask WriteDto(this WorkspaceVersionSetInformationFile file, WorkspaceVersionSetDto dto, CancellationToken cancellationToken)
     {

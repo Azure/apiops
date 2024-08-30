@@ -38,11 +38,13 @@ internal static class WorkspacePolicyModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspacePolicies));
 
-            logger.LogInformation("Extracting policies for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting policies in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async policy => await writeArtifacts(policy.Name, policy.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +62,10 @@ internal static class WorkspacePolicyModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspacePoliciesUri.From(workspaceName, serviceUri)
-                                .List(pipeline, cancellationToken);
+        {
+            var workspacePoliciesUri = WorkspacePoliciesUri.From(workspaceName, serviceUri);
+            return workspacePoliciesUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspacePolicyArtifacts(IHostApplicationBuilder builder)
@@ -95,7 +99,7 @@ internal static class WorkspacePolicyModule
         {
             var policyFile = WorkspacePolicyFile.From(name, workspaceName, serviceDirectory);
 
-            logger.LogInformation("Writing workspace policy file {PolicyFile}", policyFile);
+            logger.LogInformation("Writing workspace policy file {WorkspacePolicyFile}...", policyFile);
             var policy = dto.Properties.Value ?? string.Empty;
             await policyFile.WritePolicy(policy, cancellationToken);
         };

@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record WorkspacePolicyName : ResourceName
+public sealed record WorkspacePolicyName : ResourceName, IResourceName<WorkspacePolicyName>
 {
     private WorkspacePolicyName(string value) : base(value) { }
 
@@ -25,44 +25,48 @@ public sealed record WorkspacePoliciesUri : ResourceUri
 
     private static string PathSegment { get; } = "policies";
 
-    protected override Uri Value => Parent.ToUri().AppendPathSegment(PathSegment).ToUri();
+    protected override Uri Value =>
+        Parent.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public static WorkspacePoliciesUri From(WorkspaceName name, ManagementServiceUri serviceUri) =>
-        new() { Parent = WorkspaceUri.From(name, serviceUri) };
+    public static WorkspacePoliciesUri From(WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+        new() { Parent = WorkspaceUri.From(workspaceName, serviceUri) };
 }
 
 public sealed record WorkspacePolicyUri : ResourceUri
 {
     public required WorkspacePoliciesUri Parent { get; init; }
+
     public required WorkspacePolicyName Name { get; init; }
 
-    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+    protected override Uri Value =>
+        Parent.ToUri().AppendPathSegment(Name.Value).ToUri();
 
-    public static WorkspacePolicyUri From(WorkspacePolicyName name, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+    public static WorkspacePolicyUri From(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
         new()
         {
             Parent = WorkspacePoliciesUri.From(workspaceName, serviceUri),
-            Name = name
+            Name = workspacePolicyName
         };
 }
 
 public sealed record WorkspacePolicyFile : ResourceFile
 {
     public required WorkspaceDirectory Parent { get; init; }
+
     public required WorkspacePolicyName Name { get; init; }
 
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile($"{Name}.xml");
 
-    public static WorkspacePolicyFile From(WorkspacePolicyName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspacePolicyFile From(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
             Parent = WorkspaceDirectory.From(workspaceName, serviceDirectory),
-            Name = name
+            Name = workspacePolicyName
         };
 
     public static Option<WorkspacePolicyFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
-        from name in TryParseWorkspacePolicyName(file)
+        from name in TryParseName(file)
         from parent in WorkspaceDirectory.TryParse(file?.Directory, serviceDirectory)
         select new WorkspacePolicyFile
         {
@@ -70,7 +74,7 @@ public sealed record WorkspacePolicyFile : ResourceFile
             Parent = parent
         };
 
-    internal static Option<WorkspacePolicyName> TryParseWorkspacePolicyName(FileInfo? file) =>
+    internal static Option<WorkspacePolicyName> TryParseName(FileInfo? file) =>
         file?.Name.EndsWith(".xml", StringComparison.Ordinal) switch
         {
             true => WorkspacePolicyName.From(Path.GetFileNameWithoutExtension(file.Name)),
@@ -82,9 +86,9 @@ public sealed record WorkspacePolicyDto
 {
     [JsonPropertyName("properties")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public required WorkspacePolicyContract Properties { get; init; }
+    public required PolicyContract Properties { get; init; }
 
-    public sealed record WorkspacePolicyContract
+    public sealed record PolicyContract
     {
         [JsonPropertyName("description")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -117,14 +121,14 @@ public static class WorkspacePolicyModule
         }
     }
 
-    public static IAsyncEnumerable<(WorkspacePolicyName Name, WorkspacePolicyDto Dto)> List(this WorkspacePoliciesUri workspacePoliciesUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        workspacePoliciesUri.ListNames(pipeline, cancellationToken)
-                            .SelectAwait(async name =>
-                            {
-                                var uri = new WorkspacePolicyUri { Parent = workspacePoliciesUri, Name = name };
-                                var dto = await uri.GetDto(pipeline, cancellationToken);
-                                return (name, dto);
-                            });
+    public static IAsyncEnumerable<(WorkspacePolicyName Name, WorkspacePolicyDto Dto)> List(this WorkspacePoliciesUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        uri.ListNames(pipeline, cancellationToken)
+           .SelectAwait(async name =>
+           {
+               var resourceUri = new WorkspacePolicyUri { Parent = uri, Name = name };
+               var dto = await resourceUri.GetDto(pipeline, cancellationToken);
+               return (name, dto);
+           });
 
     public static async ValueTask<WorkspacePolicyDto> GetDto(this WorkspacePolicyUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
@@ -144,12 +148,12 @@ public static class WorkspacePolicyModule
 
     public static IEnumerable<WorkspacePolicyFile> ListPolicyFiles(WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory)
     {
-        var workspaceDirectory = WorkspaceDirectory.From(workspaceName, serviceDirectory);
+        var parentDirectory = WorkspaceDirectory.From(workspaceName, serviceDirectory);
 
-        return workspaceDirectory.ToDirectoryInfo()
-                                 .ListFiles("*")
-                                 .Choose(WorkspacePolicyFile.TryParseWorkspacePolicyName)
-                                 .Select(name => new WorkspacePolicyFile { Name = name, Parent = workspaceDirectory });
+        return parentDirectory.ToDirectoryInfo()
+                              .ListFiles("*")
+                              .Choose(WorkspacePolicyFile.TryParseName)
+                              .Select(name => new WorkspacePolicyFile { Name = name, Parent = parentDirectory });
     }
 
     public static async ValueTask WritePolicy(this WorkspacePolicyFile file, string policy, CancellationToken cancellationToken)

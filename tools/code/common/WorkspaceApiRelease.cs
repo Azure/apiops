@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace common;
 
-public sealed record WorkspaceApiReleaseName : ResourceName
+public sealed record WorkspaceApiReleaseName : ResourceName, IResourceName<WorkspaceApiReleaseName>
 {
     private WorkspaceApiReleaseName(string value) : base(value) { }
 
@@ -27,8 +27,8 @@ public sealed record WorkspaceApiReleasesUri : ResourceUri
     protected override Uri Value =>
         Parent.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public static WorkspaceApiReleasesUri From(ApiName apiName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
-        new() { Parent = WorkspaceApiUri.From(apiName, workspaceName, serviceUri) };
+    public static WorkspaceApiReleasesUri From(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+        new() { Parent = WorkspaceApiUri.From(workspaceApiName, workspaceName, serviceUri) };
 }
 
 public sealed record WorkspaceApiReleaseUri : ResourceUri
@@ -38,13 +38,13 @@ public sealed record WorkspaceApiReleaseUri : ResourceUri
     public required WorkspaceApiReleaseName Name { get; init; }
 
     protected override Uri Value =>
-        Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+        Parent.ToUri().AppendPathSegment(Name.Value).ToUri();
 
-    public static WorkspaceApiReleaseUri From(WorkspaceApiReleaseName name, ApiName apiName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+    public static WorkspaceApiReleaseUri From(WorkspaceApiReleaseName workspaceApiReleaseName, WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
         new()
         {
-            Parent = WorkspaceApiReleasesUri.From(apiName, workspaceName, serviceUri),
-            Name = name
+            Parent = WorkspaceApiReleasesUri.From(workspaceApiName, workspaceName, serviceUri),
+            Name = workspaceApiReleaseName
         };
 }
 
@@ -57,8 +57,8 @@ public sealed record WorkspaceApiReleasesDirectory : ResourceDirectory
     protected override DirectoryInfo Value =>
         Parent.ToDirectoryInfo().GetChildDirectory(Name);
 
-    public static WorkspaceApiReleasesDirectory From(ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
-        new() { Parent = WorkspaceApiDirectory.From(apiName, workspaceName, serviceDirectory) };
+    public static WorkspaceApiReleasesDirectory From(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+        new() { Parent = WorkspaceApiDirectory.From(workspaceApiName, workspaceName, serviceDirectory) };
 
     public static Option<WorkspaceApiReleasesDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
         directory?.Name == Name
@@ -76,21 +76,23 @@ public sealed record WorkspaceApiReleaseDirectory : ResourceDirectory
     protected override DirectoryInfo Value =>
         Parent.ToDirectoryInfo().GetChildDirectory(Name.Value);
 
-    public static WorkspaceApiReleaseDirectory From(WorkspaceApiReleaseName name, ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceApiReleaseDirectory From(WorkspaceApiReleaseName workspaceApiReleaseName, WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = WorkspaceApiReleasesDirectory.From(apiName, workspaceName, serviceDirectory),
-            Name = name
+            Parent = WorkspaceApiReleasesDirectory.From(workspaceApiName, workspaceName, serviceDirectory),
+            Name = workspaceApiReleaseName
         };
 
     public static Option<WorkspaceApiReleaseDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        from parent in WorkspaceApiReleasesDirectory.TryParse(directory?.Parent, serviceDirectory)
-        let name = WorkspaceApiReleaseName.From(directory!.Name)
-        select new WorkspaceApiReleaseDirectory
-        {
-            Parent = parent,
-            Name = name
-        };
+        directory is null
+            ? Option<WorkspaceApiReleaseDirectory>.None
+            : from parent in WorkspaceApiReleasesDirectory.TryParse(directory.Parent, serviceDirectory)
+              let name = WorkspaceApiReleaseName.From(directory.Name)
+              select new WorkspaceApiReleaseDirectory
+              {
+                  Parent = parent,
+                  Name = name
+              };
 }
 
 public sealed record WorkspaceApiReleaseInformationFile : ResourceFile
@@ -102,10 +104,10 @@ public sealed record WorkspaceApiReleaseInformationFile : ResourceFile
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile(Name);
 
-    public static WorkspaceApiReleaseInformationFile From(WorkspaceApiReleaseName name, ApiName apiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceApiReleaseInformationFile From(WorkspaceApiReleaseName workspaceApiReleaseName, WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = WorkspaceApiReleaseDirectory.From(name, apiName, workspaceName, serviceDirectory)
+            Parent = WorkspaceApiReleaseDirectory.From(workspaceApiReleaseName, workspaceApiName, workspaceName, serviceDirectory)
         };
 
     public static Option<WorkspaceApiReleaseInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
@@ -138,14 +140,6 @@ public sealed record WorkspaceApiReleaseDto
 
 public static class WorkspaceApiReleaseModule
 {
-    public static async ValueTask DeleteAll(this WorkspaceApiReleasesUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        await uri.ListNames(pipeline, cancellationToken)
-                 .IterParallel(async name =>
-                 {
-                     var resourceUri = new WorkspaceApiReleaseUri { Parent = uri, Name = name };
-                     await resourceUri.Delete(pipeline, cancellationToken);
-                 }, cancellationToken);
-
     public static IAsyncEnumerable<WorkspaceApiReleaseName> ListNames(this WorkspaceApiReleasesUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))

@@ -7,15 +7,16 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceSubscriptions(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(SubscriptionName Name, WorkspaceSubscriptionDto Dto)> ListWorkspaceSubscriptions(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceSubscriptionArtifacts(SubscriptionName name, WorkspaceSubscriptionDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceSubscriptionInformationFile(SubscriptionName name, WorkspaceSubscriptionDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceSubscriptionName Name, WorkspaceSubscriptionDto Dto)> ListWorkspaceSubscriptions(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceSubscriptionArtifacts(WorkspaceSubscriptionName name, WorkspaceSubscriptionDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceSubscriptionInformationFile(WorkspaceSubscriptionName name, WorkspaceSubscriptionDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceSubscriptionModule
 {
@@ -38,11 +39,13 @@ internal static class WorkspaceSubscriptionModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceSubscriptions));
 
-            logger.LogInformation("Extracting subscriptions for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting subscriptions in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async subscription => await writeArtifacts(subscription.Name, subscription.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +63,13 @@ internal static class WorkspaceSubscriptionModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspaceSubscriptionsUri.From(workspaceName, serviceUri)
-                                     .List(pipeline, cancellationToken);
+        {
+            var workspaceSubscriptionsUri = WorkspaceSubscriptionsUri.From(workspaceName, serviceUri);
+
+            return workspaceSubscriptionsUri.List(pipeline, cancellationToken)
+                                            // Don't extract the master subscription
+                                            .Where(subscription => subscription.Name != WorkspaceSubscriptionName.Master);
+        };
     }
 
     private static void ConfigureWriteWorkspaceSubscriptionArtifacts(IHostApplicationBuilder builder)
@@ -76,9 +84,7 @@ internal static class WorkspaceSubscriptionModule
         var writeInformationFile = provider.GetRequiredService<WriteWorkspaceSubscriptionInformationFile>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteWorkspaceSubscriptionInformationFile(IHostApplicationBuilder builder)

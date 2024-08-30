@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceLoggers(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(LoggerName Name, WorkspaceLoggerDto Dto)> ListWorkspaceLoggers(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceLoggerArtifacts(LoggerName name, WorkspaceLoggerDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceLoggerInformationFile(LoggerName name, WorkspaceLoggerDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceLoggerName Name, WorkspaceLoggerDto Dto)> ListWorkspaceLoggers(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceLoggerArtifacts(WorkspaceLoggerName name, WorkspaceLoggerDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceLoggerInformationFile(WorkspaceLoggerName name, WorkspaceLoggerDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceLoggerModule
 {
@@ -38,11 +38,13 @@ internal static class WorkspaceLoggerModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceLoggers));
 
-            logger.LogInformation("Extracting loggers for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting loggers in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async logger => await writeArtifacts(logger.Name, logger.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +62,10 @@ internal static class WorkspaceLoggerModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspaceLoggersUri.From(workspaceName, serviceUri)
-                               .List(pipeline, cancellationToken);
+        {
+            var workspaceLoggersUri = WorkspaceLoggersUri.From(workspaceName, serviceUri);
+            return workspaceLoggersUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspaceLoggerArtifacts(IHostApplicationBuilder builder)
@@ -76,9 +80,7 @@ internal static class WorkspaceLoggerModule
         var writeInformationFile = provider.GetRequiredService<WriteWorkspaceLoggerInformationFile>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteWorkspaceLoggerInformationFile(IHostApplicationBuilder builder)

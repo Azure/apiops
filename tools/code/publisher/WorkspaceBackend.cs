@@ -16,13 +16,13 @@ namespace publisher;
 
 public delegate ValueTask PutWorkspaceBackends(CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspaceBackends(CancellationToken cancellationToken);
-public delegate Option<(BackendName Name, WorkspaceName WorkspaceName)> TryParseWorkspaceBackendName(FileInfo file);
-public delegate bool IsWorkspaceBackendNameInSourceControl(BackendName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspaceBackend(BackendName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspaceBackendDto>> FindWorkspaceBackendDto(BackendName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspaceBackendInApim(BackendName name, WorkspaceBackendDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceBackend(BackendName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceBackendFromApim(BackendName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspaceBackendName WorkspaceBackendName, WorkspaceName WorkspaceName)> TryParseWorkspaceBackendName(FileInfo file);
+public delegate bool IsWorkspaceBackendNameInSourceControl(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspaceBackend(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspaceBackendDto>> FindWorkspaceBackendDto(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceBackendInApim(WorkspaceBackendName name, WorkspaceBackendDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceBackend(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceBackendFromApim(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceBackendModule
 {
@@ -53,7 +53,7 @@ internal static class WorkspaceBackendModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(resource => isNameInSourceControl(resource.Name, resource.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceBackendName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
@@ -89,10 +89,10 @@ internal static class WorkspaceBackendModule
 
         return doesInformationFileExist;
 
-        bool doesInformationFileExist(BackendName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var informationFile = WorkspaceBackendInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceBackendInformationFile.From(workspaceBackendName, workspaceName, serviceDirectory);
 
             return artifactFiles.Contains(informationFile.ToFileInfo());
         }
@@ -112,14 +112,12 @@ internal static class WorkspaceBackendModule
         var putInApim = provider.GetRequiredService<PutWorkspaceBackendInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceBackendName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspaceBackend))
-                                       ?.AddTag("workspace.name", workspaceName)
-                                       ?.AddTag("workspace_backend.name", name);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspaceBackend));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspaceBackendName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspaceBackendName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -136,9 +134,9 @@ internal static class WorkspaceBackendModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceBackendName, workspaceName, cancellationToken) =>
         {
-            var informationFile = WorkspaceBackendInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceBackendInformationFile.From(workspaceBackendName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
@@ -160,11 +158,11 @@ internal static class WorkspaceBackendModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspaceBackendName, dto, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Adding backend {BackendName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting backend {WorkspaceBackendName} in workspace {WorkspaceName}...", workspaceBackendName, workspaceName);
 
-            var resourceUri = WorkspaceBackendUri.From(name, workspaceName, serviceUri);
+            var resourceUri = WorkspaceBackendUri.From(workspaceBackendName, workspaceName, serviceUri);
             await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
@@ -196,7 +194,7 @@ internal static class WorkspaceBackendModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(resource => isNameInSourceControl(resource.Name, resource.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceBackendName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -214,13 +212,11 @@ internal static class WorkspaceBackendModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspaceBackendFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceBackendName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceBackend))
-                                       ?.AddTag("workspace.name", workspaceName)
-                                       ?.AddTag("workspace_backend.name", name);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceBackend));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspaceBackendName, workspaceName, cancellationToken);
         };
     }
 
@@ -238,11 +234,11 @@ internal static class WorkspaceBackendModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceBackendName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing backend {BackendName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting backend {WorkspaceBackendName} in workspace {WorkspaceName}...", workspaceBackendName, workspaceName);
 
-            var resourceUri = WorkspaceBackendUri.From(name, workspaceName, serviceUri);
+            var resourceUri = WorkspaceBackendUri.From(workspaceBackendName, workspaceName, serviceUri);
             await resourceUri.Delete(pipeline, cancellationToken);
         };
     }

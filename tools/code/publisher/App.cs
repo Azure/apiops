@@ -3,7 +3,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.FeatureManagement;
 using System;
 using System.Diagnostics;
 
@@ -46,6 +45,20 @@ internal static class AppModule
         WorkspaceProductModule.ConfigurePutWorkspaceProducts(builder);
         WorkspaceGroupModule.ConfigurePutWorkspaceGroups(builder);
         WorkspaceApiModule.ConfigurePutWorkspaceApis(builder);
+        WorkspaceSubscriptionModule.ConfigurePutWorkspaceSubscriptions(builder);
+        WorkspaceApiPolicyModule.ConfigurePutWorkspaceApiPolicies(builder);
+        WorkspaceApiDiagnosticModule.ConfigurePutWorkspaceApiDiagnostics(builder);
+        WorkspaceApiOperationPolicyModule.ConfigurePutWorkspaceApiOperationPolicies(builder);
+        WorkspaceProductPolicyModule.ConfigurePutWorkspaceProductPolicies(builder);
+        WorkspaceProductGroupModule.ConfigurePutWorkspaceProductGroups(builder);
+        WorkspaceProductApiModule.ConfigurePutWorkspaceProductApis(builder);
+        WorkspaceProductApiModule.ConfigureDeleteWorkspaceProductApis(builder);
+        WorkspaceProductGroupModule.ConfigureDeleteWorkspaceProductGroups(builder);
+        WorkspaceProductPolicyModule.ConfigureDeleteWorkspaceProductPolicies(builder);
+        WorkspaceApiOperationPolicyModule.ConfigureDeleteWorkspaceApiOperationPolicies(builder);
+        WorkspaceApiDiagnosticModule.ConfigureDeleteWorkspaceApiDiagnostics(builder);
+        WorkspaceApiPolicyModule.ConfigureDeleteWorkspaceApiPolicies(builder);
+        WorkspaceSubscriptionModule.ConfigureDeleteWorkspaceSubscriptions(builder);
         WorkspaceApiModule.ConfigureDeleteWorkspaceApis(builder);
         WorkspaceGroupModule.ConfigureDeleteWorkspaceGroups(builder);
         WorkspaceProductModule.ConfigureDeleteWorkspaceProducts(builder);
@@ -79,7 +92,6 @@ internal static class AppModule
         BackendModule.ConfigureDeleteBackends(builder);
         GatewayModule.ConfigureDeleteGateways(builder);
         NamedValueModule.ConfigureDeleteNamedValues(builder);
-        builder.Services.AddFeatureManagement();
 
         builder.Services.TryAddSingleton(GetRunApplication);
     }
@@ -119,8 +131,22 @@ internal static class AppModule
         var putWorkspaceProducts = provider.GetRequiredService<PutWorkspaceProducts>();
         var putWorkspaceGroups = provider.GetRequiredService<PutWorkspaceGroups>();
         var putWorkspaceApis = provider.GetRequiredService<PutWorkspaceApis>();
+        var putWorkspaceApiPolicies = provider.GetRequiredService<PutWorkspaceApiPolicies>();
+        var putWorkspaceApiDiagnostics = provider.GetRequiredService<PutWorkspaceApiDiagnostics>();
+        var putWorkspaceApiOperationPolicies = provider.GetRequiredService<PutWorkspaceApiOperationPolicies>();
+        var putWorkspaceSubscriptions = provider.GetRequiredService<PutWorkspaceSubscriptions>();
+        var putWorkspaceProductPolicies = provider.GetRequiredService<PutWorkspaceProductPolicies>();
+        var putWorkspaceProductGroups = provider.GetRequiredService<PutWorkspaceProductGroups>();
+        var putWorkspaceProductApis = provider.GetRequiredService<PutWorkspaceProductApis>();
+        var deleteWorkspaceProductApis = provider.GetRequiredService<DeleteWorkspaceProductApis>();
+        var deleteWorkspaceProductGroups = provider.GetRequiredService<DeleteWorkspaceProductGroups>();
+        var deleteWorkspaceSubscriptions = provider.GetRequiredService<DeleteWorkspaceSubscriptions>();
+        var deleteWorkspaceApiOperationPolicies = provider.GetRequiredService<DeleteWorkspaceApiOperationPolicies>();
+        var deleteWorkspaceApiDiagnostics = provider.GetRequiredService<DeleteWorkspaceApiDiagnostics>();
+        var deleteWorkspaceApiPolicies = provider.GetRequiredService<DeleteWorkspaceApiPolicies>();
         var deleteWorkspaceApis = provider.GetRequiredService<DeleteWorkspaceApis>();
         var deleteWorkspaceGroups = provider.GetRequiredService<DeleteWorkspaceGroups>();
+        var deleteWorkspaceProductPolicies = provider.GetRequiredService<DeleteWorkspaceProductPolicies>();
         var deleteWorkspaceProducts = provider.GetRequiredService<DeleteWorkspaceProducts>();
         var deleteWorkspacePolicies = provider.GetRequiredService<DeleteWorkspacePolicies>();
         var deleteWorkspacePolicyFragments = provider.GetRequiredService<DeleteWorkspacePolicyFragments>();
@@ -152,7 +178,6 @@ internal static class AppModule
         var deleteBackends = provider.GetRequiredService<DeleteBackends>();
         var deleteGateways = provider.GetRequiredService<DeleteGateways>();
         var deleteNamedValues = provider.GetRequiredService<DeleteNamedValues>();
-        var featureManager = provider.GetRequiredService<IFeatureManager>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -184,33 +209,42 @@ internal static class AppModule
             await putProductTags(cancellationToken);
             await putProductApis(cancellationToken);
             await putApiOperationPolicies(cancellationToken);
-
-            if (await featureManager.IsEnabledAsync("Workspaces"))
-            {
-                await putWorkspaceNamedValues(cancellationToken);
-                await putWorkspaceBackends(cancellationToken);
-                await putWorkspaceTags(cancellationToken);
-                await putWorkspaceVersionSets(cancellationToken);
-                await putWorkspaceLoggers(cancellationToken);
-                await putWorkspaceDiagnostics(cancellationToken);
-                await putWorkspacePolicyFragments(cancellationToken);
-                await putWorkspacePolicies(cancellationToken);
-                await putWorkspaceProducts(cancellationToken);
-                await putWorkspaceGroups(cancellationToken);
-                await putWorkspaceApis(cancellationToken);
-                await deleteWorkspaceApis(cancellationToken);
-                await deleteWorkspaceGroups(cancellationToken);
-                await deleteWorkspaceProducts(cancellationToken);
-                await deleteWorkspacePolicies(cancellationToken);
-                await deleteWorkspacePolicyFragments(cancellationToken);
-                await deleteWorkspaceDiagnostics(cancellationToken);
-                await deleteWorkspaceLoggers(cancellationToken);
-                await deleteWorkspaceVersionSets(cancellationToken);
-                await deleteWorkspaceTags(cancellationToken);
-                await deleteWorkspaceBackends(cancellationToken);
-                await deleteWorkspaceNamedValues(cancellationToken);
-            }
-
+            await putWorkspaceNamedValues(cancellationToken);
+            await putWorkspaceBackends(cancellationToken);
+            await putWorkspaceTags(cancellationToken);
+            await putWorkspaceVersionSets(cancellationToken);
+            await putWorkspaceLoggers(cancellationToken);
+            await putWorkspaceDiagnostics(cancellationToken);
+            await putWorkspacePolicyFragments(cancellationToken);
+            await putWorkspacePolicies(cancellationToken);
+            await putWorkspaceProducts(cancellationToken);
+            await putWorkspaceGroups(cancellationToken);
+            await putWorkspaceApis(cancellationToken);
+            await putWorkspaceSubscriptions(cancellationToken);
+            await putWorkspaceApiPolicies(cancellationToken);
+            await putWorkspaceApiDiagnostics(cancellationToken);
+            await putWorkspaceApiOperationPolicies(cancellationToken);
+            await putWorkspaceProductPolicies(cancellationToken);
+            await putWorkspaceProductGroups(cancellationToken);
+            await putWorkspaceProductApis(cancellationToken);
+            await deleteWorkspaceProductApis(cancellationToken);
+            await deleteWorkspaceProductGroups(cancellationToken);
+            await deleteWorkspaceProductPolicies(cancellationToken);
+            await deleteWorkspaceApiDiagnostics(cancellationToken);
+            await deleteWorkspaceApiPolicies(cancellationToken);
+            await deleteWorkspaceSubscriptions(cancellationToken);
+            await deleteWorkspaceApis(cancellationToken);
+            await deleteWorkspaceGroups(cancellationToken);
+            await deleteWorkspaceProducts(cancellationToken);
+            await deleteWorkspaceApiOperationPolicies(cancellationToken);
+            await deleteWorkspacePolicies(cancellationToken);
+            await deleteWorkspacePolicyFragments(cancellationToken);
+            await deleteWorkspaceDiagnostics(cancellationToken);
+            await deleteWorkspaceLoggers(cancellationToken);
+            await deleteWorkspaceVersionSets(cancellationToken);
+            await deleteWorkspaceTags(cancellationToken);
+            await deleteWorkspaceBackends(cancellationToken);
+            await deleteWorkspaceNamedValues(cancellationToken);
             await deleteApiOperationPolicies(cancellationToken);
             await deleteProductApis(cancellationToken);
             await deleteProductTags(cancellationToken);

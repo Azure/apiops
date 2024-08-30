@@ -1,6 +1,5 @@
 ﻿using Azure.Core.Pipeline;
 using common;
-using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -22,18 +21,18 @@ internal static class WorkspaceModule
     public static void ConfigureExtractWorkspaces(IHostApplicationBuilder builder)
     {
         ConfigureListWorkspaces(builder);
-        WorkspaceNamedValueModule.ConfigureExtractWorkspaceNamedValues(builder);
+        WorkspaceApiModule.ConfigureExtractWorkspaceApis(builder);
         WorkspaceBackendModule.ConfigureExtractWorkspaceBackends(builder);
+        WorkspaceDiagnosticModule.ConfigureExtractWorkspaceDiagnostics(builder);
+        WorkspaceGroupModule.ConfigureExtractWorkspaceGroups(builder);
+        WorkspaceLoggerModule.ConfigureExtractWorkspaceLoggers(builder);
+        WorkspaceNamedValueModule.ConfigureExtractWorkspaceNamedValues(builder);
+        WorkspacePolicyModule.ConfigureExtractWorkspacePolicies(builder);
+        WorkspacePolicyFragmentModule.ConfigureExtractWorkspacePolicyFragments(builder);
+        WorkspaceProductModule.ConfigureExtractWorkspaceProducts(builder);
+        WorkspaceSubscriptionModule.ConfigureExtractWorkspaceSubscriptions(builder);
         WorkspaceTagModule.ConfigureExtractWorkspaceTags(builder);
         WorkspaceVersionSetModule.ConfigureExtractWorkspaceVersionSets(builder);
-        WorkspaceLoggerModule.ConfigureExtractWorkspaceLoggers(builder);
-        WorkspaceDiagnosticModule.ConfigureExtractWorkspaceDiagnostics(builder);
-        WorkspacePolicyFragmentModule.ConfigureExtractWorkspacePolicyFragments(builder);
-        WorkspacePolicyModule.ConfigureExtractWorkspacePolicies(builder);
-        WorkspaceProductModule.ConfigureExtractWorkspaceProducts(builder);
-        WorkspaceGroupModule.ConfigureExtractWorkspaceGroups(builder);
-        WorkspaceApiModule.ConfigureExtractWorkspaceApis(builder);
-        WorkspaceSubscriptionModule.ConfigureExtractWorkspaceSubscriptions(builder);
 
         builder.Services.TryAddSingleton(GetExtractWorkspaces);
     }
@@ -41,18 +40,18 @@ internal static class WorkspaceModule
     private static ExtractWorkspaces GetExtractWorkspaces(IServiceProvider provider)
     {
         var list = provider.GetRequiredService<ListWorkspaces>();
-        var extractWorkspaceNamedValues = provider.GetRequiredService<ExtractWorkspaceNamedValues>();
-        var extractWorkspaceBackends = provider.GetRequiredService<ExtractWorkspaceBackends>();
-        var extractWorkspaceTags = provider.GetRequiredService<ExtractWorkspaceTags>();
-        var extractWorkspaceVersionSets = provider.GetRequiredService<ExtractWorkspaceVersionSets>();
-        var extractWorkspaceLoggers = provider.GetRequiredService<ExtractWorkspaceLoggers>();
-        var extractWorkspaceDiagnostics = provider.GetRequiredService<ExtractWorkspaceDiagnostics>();
-        var extractWorkspacePolicyFragments = provider.GetRequiredService<ExtractWorkspacePolicyFragments>();
-        var extractWorkspacePolicies = provider.GetRequiredService<ExtractWorkspacePolicies>();
-        var extractWorkspaceProducts = provider.GetRequiredService<ExtractWorkspaceProducts>();
-        var extractWorkspaceGroups = provider.GetRequiredService<ExtractWorkspaceGroups>();
-        var extractWorkspaceApis = provider.GetRequiredService<ExtractWorkspaceApis>();
-        var extractWorkspaceSubscriptions = provider.GetRequiredService<ExtractWorkspaceSubscriptions>();
+        var extractApis = provider.GetRequiredService<ExtractWorkspaceApis>();
+        var extractBackends = provider.GetRequiredService<ExtractWorkspaceBackends>();
+        var extractDiagnostics = provider.GetRequiredService<ExtractWorkspaceDiagnostics>();
+        var extractGroups = provider.GetRequiredService<ExtractWorkspaceGroups>();
+        var extractLoggers = provider.GetRequiredService<ExtractWorkspaceLoggers>();
+        var extractNamedValues = provider.GetRequiredService<ExtractWorkspaceNamedValues>();
+        var extractPolicies = provider.GetRequiredService<ExtractWorkspacePolicies>();
+        var extractPolicyFragments = provider.GetRequiredService<ExtractWorkspacePolicyFragments>();
+        var extractProducts = provider.GetRequiredService<ExtractWorkspaceProducts>();
+        var extractSubscriptions = provider.GetRequiredService<ExtractWorkspaceSubscriptions>();
+        var extractTags = provider.GetRequiredService<ExtractWorkspaceTags>();
+        var extractVersionSets = provider.GetRequiredService<ExtractWorkspaceVersionSets>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -63,25 +62,22 @@ internal static class WorkspaceModule
             logger.LogInformation("Extracting workspaces...");
 
             await list(cancellationToken)
-                    .IterParallel(async workspace => await extractWorkspace(workspace.Name, workspace.Dto, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await extractApis(resource.Name, cancellationToken);
+                        await extractBackends(resource.Name, cancellationToken);
+                        await extractDiagnostics(resource.Name, cancellationToken);
+                        await extractGroups(resource.Name, cancellationToken);
+                        await extractLoggers(resource.Name, cancellationToken);
+                        await extractNamedValues(resource.Name, cancellationToken);
+                        await extractPolicies(resource.Name, cancellationToken);
+                        await extractPolicyFragments(resource.Name, cancellationToken);
+                        await extractProducts(resource.Name, cancellationToken);
+                        await extractSubscriptions(resource.Name, cancellationToken);
+                        await extractTags(resource.Name, cancellationToken);
+                        await extractVersionSets(resource.Name, cancellationToken);
+                    }, cancellationToken);
         };
-
-        async ValueTask extractWorkspace(WorkspaceName name, WorkspaceDto dto, CancellationToken cancellationToken)
-        {
-            await extractWorkspaceNamedValues(name, cancellationToken);
-            await extractWorkspaceBackends(name, cancellationToken);
-            await extractWorkspaceTags(name, cancellationToken);
-            await extractWorkspaceVersionSets(name, cancellationToken);
-            await extractWorkspaceLoggers(name, cancellationToken);
-            await extractWorkspaceDiagnostics(name, cancellationToken);
-            await extractWorkspacePolicyFragments(name, cancellationToken);
-            await extractWorkspacePolicies(name, cancellationToken);
-            await extractWorkspaceProducts(name, cancellationToken);
-            await extractWorkspaceGroups(name, cancellationToken);
-            await extractWorkspaceApis(name, cancellationToken);
-            await extractWorkspaceSubscriptions(name, cancellationToken);
-        }
     }
 
     private static void ConfigureListWorkspaces(IHostApplicationBuilder builder)
@@ -99,10 +95,10 @@ internal static class WorkspaceModule
         var serviceUri = provider.GetRequiredService<ManagementServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-        var findConfigurationNames = findConfigurationNamesFactory.Create<WorkspaceName>();
+        var findConfigurationWorkspaces = findConfigurationNamesFactory.Create<WorkspaceName>();
 
         return cancellationToken =>
-            findConfigurationNames()
+            findConfigurationWorkspaces()
                 .Map(names => listFromSet(names, cancellationToken))
                 .IfNone(() => listAll(cancellationToken));
 

@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceGroups(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(GroupName Name, WorkspaceGroupDto Dto)> ListWorkspaceGroups(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceGroupArtifacts(GroupName name, WorkspaceGroupDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceGroupInformationFile(GroupName name, WorkspaceGroupDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceGroupName Name, WorkspaceGroupDto Dto)> ListWorkspaceGroups(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceGroupArtifacts(WorkspaceGroupName name, WorkspaceGroupDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceGroupInformationFile(WorkspaceGroupName name, WorkspaceGroupDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceGroupModule
 {
@@ -38,11 +38,13 @@ internal static class WorkspaceGroupModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceGroups));
 
-            logger.LogInformation("Extracting groups for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting groups in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async group => await writeArtifacts(group.Name, group.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +62,10 @@ internal static class WorkspaceGroupModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspaceGroupsUri.From(workspaceName, serviceUri)
-                              .List(pipeline, cancellationToken);
+        {
+            var workspaceGroupsUri = WorkspaceGroupsUri.From(workspaceName, serviceUri);
+            return workspaceGroupsUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspaceGroupArtifacts(IHostApplicationBuilder builder)
@@ -76,9 +80,7 @@ internal static class WorkspaceGroupModule
         var writeInformationFile = provider.GetRequiredService<WriteWorkspaceGroupInformationFile>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteWorkspaceGroupInformationFile(IHostApplicationBuilder builder)

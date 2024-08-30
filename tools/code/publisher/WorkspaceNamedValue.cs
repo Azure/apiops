@@ -15,21 +15,21 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutWorkspaceNamedValues(CancellationToken cancellationToken);
-public delegate Option<(NamedValueName Name, WorkspaceName WorkspaceName)> TryParseWorkspaceNamedValueName(FileInfo file);
-public delegate bool IsWorkspaceNamedValueNameInSourceControl(NamedValueName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspaceNamedValue(NamedValueName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspaceNamedValueDto>> FindWorkspaceNamedValueDto(NamedValueName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspaceNamedValueInApim(NamedValueName name, WorkspaceNamedValueDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspaceNamedValues(CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceNamedValue(NamedValueName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceNamedValueFromApim(NamedValueName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspaceNamedValueName WorkspaceNamedValueName, WorkspaceName WorkspaceName)> TryParseWorkspaceNamedValueName(FileInfo file);
+public delegate bool IsWorkspaceNamedValueNameInSourceControl(WorkspaceNamedValueName workspaceNamedValueName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspaceNamedValue(WorkspaceNamedValueName workspaceNamedValueName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspaceNamedValueDto>> FindWorkspaceNamedValueDto(WorkspaceNamedValueName workspaceNamedValueName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceNamedValueInApim(WorkspaceNamedValueName name, WorkspaceNamedValueDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceNamedValue(WorkspaceNamedValueName workspaceNamedValueName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceNamedValueFromApim(WorkspaceNamedValueName workspaceNamedValueName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceNamedValueModule
 {
     public static void ConfigurePutWorkspaceNamedValues(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseNamedValueName(builder);
+        ConfigureTryParseWorkspaceNamedValueName(builder);
         ConfigureIsWorkspaceNamedValueNameInSourceControl(builder);
         ConfigurePutWorkspaceNamedValue(builder);
 
@@ -53,13 +53,13 @@ internal static class WorkspaceNamedValueModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(tag => isNameInSourceControl(tag.Name, tag.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceNamedValueName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
     }
 
-    private static void ConfigureTryWorkspaceParseNamedValueName(IHostApplicationBuilder builder)
+    private static void ConfigureTryParseWorkspaceNamedValueName(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
@@ -79,22 +79,22 @@ internal static class WorkspaceNamedValueModule
         CommonModule.ConfigureGetArtifactFiles(builder);
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        builder.Services.TryAddSingleton(GetIsNamedValueNameInSourceControl);
+        builder.Services.TryAddSingleton(GetIsWorkspaceNamedValueNameInSourceControl);
     }
 
-    private static IsWorkspaceNamedValueNameInSourceControl GetIsNamedValueNameInSourceControl(IServiceProvider provider)
+    private static IsWorkspaceNamedValueNameInSourceControl GetIsWorkspaceNamedValueNameInSourceControl(IServiceProvider provider)
     {
         var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
         return doesInformationFileExist;
 
-        bool doesInformationFileExist(NamedValueName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspaceNamedValueName workspaceNamedValueName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var tagFile = WorkspaceNamedValueInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceNamedValueInformationFile.From(workspaceNamedValueName, workspaceName, serviceDirectory);
 
-            return artifactFiles.Contains(tagFile.ToFileInfo());
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
@@ -112,14 +112,12 @@ internal static class WorkspaceNamedValueModule
         var putInApim = provider.GetRequiredService<PutWorkspaceNamedValueInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceNamedValueName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspaceNamedValue))
-                                       ?.AddTag("workspace_named_value.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspaceNamedValue));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspaceNamedValueName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspaceNamedValueName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -136,9 +134,9 @@ internal static class WorkspaceNamedValueModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceNamedValueName, workspaceName, cancellationToken) =>
         {
-            var informationFile = WorkspaceNamedValueInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceNamedValueInformationFile.From(workspaceNamedValueName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
@@ -160,26 +158,26 @@ internal static class WorkspaceNamedValueModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspaceNamedValueName, dto, workspaceName, cancellationToken) =>
         {
             // Don't put secret named values without a value or keyvault identifier
             if (dto.Properties.Secret is true && dto.Properties.Value is null && dto.Properties.KeyVault?.SecretIdentifier is null)
             {
-                logger.LogWarning("Named value {NamedValueName} in workspace {WorkspaceName} is secret, but no value or keyvault identifier was specified. Skipping it...", name, workspaceName);
+                logger.LogWarning("Named value {WorkspaceNamedValueName} in workspace {WorkspaceName} is secret, but no value or keyvault identifier was specified. Skipping it...", workspaceNamedValueName, workspaceName);
                 return;
             }
 
-            logger.LogInformation("Adding named value {NamedValueName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting named value {WorkspaceNamedValueName} in workspace {WorkspaceName}...", workspaceNamedValueName, workspaceName);
 
-            await WorkspaceNamedValueUri.From(name, workspaceName, serviceUri)
-                                        .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = WorkspaceNamedValueUri.From(workspaceNamedValueName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
     public static void ConfigureDeleteWorkspaceNamedValues(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseNamedValueName(builder);
+        ConfigureTryParseWorkspaceNamedValueName(builder);
         ConfigureIsWorkspaceNamedValueNameInSourceControl(builder);
         ConfigureDeleteWorkspaceNamedValue(builder);
 
@@ -203,7 +201,7 @@ internal static class WorkspaceNamedValueModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(tag => isNameInSourceControl(tag.Name, tag.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceNamedValueName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -221,13 +219,11 @@ internal static class WorkspaceNamedValueModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspaceNamedValueFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceNamedValueName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceNamedValue))
-                                       ?.AddTag("workspace_named_value.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceNamedValue));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspaceNamedValueName, workspaceName, cancellationToken);
         };
     }
 
@@ -245,12 +241,12 @@ internal static class WorkspaceNamedValueModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceNamedValueName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing named value {NamedValueName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting named value {WorkspaceNamedValueName} in workspace {WorkspaceName}...", workspaceNamedValueName, workspaceName);
 
-            await WorkspaceNamedValueUri.From(name, workspaceName, serviceUri)
-                                        .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspaceNamedValueUri.From(workspaceNamedValueName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

@@ -15,21 +15,21 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutWorkspaceProducts(CancellationToken cancellationToken);
-public delegate Option<(ProductName Name, WorkspaceName WorkspaceName)> TryParseWorkspaceProductName(FileInfo file);
-public delegate bool IsWorkspaceProductNameInSourceControl(ProductName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspaceProduct(ProductName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspaceProductDto>> FindWorkspaceProductDto(ProductName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspaceProductInApim(ProductName name, WorkspaceProductDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspaceProducts(CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceProduct(ProductName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceProductFromApim(ProductName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspaceProductName WorkspaceProductName, WorkspaceName WorkspaceName)> TryParseWorkspaceProductName(FileInfo file);
+public delegate bool IsWorkspaceProductNameInSourceControl(WorkspaceProductName workspaceProductName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspaceProduct(WorkspaceProductName workspaceProductName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspaceProductDto>> FindWorkspaceProductDto(WorkspaceProductName workspaceProductName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceProductInApim(WorkspaceProductName name, WorkspaceProductDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceProduct(WorkspaceProductName workspaceProductName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceProductFromApim(WorkspaceProductName workspaceProductName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceProductModule
 {
     public static void ConfigurePutWorkspaceProducts(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseProductName(builder);
+        ConfigureTryParseWorkspaceProductName(builder);
         ConfigureIsWorkspaceProductNameInSourceControl(builder);
         ConfigurePutWorkspaceProduct(builder);
 
@@ -53,13 +53,13 @@ internal static class WorkspaceProductModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(product => isNameInSourceControl(product.Name, product.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceProductName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
     }
 
-    private static void ConfigureTryWorkspaceParseProductName(IHostApplicationBuilder builder)
+    private static void ConfigureTryParseWorkspaceProductName(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
@@ -79,22 +79,22 @@ internal static class WorkspaceProductModule
         CommonModule.ConfigureGetArtifactFiles(builder);
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        builder.Services.TryAddSingleton(GetIsProductNameInSourceControl);
+        builder.Services.TryAddSingleton(GetIsWorkspaceProductNameInSourceControl);
     }
 
-    private static IsWorkspaceProductNameInSourceControl GetIsProductNameInSourceControl(IServiceProvider provider)
+    private static IsWorkspaceProductNameInSourceControl GetIsWorkspaceProductNameInSourceControl(IServiceProvider provider)
     {
         var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
         return doesInformationFileExist;
 
-        bool doesInformationFileExist(ProductName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspaceProductName workspaceProductName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var productFile = WorkspaceProductInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceProductInformationFile.From(workspaceProductName, workspaceName, serviceDirectory);
 
-            return artifactFiles.Contains(productFile.ToFileInfo());
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
@@ -112,14 +112,12 @@ internal static class WorkspaceProductModule
         var putInApim = provider.GetRequiredService<PutWorkspaceProductInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceProductName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspaceProduct))
-                                       ?.AddTag("workspace_product.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspaceProduct));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspaceProductName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspaceProductName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -136,9 +134,9 @@ internal static class WorkspaceProductModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceProductName, workspaceName, cancellationToken) =>
         {
-            var informationFile = WorkspaceProductInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceProductInformationFile.From(workspaceProductName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
@@ -160,19 +158,55 @@ internal static class WorkspaceProductModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspaceProductName, dto, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Adding product {ProductName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting product {WorkspaceProductName} in workspace {WorkspaceName}...", workspaceProductName, workspaceName);
 
-            await WorkspaceProductUri.From(name, workspaceName, serviceUri)
-                                     .PutDto(dto, pipeline, cancellationToken);
+            var productAlreadyExists = await doesProductAlreadyExist(workspaceProductName, workspaceName, cancellationToken);
+
+            var resourceUri = WorkspaceProductUri.From(workspaceProductName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
+
+            // Delete automatically created resources if the product is new. This ensures that APIM is consistent with source control.
+            if (productAlreadyExists is false)
+            {
+                await deleteAutomaticallyCreatedProductGroups(workspaceProductName, workspaceName, cancellationToken);
+                await deleteAutomaticallyCreatedProductSubscriptions(workspaceProductName, workspaceName, cancellationToken);
+            }
         };
+
+        async ValueTask<bool> doesProductAlreadyExist(WorkspaceProductName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        {
+            var productUri = WorkspaceProductUri.From(name, workspaceName, serviceUri).ToUri();
+            var contentOption = await pipeline.GetContentOption(productUri, cancellationToken);
+            return contentOption.IsSome;
+        }
+
+        async ValueTask deleteAutomaticallyCreatedProductGroups(WorkspaceProductName productName, WorkspaceName workspaceName, CancellationToken cancellationToken) =>
+            await WorkspaceProductGroupsUri
+                    .From(productName, workspaceName, serviceUri)
+                    .ListNames(pipeline, cancellationToken)
+                    .Do(groupName => logger.LogWarning("Removing automatically added group {WorkspaceGroupName} in product {WorkspaceProductName} in workspace {WorkspaceName}...", groupName, productName, workspaceName))
+                    .IterParallel(async name => await WorkspaceProductGroupUri.From(name, productName, workspaceName, serviceUri)
+                                                                              .Delete(pipeline, cancellationToken),
+                                  cancellationToken);
+
+        async ValueTask deleteAutomaticallyCreatedProductSubscriptions(WorkspaceProductName productName, WorkspaceName workspaceName, CancellationToken cancellationToken) =>
+            await WorkspaceSubscriptionsUri.From(workspaceName, serviceUri)
+                                           .List(pipeline, cancellationToken)
+                                           .Choose(subscription => from name in common.WorkspaceSubscriptionModule.TryGetProductName(subscription.Dto)
+                                                                   where name == productName
+                                                                   select subscription.Name)
+                                           .Do(subscriptionName => logger.LogWarning("Removing automatically created subscription {WorkspaceSubscriptionName} in product {WorkspaceProductName} in workspace {WorkspaceName}...", subscriptionName, productName, workspaceName))
+                                           .IterParallel(async name => await WorkspaceSubscriptionUri.From(name, workspaceName, serviceUri)
+                                                                                                     .Delete(pipeline, cancellationToken),
+                                                         cancellationToken);
     }
 
     public static void ConfigureDeleteWorkspaceProducts(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseProductName(builder);
+        ConfigureTryParseWorkspaceProductName(builder);
         ConfigureIsWorkspaceProductNameInSourceControl(builder);
         ConfigureDeleteWorkspaceProduct(builder);
 
@@ -196,7 +230,7 @@ internal static class WorkspaceProductModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(product => isNameInSourceControl(product.Name, product.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceProductName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -214,13 +248,11 @@ internal static class WorkspaceProductModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspaceProductFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceProductName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceProduct))
-                                       ?.AddTag("workspace_product.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceProduct));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspaceProductName, workspaceName, cancellationToken);
         };
     }
 
@@ -238,12 +270,12 @@ internal static class WorkspaceProductModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceProductName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing product {ProductName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting product {WorkspaceProductName} in workspace {WorkspaceName}...", workspaceProductName, workspaceName);
 
-            await WorkspaceProductUri.From(name, workspaceName, serviceUri)
-                                     .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspaceProductUri.From(workspaceProductName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

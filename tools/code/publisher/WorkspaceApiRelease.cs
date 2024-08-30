@@ -10,8 +10,8 @@ using System.Threading.Tasks;
 
 namespace publisher;
 
-public delegate ValueTask PutWorkspaceApiReleaseInApim(WorkspaceApiReleaseName name, WorkspaceApiReleaseDto dto, ApiName apiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceApiReleaseFromApim(WorkspaceApiReleaseName name, ApiName apiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceApiReleaseInApim(WorkspaceApiReleaseName name, WorkspaceApiReleaseDto dto, WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceApiReleaseFromApim(WorkspaceApiReleaseName workspaceApiReleaseName, WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceApiReleaseModule
 {
@@ -29,12 +29,12 @@ internal static class WorkspaceApiReleaseModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, apiName, workspaceName, cancellationToken) =>
+        return async (workspaceApiReleaseName, dto, workspaceApiName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Putting API release {WorkspaceApiReleaseName} in API {ApiName} in workspace {WorkspaceName}...", name, apiName, workspaceName);
+            logger.LogInformation("Putting release {WorkspaceApiReleaseName} in API {WorkspaceApiName} in workspace {WorkspaceName}...", workspaceApiReleaseName, workspaceApiName, workspaceName);
 
-            await WorkspaceApiReleaseUri.From(name, apiName, workspaceName, serviceUri)
-                                        .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = WorkspaceApiReleaseUri.From(workspaceApiReleaseName, workspaceApiName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
@@ -52,13 +52,12 @@ internal static class WorkspaceApiReleaseModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, apiName, workspaceName, cancellationToken) =>
+        return async (workspaceApiReleaseName, workspaceApiName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Deleting API release {WorkspaceApiReleaseName} from API {ApiName} in workspace {WorkspaceName}...", name, apiName, workspaceName);
-            logger.LogInformation("Deleting API release {WorkspaceApiReleaseName} from API {ApiName} in workspace {WorkspaceName}...", name, apiName, workspaceName);
+            logger.LogInformation("Deleting release {WorkspaceApiReleaseName} in API {WorkspaceApiName} in workspace {WorkspaceName}...", workspaceApiReleaseName, workspaceApiName, workspaceName);
 
-            await WorkspaceApiReleaseUri.From(name, apiName, workspaceName, serviceUri)
-                                        .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspaceApiReleaseUri.From(workspaceApiReleaseName, workspaceApiName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

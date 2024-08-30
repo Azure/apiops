@@ -2,14 +2,16 @@
 using common;
 using DotNext.Threading;
 using LanguageExt;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi;
 using Microsoft.OpenApi.Exceptions;
+using Microsoft.OpenApi.Extensions;
 using Microsoft.OpenApi.Models;
 using Microsoft.OpenApi.Readers;
-using Microsoft.OpenApi;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
@@ -19,25 +21,23 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using static Azure.Core.HttpHeader;
-using Microsoft.OpenApi.Extensions;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace publisher;
 
 public delegate ValueTask PutWorkspaceApis(CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspaceApis(CancellationToken cancellationToken);
-public delegate Option<(ApiName Name, WorkspaceName WorkspaceName)> TryParseWorkspaceApiName(FileInfo file);
-public delegate bool IsWorkspaceApiNameInSourceControl(ApiName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspaceApi(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspaceApiDto>> FindWorkspaceApiDto(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<(ApiSpecification Specification, BinaryData Contents)>> FindWorkspaceApiSpecificationContents(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask CorrectWorkspaceApimRevisionNumber(ApiName name, WorkspaceApiDto Dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate FrozenDictionary<(ApiName, WorkspaceName), Func<CancellationToken, ValueTask<Option<WorkspaceApiDto>>>> GetWorkspaceApiDtosInPreviousCommit();
-public delegate ValueTask MakeWorkspaceApiRevisionCurrent(ApiName name, ApiRevisionNumber revisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspaceApiInApim(ApiName name, WorkspaceApiDto dto, Option<(ApiSpecification.GraphQl Specification, BinaryData Contents)> graphQlSpecificationContentsOption, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceApi(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceApiFromApim(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspaceApiName WorkspaceApiName, WorkspaceName WorkspaceName)> TryParseWorkspaceApiName(FileInfo file);
+public delegate bool IsWorkspaceApiNameInSourceControl(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspaceApi(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<(WorkspaceApiDto Dto, Option<(ApiSpecification.GraphQl Specification, BinaryData Contents)> GraphQlSpecificationContentsOption)>> FindWorkspaceApiDto(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspaceApiDto>> FindWorkspaceApiInformationFileDto(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<(ApiSpecification Specification, BinaryData Contents)>> FindWorkspaceApiSpecificationContents(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask CorrectWorkspaceApimRevisionNumber(WorkspaceApiName name, WorkspaceApiDto Dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate FrozenDictionary<(WorkspaceApiName, WorkspaceName), Func<CancellationToken, ValueTask<Option<WorkspaceApiDto>>>> GetWorkspaceApiDtosInPreviousCommit();
+public delegate ValueTask MakeWorkspaceApiRevisionCurrent(WorkspaceApiName name, ApiRevisionNumber revisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceApiInApim(WorkspaceApiName name, WorkspaceApiDto dto, Option<(ApiSpecification.GraphQl Specification, BinaryData Contents)> graphQlSpecificationContentsOption, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceApi(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceApiFromApim(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceApiModule
 {
@@ -68,9 +68,10 @@ internal static class WorkspaceApiModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(resource => isNameInSourceControl(resource.Name, resource.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceApiName, resource.WorkspaceName))
                     .Distinct()
-                    .IterParallel(put.Invoke, cancellationToken);
+                    .IterParallel(resource => put(resource.WorkspaceApiName, resource.WorkspaceName, cancellationToken),
+                                  cancellationToken);
         };
     }
 
@@ -85,8 +86,16 @@ internal static class WorkspaceApiModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
-        return file => from informationFile in WorkspaceApiInformationFile.TryParse(file, serviceDirectory)
-                       select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
+        return file => tryParseNameFromInformationFile(file) | tryParseNameFromSpecificationFile(file);
+
+        Option<(WorkspaceApiName, WorkspaceName)> tryParseNameFromInformationFile(FileInfo file) =>
+            from informationFile in WorkspaceApiInformationFile.TryParse(file, serviceDirectory)
+            select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
+
+        Option<(WorkspaceApiName, WorkspaceName)> tryParseNameFromSpecificationFile(FileInfo file) =>
+            from apiDirectory in WorkspaceApiDirectory.TryParse(file.Directory, serviceDirectory)
+            where Common.SpecificationFileNames.Contains(file.Name)
+            select (apiDirectory.Name, apiDirectory.Parent.Parent.Name);
     }
 
     private static void ConfigureIsWorkspaceApiNameInSourceControl(IHostApplicationBuilder builder)
@@ -102,22 +111,20 @@ internal static class WorkspaceApiModule
         var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
-        return (name, workspaceName) =>
-            doesInformationFileExist(name, workspaceName)
-            || doesSpecificationFileExist(name, workspaceName);
+        return (name, workspaceName) => doesInformationFileExist(name, workspaceName) || doesSpecificationFileExist(name, workspaceName);
 
-        bool doesInformationFileExist(ApiName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var informationFile = WorkspaceApiInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceApiInformationFile.From(workspaceApiName, workspaceName, serviceDirectory);
 
             return artifactFiles.Contains(informationFile.ToFileInfo());
         }
 
-        bool doesSpecificationFileExist(ApiName name, WorkspaceName workspaceName)
+        bool doesSpecificationFileExist(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var getFileInApiDirectory = WorkspaceApiDirectory.From(name, workspaceName, serviceDirectory)
+            var getFileInApiDirectory = WorkspaceApiDirectory.From(workspaceApiName, workspaceName, serviceDirectory)
                                                              .ToDirectoryInfo()
                                                              .GetChildFile;
 
@@ -130,7 +137,6 @@ internal static class WorkspaceApiModule
     private static void ConfigurePutWorkspaceApi(IHostApplicationBuilder builder)
     {
         ConfigureFindWorkspaceApiDto(builder);
-        ConfigureFindWorkspaceApiSpecificationContents(builder);
         ConfigureCorrectWorkspaceApimRevisionNumber(builder);
         ConfigurePutWorkspaceApiInApim(builder);
 
@@ -140,39 +146,74 @@ internal static class WorkspaceApiModule
     private static PutWorkspaceApi GetPutWorkspaceApi(IServiceProvider provider)
     {
         var findDto = provider.GetRequiredService<FindWorkspaceApiDto>();
-        var findSpecificationContents = provider.GetRequiredService<FindWorkspaceApiSpecificationContents>();
         var correctRevisionNumber = provider.GetRequiredService<CorrectWorkspaceApimRevisionNumber>();
         var putInApim = provider.GetRequiredService<PutWorkspaceApiInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        var taskDictionary = new ConcurrentDictionary<(ApiName, WorkspaceName), AsyncLazy<Unit>>();
+        var taskDictionary = new ConcurrentDictionary<(WorkspaceApiName, WorkspaceName), AsyncLazy<Unit>>();
 
         return putApi;
 
-        async ValueTask putApi(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask putApi(WorkspaceApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspaceApi))
-                                       ?.AddTag("workspace.name", workspaceName)
-                                       ?.AddTag("workspace_api.name", name);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspaceApi));
 
             await taskDictionary.GetOrAdd((name, workspaceName),
-                                          (pair) => new AsyncLazy<Unit>(async cancellationToken =>
+                                          x => new AsyncLazy<Unit>(async cancellationToken =>
                                           {
-                                              var (name, workspaceName) = pair;
-                                              await putApiInner(name, workspaceName, cancellationToken);
+                                              var (name, workspaceName) = x;
+
+                                              var dtoOption = await findDto(name, workspaceName, cancellationToken);
+                                              await dtoOption.IterTask(async dto =>
+                                              {
+                                                  await putCurrentRevision(name, dto.Dto, workspaceName, cancellationToken);
+                                                  await putInApim(name, dto.Dto, dto.GraphQlSpecificationContentsOption, workspaceName, cancellationToken);
+                                              });
+
                                               return Unit.Default;
                                           }))
                                 .WithCancellation(cancellationToken);
         };
 
-        async ValueTask putApiInner(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask putCurrentRevision(WorkspaceApiName name, WorkspaceApiDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
-            var informationFileDtoOption = await findDto(name, workspaceName, cancellationToken);
-            await informationFileDtoOption.IterTask(async informationFileDto =>
+            if (WorkspaceApiName.IsRevisioned(name))
             {
-                await putCurrentRevision(name, informationFileDto, workspaceName, cancellationToken);
-                var specificationContentsOption = await findSpecificationContents(name, workspaceName, cancellationToken);
-                var dto = await tryGetDto(name, informationFileDto, specificationContentsOption, cancellationToken);
+                var rootName = WorkspaceApiName.GetRootName(name);
+                await putApi(rootName, workspaceName, cancellationToken);
+            }
+            else
+            {
+                await correctRevisionNumber(name, dto, workspaceName, cancellationToken);
+            }
+        }
+    }
+
+    private static void ConfigureFindWorkspaceApiDto(IHostApplicationBuilder builder)
+    {
+        ConfigureFindWorkspaceApiInformationFileDto(builder);
+        ConfigureFindWorkspaceApiSpecificationContents(builder);
+        AzureModule.ConfigureManagementServiceDirectory(builder);
+        CommonModule.ConfigureTryGetFileContents(builder);
+
+        builder.Services.TryAddSingleton(GetFindWorkspaceApiDto);
+    }
+
+    private static FindWorkspaceApiDto GetFindWorkspaceApiDto(IServiceProvider provider)
+    {
+        var findInformationFileDto = provider.GetRequiredService<FindWorkspaceApiInformationFileDto>();
+        var findSpecificationContents = provider.GetRequiredService<FindWorkspaceApiSpecificationContents>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
+        var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+
+        return async (workspaceApiName, workspaceName, cancellationToken) =>
+        {
+            var informationFileDtoOption = await findInformationFileDto(workspaceApiName, workspaceName, cancellationToken);
+
+            return await informationFileDtoOption.MapTask(async informationFileDto =>
+            {
+                var specificationContentsOption = await findSpecificationContents(workspaceApiName, workspaceName, cancellationToken);
+                var dto = await tryGetDto(workspaceApiName, informationFileDto, specificationContentsOption, workspaceName, cancellationToken);
                 var graphQlSpecificationContentsOption = specificationContentsOption.Bind(specificationContents =>
                 {
                     var (specification, contents) = specificationContents;
@@ -181,26 +222,15 @@ internal static class WorkspaceApiModule
                             ? (graphQl, contents)
                             : Option<(ApiSpecification.GraphQl, BinaryData)>.None;
                 });
-                await putInApim(name, dto, graphQlSpecificationContentsOption, workspaceName, cancellationToken);
+
+                return (dto, graphQlSpecificationContentsOption);
             });
-        }
+        };
 
-        async ValueTask putCurrentRevision(ApiName name, WorkspaceApiDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken)
-        {
-            if (ApiName.IsRevisioned(name))
-            {
-                var rootName = ApiName.GetRootName(name);
-                await putApi(rootName, workspaceName, cancellationToken);
-            }
-            else
-            {
-                await correctRevisionNumber(name, dto, workspaceName, cancellationToken);
-            }
-        }
-
-        async ValueTask<WorkspaceApiDto> tryGetDto(ApiName name,
+        async ValueTask<WorkspaceApiDto> tryGetDto(WorkspaceApiName name,
                                                    WorkspaceApiDto informationFileDto,
                                                    Option<(ApiSpecification, BinaryData)> specificationContentsOption,
+                                                   WorkspaceName workspaceName,
                                                    CancellationToken cancellationToken)
         {
             var dto = informationFileDto;
@@ -208,13 +238,18 @@ internal static class WorkspaceApiModule
             await specificationContentsOption.IterTask(async specificationContents =>
             {
                 var (specification, contents) = specificationContents;
-                dto = await addSpecificationToDto(name, dto, specification, contents, cancellationToken);
+                dto = await addSpecificationToDto(name, dto, specification, contents, workspaceName, cancellationToken);
             });
 
             return dto;
         }
 
-        static async ValueTask<WorkspaceApiDto> addSpecificationToDto(ApiName name, WorkspaceApiDto dto, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken) =>
+        static async ValueTask<WorkspaceApiDto> addSpecificationToDto(WorkspaceApiName name,
+                                                                      WorkspaceApiDto dto,
+                                                                      ApiSpecification specification,
+                                                                      BinaryData contents,
+                                                                      WorkspaceName workspaceName,
+                                                                      CancellationToken cancellationToken) =>
             dto with
             {
                 Properties = dto.Properties with
@@ -238,7 +273,7 @@ internal static class WorkspaceApiModule
                     {
                         ApiSpecification.GraphQl => null,
                         ApiSpecification.OpenApi { Format: common.OpenApiFormat.Yaml, Version: OpenApiVersion.V2 } =>
-                            await convertStreamToOpenApiV3Yaml(contents, $"Could not convert specification for API {name} to OpenAPIV3.", cancellationToken),
+                            await convertStreamToOpenApiV3Yaml(contents, $"Could not convert specification for API {name} in workspace {workspaceName} to OpenAPIV3.", cancellationToken),
                         _ => contents.ToString()
                     }
                 }
@@ -260,22 +295,22 @@ internal static class WorkspaceApiModule
             new($"{message}. Errors are: {Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
     }
 
-    private static void ConfigureFindWorkspaceApiDto(IHostApplicationBuilder builder)
+    private static void ConfigureFindWorkspaceApiInformationFileDto(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
         CommonModule.ConfigureTryGetFileContents(builder);
 
-        builder.Services.TryAddSingleton(GetFindWorkspaceApiDto);
+        builder.Services.TryAddSingleton(GetFindWorkspaceApiInformationFileDto);
     }
 
-    private static FindWorkspaceApiDto GetFindWorkspaceApiDto(IServiceProvider provider)
+    private static FindWorkspaceApiInformationFileDto GetFindWorkspaceApiInformationFileDto(IServiceProvider provider)
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceApiName, workspaceName, cancellationToken) =>
         {
-            var informationFile = WorkspaceApiInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceApiInformationFile.From(workspaceApiName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
@@ -304,7 +339,7 @@ internal static class WorkspaceApiModule
                     .Choose(async file => await tryGetSpecificationContentsFromFile(file, cancellationToken))
                     .FirstOrNone(cancellationToken);
 
-        FrozenSet<FileInfo> getSpecificationFiles(ApiName name, WorkspaceName workspaceName)
+        FrozenSet<FileInfo> getSpecificationFiles(WorkspaceApiName name, WorkspaceName workspaceName)
         {
             var apiDirectory = WorkspaceApiDirectory.From(name, workspaceName, serviceDirectory);
             var artifactFiles = getArtifactFiles();
@@ -328,11 +363,11 @@ internal static class WorkspaceApiModule
             });
         }
 
-        async ValueTask<Option<ApiSpecificationFile>> tryParseSpecificationFile(FileInfo file, BinaryData contents, CancellationToken cancellationToken) =>
-            await ApiSpecificationFile.TryParse(file,
-                                                getFileContents: _ => ValueTask.FromResult(contents),
-                                                serviceDirectory,
-                                                cancellationToken);
+        async ValueTask<Option<WorkspaceApiSpecificationFile>> tryParseSpecificationFile(FileInfo file, BinaryData contents, CancellationToken cancellationToken) =>
+            await WorkspaceApiSpecificationFile.TryParse(file,
+                                                         getFileContents: _ => ValueTask.FromResult(contents),
+                                                         serviceDirectory,
+                                                         cancellationToken);
     }
 
     private static void ConfigureCorrectWorkspaceApimRevisionNumber(IHostApplicationBuilder builder)
@@ -357,7 +392,7 @@ internal static class WorkspaceApiModule
 
         return async (name, dto, workspaceName, cancellationToken) =>
         {
-            if (ApiName.IsRevisioned(name))
+            if (WorkspaceApiName.IsRevisioned(name))
             {
                 return;
             }
@@ -370,7 +405,7 @@ internal static class WorkspaceApiModule
             });
         };
 
-        async ValueTask<Option<ApiRevisionNumber>> tryGetPreviousRevisionNumber(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken) =>
+        async ValueTask<Option<ApiRevisionNumber>> tryGetPreviousRevisionNumber(WorkspaceApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken) =>
             await getPreviousCommitDtos()
                     .Find((name, workspaceName))
                     .BindTask(async getDto =>
@@ -381,28 +416,28 @@ internal static class WorkspaceApiModule
                                select Common.GetRevisionNumber(dto);
                     });
 
-        async ValueTask setApimCurrentRevisionNumber(ApiName name, ApiRevisionNumber newRevisionNumber, ApiRevisionNumber existingRevisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask setApimCurrentRevisionNumber(WorkspaceApiName name, ApiRevisionNumber newRevisionNumber, ApiRevisionNumber existingRevisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
             if (newRevisionNumber == existingRevisionNumber)
             {
                 return;
             }
 
-            logger.LogInformation("Changing current revision on {ApiName} in workspace {WorkspaceName} from {RevisionNumber} to {RevisionNumber}...", name, workspaceName, existingRevisionNumber, newRevisionNumber);
+            logger.LogInformation("Changing current revision on {ApiName} from {RevisionNumber} to {RevisionNumber}...", name, existingRevisionNumber, newRevisionNumber);
 
             await putRevision(name, newRevisionNumber, existingRevisionNumber, workspaceName, cancellationToken);
             await makeApiRevisionCurrent(name, newRevisionNumber, workspaceName, cancellationToken);
             await deleteOldRevision(name, existingRevisionNumber, workspaceName, cancellationToken);
         }
 
-        async ValueTask putRevision(ApiName name, ApiRevisionNumber revisionNumber, ApiRevisionNumber existingRevisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask putRevision(WorkspaceApiName name, ApiRevisionNumber revisionNumber, ApiRevisionNumber existingRevisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
             var dto = new WorkspaceApiDto
             {
                 Properties = new WorkspaceApiDto.ApiCreateOrUpdateProperties
                 {
                     ApiRevision = revisionNumber.ToString(),
-                    SourceApiId = $"/apis/{ApiName.GetRevisionedName(name, existingRevisionNumber)}"
+                    SourceApiId = $"/apis/{WorkspaceApiName.GetRevisionedName(name, existingRevisionNumber)}"
                 }
             };
 
@@ -419,16 +454,16 @@ internal static class WorkspaceApiModule
         /// 
         /// If we do nothing else, dev and prod will be inconsistent as prod will still have the revision 1 API. There was nothing in Git that told the publisher to delete revision 1.
         /// </summary>
-        async ValueTask deleteOldRevision(ApiName name, ApiRevisionNumber oldRevisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask deleteOldRevision(WorkspaceApiName name, ApiRevisionNumber oldRevisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
-            var revisionedName = ApiName.GetRevisionedName(name, oldRevisionNumber);
+            var revisionedName = WorkspaceApiName.GetRevisionedName(name, oldRevisionNumber);
 
             if (isNameInSourceControl(revisionedName, workspaceName))
             {
                 return;
             }
 
-            logger.LogInformation("Deleting old revision {RevisionNumber} of {ApiName} in workspace {WorkspaceName}...", oldRevisionNumber, name, workspaceName);
+            logger.LogInformation("Deleting old revision {RevisionNumber} of API {WorkspaceApiName} in workspace {WorkspaceName}...", oldRevisionNumber, name, workspaceName);
             await deleteApiFromApim(revisionedName, workspaceName, cancellationToken);
         }
     }
@@ -453,13 +488,13 @@ internal static class WorkspaceApiModule
         return () =>
             cache.GetOrCreate(cacheKey, _ => getDtos())!;
 
-        FrozenDictionary<(ApiName, WorkspaceName), Func<CancellationToken, ValueTask<Option<WorkspaceApiDto>>>> getDtos() =>
+        FrozenDictionary<(WorkspaceApiName, WorkspaceName), Func<CancellationToken, ValueTask<Option<WorkspaceApiDto>>>> getDtos() =>
             getArtifactsInPreviousCommit()
                 .Choose(kvp => from apiName in tryGetNameFromInformationFile(kvp.Key)
                                select (apiName, tryGetDto(kvp.Value)))
                 .ToFrozenDictionary();
 
-        Option<(ApiName, WorkspaceName)> tryGetNameFromInformationFile(FileInfo file) =>
+        Option<(WorkspaceApiName, WorkspaceName)> tryGetNameFromInformationFile(FileInfo file) =>
             from informationFile in WorkspaceApiInformationFile.TryParse(file, serviceDirectory)
             select (informationFile.Parent.Name, informationFile.Parent.Parent.Parent.Name);
 
@@ -471,37 +506,6 @@ internal static class WorkspaceApiModule
                 return from contents in contentsOption
                        select contents.ToObjectFromJson<WorkspaceApiDto>();
             };
-    }
-
-    private static void ConfigureMakeWorkspaceApiRevisionCurrent(IHostApplicationBuilder builder)
-    {
-        WorkspaceApiReleaseModule.ConfigurePutWorkspaceApiReleaseInApim(builder);
-        WorkspaceApiReleaseModule.ConfigureDeleteWorkspaceApiReleaseFromApim(builder);
-
-        builder.Services.TryAddSingleton(GetMakeWorkspaceApiRevisionCurrent);
-    }
-
-    private static MakeWorkspaceApiRevisionCurrent GetMakeWorkspaceApiRevisionCurrent(IServiceProvider provider)
-    {
-        var putRelease = provider.GetRequiredService<PutWorkspaceApiReleaseInApim>();
-        var deleteRelease = provider.GetRequiredService<DeleteWorkspaceApiReleaseFromApim>();
-
-        return async (name, revisionNumber, workspaceName, cancellationToken) =>
-        {
-            var revisionedName = ApiName.GetRevisionedName(name, revisionNumber);
-            var releaseName = WorkspaceApiReleaseName.From("apiops-set-current");
-            var releaseDto = new WorkspaceApiReleaseDto
-            {
-                Properties = new WorkspaceApiReleaseDto.ApiReleaseContract
-                {
-                    ApiId = $"/apis/{revisionedName}",
-                    Notes = "Setting current revision for ApiOps"
-                }
-            };
-
-            await putRelease(releaseName, releaseDto, name, workspaceName, cancellationToken);
-            await deleteRelease(releaseName, name, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigurePutWorkspaceApiInApim(IHostApplicationBuilder builder)
@@ -520,10 +524,10 @@ internal static class WorkspaceApiModule
 
         return async (name, dto, graphQlSpecificationContentsOption, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Adding API {ApiName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting API {WorkspaceApiName} in workspace {WorkspaceName}...", name, workspaceName);
 
             var revisionNumber = Common.GetRevisionNumber(dto);
-            var uri = getRevisionedUri(name, workspaceName, revisionNumber);
+            var uri = getRevisionedUri(name, revisionNumber, workspaceName);
 
             // APIM sometimes fails revisions if isCurrent is set to true.
             var dtoWithoutIsCurrent = dto with { Properties = dto.Properties with { IsCurrent = null } };
@@ -538,11 +542,42 @@ internal static class WorkspaceApiModule
             });
         };
 
-        WorkspaceApiUri getRevisionedUri(ApiName name, WorkspaceName workspaceName, ApiRevisionNumber revisionNumber)
+        WorkspaceApiUri getRevisionedUri(WorkspaceApiName name, ApiRevisionNumber revisionNumber, WorkspaceName workspaceName)
         {
-            var revisionedApiName = ApiName.GetRevisionedName(name, revisionNumber);
+            var revisionedApiName = WorkspaceApiName.GetRevisionedName(name, revisionNumber);
             return WorkspaceApiUri.From(revisionedApiName, workspaceName, serviceUri);
         }
+    }
+
+    public static void ConfigureMakeWorkspaceApiRevisionCurrent(IHostApplicationBuilder builder)
+    {
+        WorkspaceApiReleaseModule.ConfigurePutWorkspaceApiReleaseInApim(builder);
+        WorkspaceApiReleaseModule.ConfigureDeleteWorkspaceApiReleaseFromApim(builder);
+
+        builder.Services.TryAddSingleton(GetMakeWorkspaceApiRevisionCurrent);
+    }
+
+    private static MakeWorkspaceApiRevisionCurrent GetMakeWorkspaceApiRevisionCurrent(IServiceProvider provider)
+    {
+        var putRelease = provider.GetRequiredService<PutWorkspaceApiReleaseInApim>();
+        var deleteRelease = provider.GetRequiredService<DeleteWorkspaceApiReleaseFromApim>();
+
+        return async (name, revisionNumber, workspaceName, cancellationToken) =>
+        {
+            var revisionedName = WorkspaceApiName.GetRevisionedName(name, revisionNumber);
+            var releaseName = WorkspaceApiReleaseName.From("apiops-set-current");
+            var releaseDto = new WorkspaceApiReleaseDto
+            {
+                Properties = new WorkspaceApiReleaseDto.ApiReleaseContract
+                {
+                    ApiId = $"/apis/{revisionedName}",
+                    Notes = "Setting current revision for ApiOps"
+                }
+            };
+
+            await putRelease(releaseName, releaseDto, name, workspaceName, cancellationToken);
+            await deleteRelease(releaseName, name, workspaceName, cancellationToken);
+        };
     }
 
     public static void ConfigureDeleteWorkspaceApis(IHostApplicationBuilder builder)
@@ -572,15 +607,16 @@ internal static class WorkspaceApiModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(resource => isNameInSourceControl(resource.Name, resource.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceApiName, resource.WorkspaceName) is false)
                     .Distinct()
-                    .IterParallel(delete.Invoke, cancellationToken);
+                    .IterParallel(resource => delete(resource.WorkspaceApiName, resource.WorkspaceName, cancellationToken),
+                                  cancellationToken);
         };
     }
 
     private static void ConfigureDeleteWorkspaceApi(IHostApplicationBuilder builder)
     {
-        ConfigureFindWorkspaceApiDto(builder);
+        ConfigureFindWorkspaceApiInformationFileDto(builder);
         ConfigureDeleteWorkspaceApiFromApim(builder);
 
         builder.Services.TryAddSingleton(GetDeleteWorkspaceApi);
@@ -588,64 +624,65 @@ internal static class WorkspaceApiModule
 
     private static DeleteWorkspaceApi GetDeleteWorkspaceApi(IServiceProvider provider)
     {
-        var findDto = provider.GetRequiredService<FindWorkspaceApiDto>();
+        var findDto = provider.GetRequiredService<FindWorkspaceApiInformationFileDto>();
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspaceApiFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        var taskDictionary = new ConcurrentDictionary<(ApiName, WorkspaceName), AsyncLazy<Unit>>();
+        var taskDictionary = new ConcurrentDictionary<(WorkspaceApiName, WorkspaceName), AsyncLazy<Unit>>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return deleteApi;
+
+        async ValueTask deleteApi(WorkspaceApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceApi))
-                                       ?.AddTag("workspace.name", workspaceName)
-                                       ?.AddTag("workspace_api.name", name);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceApi));
 
             await taskDictionary.GetOrAdd((name, workspaceName),
-                                          pair => new AsyncLazy<Unit>(async cancellationToken =>
+                                          x => new AsyncLazy<Unit>(async cancellationToken =>
                                           {
-                                              var (name, workspaceName) = pair;
-                                              await deleteApiInner(name, workspaceName, cancellationToken);
+                                              var (name, workspaceName) = x;
+
+                                              await WorkspaceApiName.TryParseRevisionedName(name)
+                                                                    .Map(async api => await processRevisionedApi(name, api.RevisionNumber, workspaceName, cancellationToken))
+                                                                    .IfLeft(async _ => await processRootApi(name, workspaceName, cancellationToken));
+
                                               return Unit.Default;
                                           }))
                                 .WithCancellation(cancellationToken);
-        };
 
-        async ValueTask deleteApiInner(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
-        {
-            if (await isApiRevisionNumberCurrentInSourceControl(name, workspaceName, cancellationToken))
-            {
-                logger.LogInformation("API {ApiName} in workspace {WorkspaceName} is the current revision in source control. Skipping deletion...", name, workspaceName);
-                return;
-            }
-
-            await deleteFromApim(name, workspaceName, cancellationToken);
         }
 
-        /// <summary>
-        /// We don't want to delete a revision if it was just made current. For instance:
-        /// 1. Dev has apiA  with revision 1 (current) and revision 2. Artifacts folder has:
-        ///     - /apis/apiA/apiInformation.json with revision 1 as current
-        ///     - /apis/apiA;rev=2/apiInformation.json
-        /// 2. User makes revision 2 current in dev APIM.
-        /// 3. User runs extractor for dev APIM. Artifacts folder has:
-        ///     - /apis/apiA/apiInformation.json with revision 2 as current
-        ///     - /apis/apiA;rev=1/apiInformation.json
-        ///     - /apis/apiA;rev=2 folder gets deleted.
-        /// 4. User runs publisher to prod APIM. We don't want to handle the deletion of folder /apis/apiA;rev=2, as it's the current revision.
-        async ValueTask<bool> isApiRevisionNumberCurrentInSourceControl(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken) =>
-            await ApiName.TryParseRevisionedName(name)
-                         .Match(async _ => await ValueTask.FromResult(false),
-                                async api =>
-                                {
-                                    var (rootName, revisionNumber) = api;
-                                    var sourceControlRevisionNumberOption = await tryGetRevisionNumberInSourceControl(rootName, workspaceName, cancellationToken);
-                                    return sourceControlRevisionNumberOption
-                                           .Map(sourceControlRevisionNumber => sourceControlRevisionNumber == revisionNumber)
-                                           .IfNone(false);
-                                });
+        async ValueTask processRootApi(WorkspaceApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken) =>
+            await deleteFromApim(name, workspaceName, cancellationToken);
 
-        async ValueTask<Option<ApiRevisionNumber>> tryGetRevisionNumberInSourceControl(ApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask processRevisionedApi(WorkspaceApiName name, ApiRevisionNumber revisionNumber, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        {
+            var rootName = WorkspaceApiName.GetRootName(name);
+            var currentRevisionNumberOption = await tryGetRevisionNumberInSourceControl(rootName, workspaceName, cancellationToken);
+
+            await currentRevisionNumberOption.Match(// Only delete this revision if its number differs from the current source control revision number.
+                                                    // We don't want to delete a revision if it was just made current. For instance:
+                                                    // 1. Dev has apiA  with revision 1 (current) and revision 2. Artifacts folder has:
+                                                    //     - /apis/apiA/apiInformation.json with revision 1 as current
+                                                    //     - /apis/apiA;rev=2/apiInformation.json
+                                                    // 2. User makes revision 2 current in dev APIM.
+                                                    // 3. User runs extractor for dev APIM. Artifacts folder has:
+                                                    //     - /apis/apiA/apiInformation.json with revision 2 as current
+                                                    //     - /apis/apiA;rev=1/apiInformation.json
+                                                    //     - /apis/apiA;rev=2 folder gets deleted.
+                                                    // 4. User runs publisher to prod APIM. We don't want to handle the deletion of folder /apis/apiA;rev=2, as it's the current revision.
+                                                    async currentRevisionNumber =>
+                                                    {
+                                                        if (currentRevisionNumber != revisionNumber)
+                                                        {
+                                                            await deleteFromApim(name, workspaceName, cancellationToken);
+                                                        }
+                                                    },
+                                                    // If there is no current revision in source control, process the root API deletion
+                                                    async () => await deleteApi(rootName, workspaceName, cancellationToken));
+        }
+
+        async ValueTask<Option<ApiRevisionNumber>> tryGetRevisionNumberInSourceControl(WorkspaceApiName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
             var dtoOption = await findDto(name, workspaceName, cancellationToken);
 
@@ -669,10 +706,12 @@ internal static class WorkspaceApiModule
 
         return async (name, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing API {ApiName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting API {WorkspaceApiName} in workspace {WorkspaceName}...", name, workspaceName);
 
             var resourceUri = WorkspaceApiUri.From(name, workspaceName, serviceUri);
-            await resourceUri.Delete(pipeline, cancellationToken);
+            await (WorkspaceApiName.IsRevisioned(name)
+                    ? resourceUri.Delete(pipeline, cancellationToken)
+                    : resourceUri.DeleteAllRevisions(pipeline, cancellationToken));
         };
     }
 }
@@ -682,11 +721,11 @@ file static class Common
     public static FrozenSet<string> SpecificationFileNames { get; } =
         new[]
         {
-            WadlSpecificationFile.Name,
-            WsdlSpecificationFile.Name,
-            GraphQlSpecificationFile.Name,
-            JsonOpenApiSpecificationFile.Name,
-            YamlOpenApiSpecificationFile.Name
+            WorkspaceWadlSpecificationFile.Name,
+            WorkspaceWsdlSpecificationFile.Name,
+            WorkspaceGraphQlSpecificationFile.Name,
+            WorkspaceJsonOpenApiSpecificationFile.Name,
+            WorkspaceYamlOpenApiSpecificationFile.Name
         }.ToFrozenSet();
 
     public static ApiRevisionNumber GetRevisionNumber(WorkspaceApiDto dto) =>

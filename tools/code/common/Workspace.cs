@@ -30,7 +30,7 @@ public sealed record WorkspacesUri : ResourceUri
         ServiceUri.ToUri().AppendPathSegment(PathSegment).ToUri();
 
     public static WorkspacesUri From(ManagementServiceUri serviceUri) =>
-        new() { ServiceUri = serviceUri };
+    new() { ServiceUri = serviceUri };
 }
 
 public sealed record WorkspaceUri : ResourceUri
@@ -40,13 +40,13 @@ public sealed record WorkspaceUri : ResourceUri
     public required WorkspaceName Name { get; init; }
 
     protected override Uri Value =>
-        Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+        Parent.ToUri().AppendPathSegment(Name.Value).ToUri();
 
-    public static WorkspaceUri From(WorkspaceName name, ManagementServiceUri serviceUri) =>
+    public static WorkspaceUri From(WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
         new()
         {
             Parent = WorkspacesUri.From(serviceUri),
-            Name = name
+            Name = workspaceName
         };
 }
 
@@ -63,8 +63,7 @@ public sealed record WorkspacesDirectory : ResourceDirectory
         new() { ServiceDirectory = serviceDirectory };
 
     public static Option<WorkspacesDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        directory is not null &&
-        directory.Name == Name &&
+        directory?.Name == Name &&
         directory.Parent?.FullName == serviceDirectory.ToDirectoryInfo().FullName
             ? new WorkspacesDirectory { ServiceDirectory = serviceDirectory }
             : Option<WorkspacesDirectory>.None;
@@ -79,43 +78,42 @@ public sealed record WorkspaceDirectory : ResourceDirectory
     protected override DirectoryInfo Value =>
         Parent.ToDirectoryInfo().GetChildDirectory(Name.Value);
 
-    public static WorkspaceDirectory From(WorkspaceName name, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceDirectory From(WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
             Parent = WorkspacesDirectory.From(serviceDirectory),
-            Name = name
+            Name = workspaceName
         };
 
     public static Option<WorkspaceDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        directory is not null
-            ? from parent in WorkspacesDirectory.TryParse(directory?.Parent, serviceDirectory)
-              let name = WorkspaceName.From(directory!.Name)
+        directory is null
+            ? Option<WorkspaceDirectory>.None
+            : from parent in WorkspacesDirectory.TryParse(directory.Parent, serviceDirectory)
+              let name = WorkspaceName.From(directory.Name)
               select new WorkspaceDirectory
               {
                   Parent = parent,
                   Name = name
-              }
-            : Option<WorkspaceDirectory>.None;
+              };
 }
 
 public sealed record WorkspaceInformationFile : ResourceFile
 {
     public required WorkspaceDirectory Parent { get; init; }
 
-    public static string Name { get; } = "workspaceInformation.json";
+    private static string Name { get; } = "workspaceInformation.json";
 
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile(Name);
 
-    public static WorkspaceInformationFile From(WorkspaceName name, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceInformationFile From(WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = WorkspaceDirectory.From(name, serviceDirectory)
+            Parent = WorkspaceDirectory.From(workspaceName, serviceDirectory)
         };
 
     public static Option<WorkspaceInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
-        file is not null &&
-        file.Name == Name
+        file?.Name == Name
             ? from parent in WorkspaceDirectory.TryParse(file.Directory, serviceDirectory)
               select new WorkspaceInformationFile
               {
@@ -196,18 +194,15 @@ public static class WorkspaceModule
         await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
     }
 
-    public static IEnumerable<WorkspaceDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory)
-    {
-        var workspacesDirectory = WorkspacesDirectory.From(serviceDirectory);
-
-        return from workspacesDirectoryInfo in workspacesDirectory.ToDirectoryInfo().ListDirectories("*")
-               let name = WorkspaceName.From(workspacesDirectoryInfo.Name)
-               select new WorkspaceDirectory
-               {
-                   Parent = workspacesDirectory,
-                   Name = name
-               };
-    }
+    public static IEnumerable<WorkspaceDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory) =>
+        from workspacesDirectory in Enumerable.Repeat(WorkspacesDirectory.From(serviceDirectory), 1)
+        from workspaceDirectoryInfo in workspacesDirectory.ToDirectoryInfo().ListDirectories("*")
+        let name = WorkspaceName.From(workspaceDirectoryInfo.Name)
+        select new WorkspaceDirectory
+        {
+            Parent = workspacesDirectory,
+            Name = name
+        };
 
     public static IEnumerable<WorkspaceInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
         from workspaceDirectory in ListDirectories(serviceDirectory)

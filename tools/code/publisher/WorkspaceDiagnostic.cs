@@ -15,21 +15,21 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutWorkspaceDiagnostics(CancellationToken cancellationToken);
-public delegate Option<(DiagnosticName Name, WorkspaceName WorkspaceName)> TryParseWorkspaceDiagnosticName(FileInfo file);
-public delegate bool IsWorkspaceDiagnosticNameInSourceControl(DiagnosticName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspaceDiagnostic(DiagnosticName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspaceDiagnosticDto>> FindWorkspaceDiagnosticDto(DiagnosticName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspaceDiagnosticInApim(DiagnosticName name, WorkspaceDiagnosticDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspaceDiagnostics(CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceDiagnostic(DiagnosticName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceDiagnosticFromApim(DiagnosticName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspaceDiagnosticName WorkspaceDiagnosticName, WorkspaceName WorkspaceName)> TryParseWorkspaceDiagnosticName(FileInfo file);
+public delegate bool IsWorkspaceDiagnosticNameInSourceControl(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspaceDiagnostic(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspaceDiagnosticDto>> FindWorkspaceDiagnosticDto(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceDiagnosticInApim(WorkspaceDiagnosticName name, WorkspaceDiagnosticDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceDiagnostic(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceDiagnosticFromApim(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceDiagnosticModule
 {
     public static void ConfigurePutWorkspaceDiagnostics(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseDiagnosticName(builder);
+        ConfigureTryParseWorkspaceDiagnosticName(builder);
         ConfigureIsWorkspaceDiagnosticNameInSourceControl(builder);
         ConfigurePutWorkspaceDiagnostic(builder);
 
@@ -53,13 +53,13 @@ internal static class WorkspaceDiagnosticModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(diagnostic => isNameInSourceControl(diagnostic.Name, diagnostic.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceDiagnosticName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
     }
 
-    private static void ConfigureTryWorkspaceParseDiagnosticName(IHostApplicationBuilder builder)
+    private static void ConfigureTryParseWorkspaceDiagnosticName(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
@@ -79,22 +79,22 @@ internal static class WorkspaceDiagnosticModule
         CommonModule.ConfigureGetArtifactFiles(builder);
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        builder.Services.TryAddSingleton(GetIsDiagnosticNameInSourceControl);
+        builder.Services.TryAddSingleton(GetIsWorkspaceDiagnosticNameInSourceControl);
     }
 
-    private static IsWorkspaceDiagnosticNameInSourceControl GetIsDiagnosticNameInSourceControl(IServiceProvider provider)
+    private static IsWorkspaceDiagnosticNameInSourceControl GetIsWorkspaceDiagnosticNameInSourceControl(IServiceProvider provider)
     {
         var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
         return doesInformationFileExist;
 
-        bool doesInformationFileExist(DiagnosticName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var diagnosticFile = WorkspaceDiagnosticInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceDiagnosticInformationFile.From(workspaceDiagnosticName, workspaceName, serviceDirectory);
 
-            return artifactFiles.Contains(diagnosticFile.ToFileInfo());
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
@@ -112,14 +112,12 @@ internal static class WorkspaceDiagnosticModule
         var putInApim = provider.GetRequiredService<PutWorkspaceDiagnosticInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceDiagnosticName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspaceDiagnostic))
-                                       ?.AddTag("workspace_diagnostic.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspaceDiagnostic));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspaceDiagnosticName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspaceDiagnosticName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -136,9 +134,9 @@ internal static class WorkspaceDiagnosticModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceDiagnosticName, workspaceName, cancellationToken) =>
         {
-            var informationFile = WorkspaceDiagnosticInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceDiagnosticInformationFile.From(workspaceDiagnosticName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
@@ -160,19 +158,19 @@ internal static class WorkspaceDiagnosticModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspaceDiagnosticName, dto, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Adding diagnostic {DiagnosticName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting diagnostic {WorkspaceDiagnosticName} in workspace {WorkspaceName}...", workspaceDiagnosticName, workspaceName);
 
-            await WorkspaceDiagnosticUri.From(name, workspaceName, serviceUri)
-                                        .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = WorkspaceDiagnosticUri.From(workspaceDiagnosticName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
     public static void ConfigureDeleteWorkspaceDiagnostics(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseDiagnosticName(builder);
+        ConfigureTryParseWorkspaceDiagnosticName(builder);
         ConfigureIsWorkspaceDiagnosticNameInSourceControl(builder);
         ConfigureDeleteWorkspaceDiagnostic(builder);
 
@@ -196,7 +194,7 @@ internal static class WorkspaceDiagnosticModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(diagnostic => isNameInSourceControl(diagnostic.Name, diagnostic.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceDiagnosticName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -214,13 +212,11 @@ internal static class WorkspaceDiagnosticModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspaceDiagnosticFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceDiagnosticName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceDiagnostic))
-                                       ?.AddTag("workspace_diagnostic.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceDiagnostic));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspaceDiagnosticName, workspaceName, cancellationToken);
         };
     }
 
@@ -238,12 +234,12 @@ internal static class WorkspaceDiagnosticModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceDiagnosticName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing diagnostic {DiagnosticName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting diagnostic {WorkspaceDiagnosticName} in workspace {WorkspaceName}...", workspaceDiagnosticName, workspaceName);
 
-            await WorkspaceDiagnosticUri.From(name, workspaceName, serviceUri)
-                                        .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspaceDiagnosticUri.From(workspaceDiagnosticName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

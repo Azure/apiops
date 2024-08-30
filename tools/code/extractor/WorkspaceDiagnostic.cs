@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceDiagnostics(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(DiagnosticName Name, WorkspaceDiagnosticDto Dto)> ListWorkspaceDiagnostics(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceDiagnosticArtifacts(DiagnosticName name, WorkspaceDiagnosticDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceDiagnosticInformationFile(DiagnosticName name, WorkspaceDiagnosticDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceDiagnosticName Name, WorkspaceDiagnosticDto Dto)> ListWorkspaceDiagnostics(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceDiagnosticArtifacts(WorkspaceDiagnosticName name, WorkspaceDiagnosticDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceDiagnosticInformationFile(WorkspaceDiagnosticName name, WorkspaceDiagnosticDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceDiagnosticModule
 {
@@ -38,11 +38,13 @@ internal static class WorkspaceDiagnosticModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceDiagnostics));
 
-            logger.LogInformation("Extracting diagnostics for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting diagnostics in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async diagnostic => await writeArtifacts(diagnostic.Name, diagnostic.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +62,10 @@ internal static class WorkspaceDiagnosticModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspaceDiagnosticsUri.From(workspaceName, serviceUri)
-                                   .List(pipeline, cancellationToken);
+        {
+            var workspaceDiagnosticsUri = WorkspaceDiagnosticsUri.From(workspaceName, serviceUri);
+            return workspaceDiagnosticsUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspaceDiagnosticArtifacts(IHostApplicationBuilder builder)
@@ -76,9 +80,7 @@ internal static class WorkspaceDiagnosticModule
         var writeInformationFile = provider.GetRequiredService<WriteWorkspaceDiagnosticInformationFile>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteWorkspaceDiagnosticInformationFile(IHostApplicationBuilder builder)

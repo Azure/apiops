@@ -15,21 +15,21 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutWorkspaceVersionSets(CancellationToken cancellationToken);
-public delegate Option<(VersionSetName Name, WorkspaceName WorkspaceName)> TryParseWorkspaceVersionSetName(FileInfo file);
-public delegate bool IsWorkspaceVersionSetNameInSourceControl(VersionSetName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspaceVersionSet(VersionSetName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspaceVersionSetDto>> FindWorkspaceVersionSetDto(VersionSetName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspaceVersionSetInApim(VersionSetName name, WorkspaceVersionSetDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspaceVersionSets(CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceVersionSet(VersionSetName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceVersionSetFromApim(VersionSetName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspaceVersionSetName WorkspaceVersionSetName, WorkspaceName WorkspaceName)> TryParseWorkspaceVersionSetName(FileInfo file);
+public delegate bool IsWorkspaceVersionSetNameInSourceControl(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspaceVersionSet(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspaceVersionSetDto>> FindWorkspaceVersionSetDto(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceVersionSetInApim(WorkspaceVersionSetName name, WorkspaceVersionSetDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceVersionSet(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceVersionSetFromApim(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceVersionSetModule
 {
     public static void ConfigurePutWorkspaceVersionSets(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseVersionSetName(builder);
+        ConfigureTryParseWorkspaceVersionSetName(builder);
         ConfigureIsWorkspaceVersionSetNameInSourceControl(builder);
         ConfigurePutWorkspaceVersionSet(builder);
 
@@ -53,13 +53,13 @@ internal static class WorkspaceVersionSetModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(tag => isNameInSourceControl(tag.Name, tag.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceVersionSetName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
     }
 
-    private static void ConfigureTryWorkspaceParseVersionSetName(IHostApplicationBuilder builder)
+    private static void ConfigureTryParseWorkspaceVersionSetName(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
@@ -79,22 +79,22 @@ internal static class WorkspaceVersionSetModule
         CommonModule.ConfigureGetArtifactFiles(builder);
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        builder.Services.TryAddSingleton(GetIsVersionSetNameInSourceControl);
+        builder.Services.TryAddSingleton(GetIsWorkspaceVersionSetNameInSourceControl);
     }
 
-    private static IsWorkspaceVersionSetNameInSourceControl GetIsVersionSetNameInSourceControl(IServiceProvider provider)
+    private static IsWorkspaceVersionSetNameInSourceControl GetIsWorkspaceVersionSetNameInSourceControl(IServiceProvider provider)
     {
         var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
         return doesInformationFileExist;
 
-        bool doesInformationFileExist(VersionSetName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspaceVersionSetName workspaceVersionSetName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var tagFile = WorkspaceVersionSetInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceVersionSetInformationFile.From(workspaceVersionSetName, workspaceName, serviceDirectory);
 
-            return artifactFiles.Contains(tagFile.ToFileInfo());
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
@@ -112,14 +112,12 @@ internal static class WorkspaceVersionSetModule
         var putInApim = provider.GetRequiredService<PutWorkspaceVersionSetInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceVersionSetName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspaceVersionSet))
-                                       ?.AddTag("workspace_version_set.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspaceVersionSet));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspaceVersionSetName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspaceVersionSetName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -136,9 +134,9 @@ internal static class WorkspaceVersionSetModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceVersionSetName, workspaceName, cancellationToken) =>
         {
-            var informationFile = WorkspaceVersionSetInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceVersionSetInformationFile.From(workspaceVersionSetName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
@@ -160,19 +158,19 @@ internal static class WorkspaceVersionSetModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspaceVersionSetName, dto, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Adding version set {VersionSetName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting version set {WorkspaceVersionSetName} in workspace {WorkspaceName}...", workspaceVersionSetName, workspaceName);
 
-            await WorkspaceVersionSetUri.From(name, workspaceName, serviceUri)
-                                        .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = WorkspaceVersionSetUri.From(workspaceVersionSetName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
     public static void ConfigureDeleteWorkspaceVersionSets(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseVersionSetName(builder);
+        ConfigureTryParseWorkspaceVersionSetName(builder);
         ConfigureIsWorkspaceVersionSetNameInSourceControl(builder);
         ConfigureDeleteWorkspaceVersionSet(builder);
 
@@ -196,7 +194,7 @@ internal static class WorkspaceVersionSetModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(tag => isNameInSourceControl(tag.Name, tag.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceVersionSetName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -214,13 +212,11 @@ internal static class WorkspaceVersionSetModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspaceVersionSetFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceVersionSetName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceVersionSet))
-                                       ?.AddTag("workspace_version_set.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceVersionSet));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspaceVersionSetName, workspaceName, cancellationToken);
         };
     }
 
@@ -238,12 +234,12 @@ internal static class WorkspaceVersionSetModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceVersionSetName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing version set {VersionSetName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting version set {WorkspaceVersionSetName} in workspace {WorkspaceName}...", workspaceVersionSetName, workspaceName);
 
-            await WorkspaceVersionSetUri.From(name, workspaceName, serviceUri)
-                                        .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspaceVersionSetUri.From(workspaceVersionSetName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

@@ -15,21 +15,21 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutWorkspaceTags(CancellationToken cancellationToken);
-public delegate Option<(TagName Name, WorkspaceName WorkspaceName)> TryParseWorkspaceTagName(FileInfo file);
-public delegate bool IsWorkspaceTagNameInSourceControl(TagName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspaceTag(TagName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspaceTagDto>> FindWorkspaceTagDto(TagName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspaceTagInApim(TagName name, WorkspaceTagDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspaceTags(CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceTag(TagName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceTagFromApim(TagName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspaceTagName WorkspaceTagName, WorkspaceName WorkspaceName)> TryParseWorkspaceTagName(FileInfo file);
+public delegate bool IsWorkspaceTagNameInSourceControl(WorkspaceTagName workspaceTagName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspaceTag(WorkspaceTagName workspaceTagName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspaceTagDto>> FindWorkspaceTagDto(WorkspaceTagName workspaceTagName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceTagInApim(WorkspaceTagName name, WorkspaceTagDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceTag(WorkspaceTagName workspaceTagName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceTagFromApim(WorkspaceTagName workspaceTagName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceTagModule
 {
     public static void ConfigurePutWorkspaceTags(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseTagName(builder);
+        ConfigureTryParseWorkspaceTagName(builder);
         ConfigureIsWorkspaceTagNameInSourceControl(builder);
         ConfigurePutWorkspaceTag(builder);
 
@@ -53,13 +53,13 @@ internal static class WorkspaceTagModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(tag => isNameInSourceControl(tag.Name, tag.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceTagName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
     }
 
-    private static void ConfigureTryWorkspaceParseTagName(IHostApplicationBuilder builder)
+    private static void ConfigureTryParseWorkspaceTagName(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
@@ -79,22 +79,22 @@ internal static class WorkspaceTagModule
         CommonModule.ConfigureGetArtifactFiles(builder);
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        builder.Services.TryAddSingleton(GetIsTagNameInSourceControl);
+        builder.Services.TryAddSingleton(GetIsWorkspaceTagNameInSourceControl);
     }
 
-    private static IsWorkspaceTagNameInSourceControl GetIsTagNameInSourceControl(IServiceProvider provider)
+    private static IsWorkspaceTagNameInSourceControl GetIsWorkspaceTagNameInSourceControl(IServiceProvider provider)
     {
         var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
         return doesInformationFileExist;
 
-        bool doesInformationFileExist(TagName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspaceTagName workspaceTagName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var tagFile = WorkspaceTagInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceTagInformationFile.From(workspaceTagName, workspaceName, serviceDirectory);
 
-            return artifactFiles.Contains(tagFile.ToFileInfo());
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
@@ -112,14 +112,12 @@ internal static class WorkspaceTagModule
         var putInApim = provider.GetRequiredService<PutWorkspaceTagInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceTagName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspaceTag))
-                                       ?.AddTag("workspace_tag.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspaceTag));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspaceTagName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspaceTagName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -136,9 +134,9 @@ internal static class WorkspaceTagModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceTagName, workspaceName, cancellationToken) =>
         {
-            var informationFile = WorkspaceTagInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceTagInformationFile.From(workspaceTagName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
@@ -160,19 +158,19 @@ internal static class WorkspaceTagModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspaceTagName, dto, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Adding tag {TagName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting tag {WorkspaceTagName} in workspace {WorkspaceName}...", workspaceTagName, workspaceName);
 
-            await WorkspaceTagUri.From(name, workspaceName, serviceUri)
-                               .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = WorkspaceTagUri.From(workspaceTagName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
     public static void ConfigureDeleteWorkspaceTags(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseTagName(builder);
+        ConfigureTryParseWorkspaceTagName(builder);
         ConfigureIsWorkspaceTagNameInSourceControl(builder);
         ConfigureDeleteWorkspaceTag(builder);
 
@@ -196,7 +194,7 @@ internal static class WorkspaceTagModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(tag => isNameInSourceControl(tag.Name, tag.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceTagName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -214,13 +212,11 @@ internal static class WorkspaceTagModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspaceTagFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceTagName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceTag))
-                                       ?.AddTag("workspace_tag.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceTag));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspaceTagName, workspaceName, cancellationToken);
         };
     }
 
@@ -238,12 +234,12 @@ internal static class WorkspaceTagModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceTagName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing tag {TagName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting tag {WorkspaceTagName} in workspace {WorkspaceName}...", workspaceTagName, workspaceName);
 
-            await WorkspaceTagUri.From(name, workspaceName, serviceUri)
-                                 .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspaceTagUri.From(workspaceTagName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

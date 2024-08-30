@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceTags(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(TagName Name, WorkspaceTagDto Dto)> ListWorkspaceTags(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceTagArtifacts(TagName name, WorkspaceTagDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceTagInformationFile(TagName name, WorkspaceTagDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceTagName Name, WorkspaceTagDto Dto)> ListWorkspaceTags(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceTagArtifacts(WorkspaceTagName name, WorkspaceTagDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceTagInformationFile(WorkspaceTagName name, WorkspaceTagDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceTagModule
 {
@@ -38,11 +38,13 @@ internal static class WorkspaceTagModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceTags));
 
-            logger.LogInformation("Extracting tags for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting tags in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async tag => await writeArtifacts(tag.Name, tag.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +62,10 @@ internal static class WorkspaceTagModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspaceTagsUri.From(workspaceName, serviceUri)
-                            .List(pipeline, cancellationToken);
+        {
+            var workspaceTagsUri = WorkspaceTagsUri.From(workspaceName, serviceUri);
+            return workspaceTagsUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspaceTagArtifacts(IHostApplicationBuilder builder)
@@ -76,9 +80,7 @@ internal static class WorkspaceTagModule
         var writeInformationFile = provider.GetRequiredService<WriteWorkspaceTagInformationFile>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteWorkspaceTagInformationFile(IHostApplicationBuilder builder)

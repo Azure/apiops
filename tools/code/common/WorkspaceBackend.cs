@@ -13,6 +13,13 @@ using System.Threading.Tasks;
 
 namespace common;
 
+public sealed record WorkspaceBackendName : ResourceName, IResourceName<WorkspaceBackendName>
+{
+    private WorkspaceBackendName(string value) : base(value) { }
+
+    public static WorkspaceBackendName From(string value) => new(value);
+}
+
 public sealed record WorkspaceBackendsUri : ResourceUri
 {
     public required WorkspaceUri Parent { get; init; }
@@ -30,16 +37,16 @@ public sealed record WorkspaceBackendUri : ResourceUri
 {
     public required WorkspaceBackendsUri Parent { get; init; }
 
-    public required BackendName Name { get; init; }
+    public required WorkspaceBackendName Name { get; init; }
 
     protected override Uri Value =>
-        Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+        Parent.ToUri().AppendPathSegment(Name.Value).ToUri();
 
-    public static WorkspaceBackendUri From(BackendName name, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+    public static WorkspaceBackendUri From(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
         new()
         {
             Parent = WorkspaceBackendsUri.From(workspaceName, serviceUri),
-            Name = name
+            Name = workspaceBackendName
         };
 }
 
@@ -66,26 +73,28 @@ public sealed record WorkspaceBackendDirectory : ResourceDirectory
 {
     public required WorkspaceBackendsDirectory Parent { get; init; }
 
-    public required BackendName Name { get; init; }
+    public required WorkspaceBackendName Name { get; init; }
 
     protected override DirectoryInfo Value =>
         Parent.ToDirectoryInfo().GetChildDirectory(Name.Value);
 
-    public static WorkspaceBackendDirectory From(BackendName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceBackendDirectory From(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
             Parent = WorkspaceBackendsDirectory.From(workspaceName, serviceDirectory),
-            Name = name
+            Name = workspaceBackendName
         };
 
     public static Option<WorkspaceBackendDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        from parent in WorkspaceBackendsDirectory.TryParse(directory?.Parent, serviceDirectory)
-        let name = BackendName.From(directory!.Name)
-        select new WorkspaceBackendDirectory
-        {
-            Parent = parent,
-            Name = name
-        };
+        directory is null
+            ? Option<WorkspaceBackendDirectory>.None
+            : from parent in WorkspaceBackendsDirectory.TryParse(directory.Parent, serviceDirectory)
+              let name = WorkspaceBackendName.From(directory.Name)
+              select new WorkspaceBackendDirectory
+              {
+                  Parent = parent,
+                  Name = name
+              };
 }
 
 public sealed record WorkspaceBackendInformationFile : ResourceFile
@@ -97,10 +106,10 @@ public sealed record WorkspaceBackendInformationFile : ResourceFile
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile(Name);
 
-    public static WorkspaceBackendInformationFile From(BackendName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceBackendInformationFile From(WorkspaceBackendName workspaceBackendName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = WorkspaceBackendDirectory.From(name, workspaceName, serviceDirectory)
+            Parent = WorkspaceBackendDirectory.From(workspaceBackendName, workspaceName, serviceDirectory)
         };
 
     public static Option<WorkspaceBackendInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
@@ -121,6 +130,10 @@ public sealed record WorkspaceBackendDto
 
     public record BackendContract
     {
+        [JsonPropertyName("circuitBreaker")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendCircuitBreaker? CircuitBreaker { get; init; }
+
         [JsonPropertyName("credentials")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public BackendCredentialsContract? Credentials { get; init; }
@@ -128,6 +141,10 @@ public sealed record WorkspaceBackendDto
         [JsonPropertyName("description")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public string? Description { get; init; }
+
+        [JsonPropertyName("pool")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public Pool? Pool { get; init; }
 
         [JsonPropertyName("properties")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -153,11 +170,75 @@ public sealed record WorkspaceBackendDto
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public BackendTlsProperties? Tls { get; init; }
 
+        [JsonPropertyName("type")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Type { get; init; }
+
         [JsonPropertyName("url")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
 #pragma warning disable CA1056 // URI-like properties should not be strings
         public string? Url { get; init; }
 #pragma warning restore CA1056 // URI-like properties should not be strings
+    }
+
+    public record BackendCircuitBreaker
+    {
+        [JsonPropertyName("rules")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<CircuitBreakerRule>? Rules { get; init; }
+    }
+
+    public record CircuitBreakerRule
+    {
+        [JsonPropertyName("acceptRetryAfter")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool? AcceptRetryAfter { get; init; }
+
+        [JsonPropertyName("failureCondition")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public CircuitBreakerFailureCondition? FailureCondition { get; init; }
+
+        [JsonPropertyName("name")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Name { get; init; }
+
+        [JsonPropertyName("tripDuration")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? TripDuration { get; init; }
+    }
+
+    public record CircuitBreakerFailureCondition
+    {
+        [JsonPropertyName("count")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Count { get; init; }
+
+        [JsonPropertyName("errorReasons")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<string>? ErrorReasons { get; init; }
+
+        [JsonPropertyName("interval")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Interval { get; init; }
+
+        [JsonPropertyName("percentage")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Percentage { get; init; }
+
+        [JsonPropertyName("statusCodeRanges")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<FailureStatusCodeRange>? StatusCodeRanges { get; init; }
+    }
+
+    public record FailureStatusCodeRange
+    {
+        [JsonPropertyName("max")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Max { get; init; }
+
+        [JsonPropertyName("min")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Min { get; init; }
     }
 
     public record BackendCredentialsContract
@@ -168,11 +249,11 @@ public sealed record WorkspaceBackendDto
 
         [JsonPropertyName("certificate")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<string>? Certificate { get; init; }
+        public ImmutableArray<string>? Certificate { get; init; }
 
         [JsonPropertyName("certificateIds")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<string>? CertificateIds { get; init; }
+        public ImmutableArray<string>? CertificateIds { get; init; }
 
         [JsonPropertyName("header")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -230,7 +311,7 @@ public sealed record WorkspaceBackendDto
 
         [JsonPropertyName("managementEndpoints")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<string>? ManagementEndpoints { get; init; }
+        public ImmutableArray<string>? ManagementEndpoints { get; init; }
 
         [JsonPropertyName("maxPartitionResolutionRetries")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -238,11 +319,33 @@ public sealed record WorkspaceBackendDto
 
         [JsonPropertyName("serverCertificateThumbprints")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<string>? ServerCertificateThumbprints { get; init; }
+        public ImmutableArray<string>? ServerCertificateThumbprints { get; init; }
 
         [JsonPropertyName("serverX509Names")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public ImmutableList<X509CertificateName>? ServerX509Names { get; init; }
+        public ImmutableArray<X509CertificateName>? ServerX509Names { get; init; }
+    }
+
+    public record Pool
+    {
+        [JsonPropertyName("services")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public ImmutableArray<BackendPoolItem>? Services { get; init; }
+    }
+
+    public record BackendPoolItem
+    {
+        [JsonPropertyName("id")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Id { get; init; }
+
+        [JsonPropertyName("priority")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Priority { get; init; }
+
+        [JsonPropertyName("weight")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? Weight { get; init; }
     }
 
     public record BackendTlsProperties
@@ -270,20 +373,12 @@ public sealed record WorkspaceBackendDto
 
 public static class WorkspaceBackendModule
 {
-    public static async ValueTask DeleteAll(this WorkspaceBackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        await uri.ListNames(pipeline, cancellationToken)
-                 .IterParallel(async name =>
-                 {
-                     var resourceUri = new WorkspaceBackendUri { Parent = uri, Name = name };
-                     await resourceUri.Delete(pipeline, cancellationToken);
-                 }, cancellationToken);
-
-    public static IAsyncEnumerable<BackendName> ListNames(this WorkspaceBackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<WorkspaceBackendName> ListNames(this WorkspaceBackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
-                .Select(BackendName.From);
+                .Select(WorkspaceBackendName.From);
 
-    public static IAsyncEnumerable<(BackendName Name, WorkspaceBackendDto Dto)> List(this WorkspaceBackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<(WorkspaceBackendName Name, WorkspaceBackendDto Dto)> List(this WorkspaceBackendsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         uri.ListNames(pipeline, cancellationToken)
            .SelectAwait(async name =>
            {
@@ -309,13 +404,13 @@ public static class WorkspaceBackendModule
 
     public static IEnumerable<WorkspaceBackendDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory) =>
         from workspaceDirectory in WorkspaceModule.ListDirectories(serviceDirectory)
-        let workspacebackendsDirectory = new WorkspaceBackendsDirectory { Parent = workspaceDirectory }
-        where workspacebackendsDirectory.ToDirectoryInfo().Exists()
-        from workspaceBackendDirectoryInfo in workspacebackendsDirectory.ToDirectoryInfo().ListDirectories("*")
-        let name = BackendName.From(workspaceBackendDirectoryInfo.Name)
+        let workspaceBackendsDirectory = new WorkspaceBackendsDirectory { Parent = workspaceDirectory }
+        where workspaceBackendsDirectory.ToDirectoryInfo().Exists()
+        from workspaceBackendDirectoryInfo in workspaceBackendsDirectory.ToDirectoryInfo().ListDirectories("*")
+        let name = WorkspaceBackendName.From(workspaceBackendDirectoryInfo.Name)
         select new WorkspaceBackendDirectory
         {
-            Parent = workspacebackendsDirectory,
+            Parent = workspaceBackendsDirectory,
             Name = name
         };
 

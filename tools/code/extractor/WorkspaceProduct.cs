@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceProducts(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(ProductName Name, WorkspaceProductDto Dto)> ListWorkspaceProducts(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceProductArtifacts(ProductName name, WorkspaceProductDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceProductInformationFile(ProductName name, WorkspaceProductDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceProductName Name, WorkspaceProductDto Dto)> ListWorkspaceProducts(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceProductArtifacts(WorkspaceProductName name, WorkspaceProductDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceProductInformationFile(WorkspaceProductName name, WorkspaceProductDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceProductModule
 {
@@ -23,6 +23,9 @@ internal static class WorkspaceProductModule
     {
         ConfigureListWorkspaceProducts(builder);
         ConfigureWriteWorkspaceProductArtifacts(builder);
+        WorkspaceProductApiModule.ConfigureExtractWorkspaceProductApis(builder);
+        WorkspaceProductGroupModule.ConfigureExtractWorkspaceProductGroups(builder);
+        WorkspaceProductPolicyModule.ConfigureExtractWorkspaceProductPolicies(builder);
 
         builder.Services.TryAddSingleton(GetExtractWorkspaceProducts);
     }
@@ -31,6 +34,9 @@ internal static class WorkspaceProductModule
     {
         var list = provider.GetRequiredService<ListWorkspaceProducts>();
         var writeArtifacts = provider.GetRequiredService<WriteWorkspaceProductArtifacts>();
+        var extractApis = provider.GetRequiredService<ExtractWorkspaceProductApis>();
+        var extractGroups = provider.GetRequiredService<ExtractWorkspaceProductGroups>();
+        var extractPolicies = provider.GetRequiredService<ExtractWorkspaceProductPolicies>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -38,11 +44,16 @@ internal static class WorkspaceProductModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceProducts));
 
-            logger.LogInformation("Extracting products for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting products in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async product => await writeArtifacts(product.Name, product.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                        await extractApis(resource.Name, workspaceName, cancellationToken);
+                        await extractGroups(resource.Name, workspaceName, cancellationToken);
+                        await extractPolicies(resource.Name, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +71,10 @@ internal static class WorkspaceProductModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspaceProductsUri.From(workspaceName, serviceUri)
-                                .List(pipeline, cancellationToken);
+        {
+            var workspaceProductsUri = WorkspaceProductsUri.From(workspaceName, serviceUri);
+            return workspaceProductsUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspaceProductArtifacts(IHostApplicationBuilder builder)
@@ -76,9 +89,7 @@ internal static class WorkspaceProductModule
         var writeInformationFile = provider.GetRequiredService<WriteWorkspaceProductInformationFile>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteWorkspaceProductInformationFile(IHostApplicationBuilder builder)

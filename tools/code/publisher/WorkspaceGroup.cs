@@ -15,21 +15,21 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutWorkspaceGroups(CancellationToken cancellationToken);
-public delegate Option<(GroupName Name, WorkspaceName WorkspaceName)> TryParseWorkspaceGroupName(FileInfo file);
-public delegate bool IsWorkspaceGroupNameInSourceControl(GroupName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspaceGroup(GroupName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspaceGroupDto>> FindWorkspaceGroupDto(GroupName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspaceGroupInApim(GroupName name, WorkspaceGroupDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspaceGroups(CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceGroup(GroupName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspaceGroupFromApim(GroupName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspaceGroupName WorkspaceGroupName, WorkspaceName WorkspaceName)> TryParseWorkspaceGroupName(FileInfo file);
+public delegate bool IsWorkspaceGroupNameInSourceControl(WorkspaceGroupName workspaceGroupName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspaceGroup(WorkspaceGroupName workspaceGroupName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspaceGroupDto>> FindWorkspaceGroupDto(WorkspaceGroupName workspaceGroupName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspaceGroupInApim(WorkspaceGroupName name, WorkspaceGroupDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceGroup(WorkspaceGroupName workspaceGroupName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspaceGroupFromApim(WorkspaceGroupName workspaceGroupName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceGroupModule
 {
     public static void ConfigurePutWorkspaceGroups(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseGroupName(builder);
+        ConfigureTryParseWorkspaceGroupName(builder);
         ConfigureIsWorkspaceGroupNameInSourceControl(builder);
         ConfigurePutWorkspaceGroup(builder);
 
@@ -53,13 +53,13 @@ internal static class WorkspaceGroupModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(group => isNameInSourceControl(group.Name, group.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceGroupName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
     }
 
-    private static void ConfigureTryWorkspaceParseGroupName(IHostApplicationBuilder builder)
+    private static void ConfigureTryParseWorkspaceGroupName(IHostApplicationBuilder builder)
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
@@ -79,22 +79,22 @@ internal static class WorkspaceGroupModule
         CommonModule.ConfigureGetArtifactFiles(builder);
         AzureModule.ConfigureManagementServiceDirectory(builder);
 
-        builder.Services.TryAddSingleton(GetIsGroupNameInSourceControl);
+        builder.Services.TryAddSingleton(GetIsWorkspaceGroupNameInSourceControl);
     }
 
-    private static IsWorkspaceGroupNameInSourceControl GetIsGroupNameInSourceControl(IServiceProvider provider)
+    private static IsWorkspaceGroupNameInSourceControl GetIsWorkspaceGroupNameInSourceControl(IServiceProvider provider)
     {
         var getArtifactFiles = provider.GetRequiredService<GetArtifactFiles>();
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
 
         return doesInformationFileExist;
 
-        bool doesInformationFileExist(GroupName name, WorkspaceName workspaceName)
+        bool doesInformationFileExist(WorkspaceGroupName workspaceGroupName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var groupFile = WorkspaceGroupInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceGroupInformationFile.From(workspaceGroupName, workspaceName, serviceDirectory);
 
-            return artifactFiles.Contains(groupFile.ToFileInfo());
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
@@ -112,14 +112,12 @@ internal static class WorkspaceGroupModule
         var putInApim = provider.GetRequiredService<PutWorkspaceGroupInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceGroupName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspaceGroup))
-                                       ?.AddTag("workspace_group.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspaceGroup));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspaceGroupName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspaceGroupName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -136,9 +134,9 @@ internal static class WorkspaceGroupModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceGroupName, workspaceName, cancellationToken) =>
         {
-            var informationFile = WorkspaceGroupInformationFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspaceGroupInformationFile.From(workspaceGroupName, workspaceName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
@@ -160,19 +158,19 @@ internal static class WorkspaceGroupModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspaceGroupName, dto, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Adding group {GroupName} to workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting group {WorkspaceGroupName} in workspace {WorkspaceName}...", workspaceGroupName, workspaceName);
 
-            await WorkspaceGroupUri.From(name, workspaceName, serviceUri)
-                                   .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = WorkspaceGroupUri.From(workspaceGroupName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
     public static void ConfigureDeleteWorkspaceGroups(IHostApplicationBuilder builder)
     {
         CommonModule.ConfigureGetPublisherFiles(builder);
-        ConfigureTryWorkspaceParseGroupName(builder);
+        ConfigureTryParseWorkspaceGroupName(builder);
         ConfigureIsWorkspaceGroupNameInSourceControl(builder);
         ConfigureDeleteWorkspaceGroup(builder);
 
@@ -196,7 +194,7 @@ internal static class WorkspaceGroupModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(group => isNameInSourceControl(group.Name, group.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspaceGroupName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -214,13 +212,11 @@ internal static class WorkspaceGroupModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspaceGroupFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceGroupName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceGroup))
-                                       ?.AddTag("workspace_group.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspaceGroup));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspaceGroupName, workspaceName, cancellationToken);
         };
     }
 
@@ -238,12 +234,12 @@ internal static class WorkspaceGroupModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspaceGroupName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Removing group {GroupName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting group {WorkspaceGroupName} in workspace {WorkspaceName}...", workspaceGroupName, workspaceName);
 
-            await WorkspaceGroupUri.From(name, workspaceName, serviceUri)
-                                   .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspaceGroupUri.From(workspaceGroupName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

@@ -15,14 +15,14 @@ using System.Threading.Tasks;
 namespace publisher;
 
 public delegate ValueTask PutWorkspacePolicies(CancellationToken cancellationToken);
-public delegate Option<(WorkspacePolicyName Name, WorkspaceName WorkspaceName)> TryParseWorkspacePolicyName(FileInfo file);
-public delegate bool IsWorkspacePolicyNameInSourceControl(WorkspacePolicyName name, WorkspaceName workspaceName);
-public delegate ValueTask PutWorkspacePolicy(WorkspacePolicyName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask<Option<WorkspacePolicyDto>> FindWorkspacePolicyDto(WorkspacePolicyName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask PutWorkspacePolicyInApim(WorkspacePolicyName name, WorkspacePolicyDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 public delegate ValueTask DeleteWorkspacePolicies(CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspacePolicy(WorkspacePolicyName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask DeleteWorkspacePolicyFromApim(WorkspacePolicyName name, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate Option<(WorkspacePolicyName WorkspacePolicyName, WorkspaceName WorkspaceName)> TryParseWorkspacePolicyName(FileInfo file);
+public delegate bool IsWorkspacePolicyNameInSourceControl(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName);
+public delegate ValueTask PutWorkspacePolicy(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask<Option<WorkspacePolicyDto>> FindWorkspacePolicyDto(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask PutWorkspacePolicyInApim(WorkspacePolicyName name, WorkspacePolicyDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspacePolicy(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask DeleteWorkspacePolicyFromApim(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspacePolicyModule
 {
@@ -53,7 +53,7 @@ internal static class WorkspacePolicyModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(policy => isNameInSourceControl(policy.Name, policy.WorkspaceName))
+                    .Where(resource => isNameInSourceControl(resource.WorkspacePolicyName, resource.WorkspaceName))
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
@@ -89,12 +89,12 @@ internal static class WorkspacePolicyModule
 
         return doesPolicyFileExist;
 
-        bool doesPolicyFileExist(WorkspacePolicyName name, WorkspaceName workspaceName)
+        bool doesPolicyFileExist(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName)
         {
             var artifactFiles = getArtifactFiles();
-            var policyFile = WorkspacePolicyFile.From(name, workspaceName, serviceDirectory);
+            var informationFile = WorkspacePolicyFile.From(workspacePolicyName, workspaceName, serviceDirectory);
 
-            return artifactFiles.Contains(policyFile.ToFileInfo());
+            return artifactFiles.Contains(informationFile.ToFileInfo());
         }
     }
 
@@ -112,14 +112,12 @@ internal static class WorkspacePolicyModule
         var putInApim = provider.GetRequiredService<PutWorkspacePolicyInApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspacePolicyName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(PutWorkspacePolicy))
-                                       ?.AddTag("workspace_policy.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(PutWorkspacePolicy));
 
-            var dtoOption = await findDto(name, workspaceName, cancellationToken);
-            await dtoOption.IterTask(async dto => await putInApim(name, dto, workspaceName, cancellationToken));
+            var dtoOption = await findDto(workspacePolicyName, workspaceName, cancellationToken);
+            await dtoOption.IterTask(async dto => await putInApim(workspacePolicyName, dto, workspaceName, cancellationToken));
         };
     }
 
@@ -136,14 +134,14 @@ internal static class WorkspacePolicyModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspacePolicyName, workspaceName, cancellationToken) =>
         {
-            var contentsOption = await tryGetPolicyContents(name, workspaceName, cancellationToken);
+            var contentsOption = await tryGetPolicyContents(workspacePolicyName, workspaceName, cancellationToken);
 
             return from contents in contentsOption
                    select new WorkspacePolicyDto
                    {
-                       Properties = new WorkspacePolicyDto.WorkspacePolicyContract
+                       Properties = new WorkspacePolicyDto.PolicyContract
                        {
                            Format = "rawxml",
                            Value = contents.ToString()
@@ -151,9 +149,9 @@ internal static class WorkspacePolicyModule
                    };
         };
 
-        async ValueTask<Option<BinaryData>> tryGetPolicyContents(WorkspacePolicyName name, WorkspaceName workspaceName, CancellationToken cancellationToken)
+        async ValueTask<Option<BinaryData>> tryGetPolicyContents(WorkspacePolicyName workspacePolicyName, WorkspaceName workspaceName, CancellationToken cancellationToken)
         {
-            var policyFile = WorkspacePolicyFile.From(name, workspaceName, serviceDirectory);
+            var policyFile = WorkspacePolicyFile.From(workspacePolicyName, workspaceName, serviceDirectory);
 
             return await tryGetFileContents(policyFile.ToFileInfo(), cancellationToken);
         }
@@ -173,12 +171,12 @@ internal static class WorkspacePolicyModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, dto, workspaceName, cancellationToken) =>
+        return async (workspacePolicyName, dto, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Putting policy {WorkspacePolicyName} for workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Putting policy {WorkspacePolicyName} in workspace {WorkspaceName}...", workspacePolicyName, workspaceName);
 
-            await WorkspacePolicyUri.From(name, workspaceName, serviceUri)
-                                    .PutDto(dto, pipeline, cancellationToken);
+            var resourceUri = WorkspacePolicyUri.From(workspacePolicyName, workspaceName, serviceUri);
+            await resourceUri.PutDto(dto, pipeline, cancellationToken);
         };
     }
 
@@ -209,7 +207,7 @@ internal static class WorkspacePolicyModule
 
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
-                    .Where(policy => isNameInSourceControl(policy.Name, policy.WorkspaceName) is false)
+                    .Where(resource => isNameInSourceControl(resource.WorkspacePolicyName, resource.WorkspaceName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };
@@ -227,13 +225,11 @@ internal static class WorkspacePolicyModule
         var deleteFromApim = provider.GetRequiredService<DeleteWorkspacePolicyFromApim>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspacePolicyName, workspaceName, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity(nameof(DeleteWorkspacePolicy))
-                                       ?.AddTag("workspace_policy.name", name)
-                                       ?.AddTag("workspace.name", workspaceName);
+            using var _ = activitySource.StartActivity(nameof(DeleteWorkspacePolicy));
 
-            await deleteFromApim(name, workspaceName, cancellationToken);
+            await deleteFromApim(workspacePolicyName, workspaceName, cancellationToken);
         };
     }
 
@@ -251,12 +247,12 @@ internal static class WorkspacePolicyModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (name, workspaceName, cancellationToken) =>
+        return async (workspacePolicyName, workspaceName, cancellationToken) =>
         {
-            logger.LogInformation("Deleting policy {WorkspacePolicyName} from workspace {WorkspaceName}...", name, workspaceName);
+            logger.LogInformation("Deleting policy {WorkspacePolicyName} in workspace {WorkspaceName}...", workspacePolicyName, workspaceName);
 
-            await WorkspacePolicyUri.From(name, workspaceName, serviceUri)
-                                    .Delete(pipeline, cancellationToken);
+            var resourceUri = WorkspacePolicyUri.From(workspacePolicyName, workspaceName, serviceUri);
+            await resourceUri.Delete(pipeline, cancellationToken);
         };
     }
 }

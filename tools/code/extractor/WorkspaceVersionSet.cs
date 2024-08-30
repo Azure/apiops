@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceVersionSets(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(VersionSetName Name, WorkspaceVersionSetDto Dto)> ListWorkspaceVersionSets(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceVersionSetArtifacts(VersionSetName name, WorkspaceVersionSetDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceVersionSetInformationFile(VersionSetName name, WorkspaceVersionSetDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceVersionSetName Name, WorkspaceVersionSetDto Dto)> ListWorkspaceVersionSets(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceVersionSetArtifacts(WorkspaceVersionSetName name, WorkspaceVersionSetDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceVersionSetInformationFile(WorkspaceVersionSetName name, WorkspaceVersionSetDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceVersionSetModule
 {
@@ -38,11 +38,13 @@ internal static class WorkspaceVersionSetModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceVersionSets));
 
-            logger.LogInformation("Extracting version sets for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting version sets in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async versionSet => await writeArtifacts(versionSet.Name, versionSet.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +62,10 @@ internal static class WorkspaceVersionSetModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspaceVersionSetsUri.From(workspaceName, serviceUri)
-                                   .List(pipeline, cancellationToken);
+        {
+            var workspaceVersionSetsUri = WorkspaceVersionSetsUri.From(workspaceName, serviceUri);
+            return workspaceVersionSetsUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspaceVersionSetArtifacts(IHostApplicationBuilder builder)
@@ -76,9 +80,7 @@ internal static class WorkspaceVersionSetModule
         var writeInformationFile = provider.GetRequiredService<WriteWorkspaceVersionSetInformationFile>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteWorkspaceVersionSetInformationFile(IHostApplicationBuilder builder)

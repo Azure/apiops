@@ -4,7 +4,6 @@ using LanguageExt;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
@@ -13,77 +12,88 @@ using System.Threading.Tasks;
 
 namespace common;
 
+public sealed record WorkspaceDiagnosticName : ResourceName, IResourceName<WorkspaceDiagnosticName>
+{
+    private WorkspaceDiagnosticName(string value) : base(value) { }
+
+    public static WorkspaceDiagnosticName From(string value) => new(value);
+}
+
 public sealed record WorkspaceDiagnosticsUri : ResourceUri
 {
     public required WorkspaceUri Parent { get; init; }
 
     private static string PathSegment { get; } = "diagnostics";
 
-    protected override Uri Value => Parent.ToUri().AppendPathSegment(PathSegment).ToUri();
+    protected override Uri Value =>
+        Parent.ToUri().AppendPathSegment(PathSegment).ToUri();
 
-    public static WorkspaceDiagnosticsUri From(WorkspaceName name, ManagementServiceUri serviceUri) =>
-        new() { Parent = WorkspaceUri.From(name, serviceUri) };
+    public static WorkspaceDiagnosticsUri From(WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+        new() { Parent = WorkspaceUri.From(workspaceName, serviceUri) };
 }
 
 public sealed record WorkspaceDiagnosticUri : ResourceUri
 {
     public required WorkspaceDiagnosticsUri Parent { get; init; }
-    public required DiagnosticName Name { get; init; }
 
-    protected override Uri Value => Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+    public required WorkspaceDiagnosticName Name { get; init; }
 
-    public static WorkspaceDiagnosticUri From(DiagnosticName name, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+    protected override Uri Value =>
+        Parent.ToUri().AppendPathSegment(Name.Value).ToUri();
+
+    public static WorkspaceDiagnosticUri From(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
         new()
         {
             Parent = WorkspaceDiagnosticsUri.From(workspaceName, serviceUri),
-            Name = name
+            Name = workspaceDiagnosticName
         };
 }
 
 public sealed record WorkspaceDiagnosticsDirectory : ResourceDirectory
 {
     public required WorkspaceDirectory Parent { get; init; }
+
     private static string Name { get; } = "diagnostics";
 
     protected override DirectoryInfo Value =>
         Parent.ToDirectoryInfo().GetChildDirectory(Name);
 
-    public static WorkspaceDiagnosticsDirectory From(WorkspaceName name, ManagementServiceDirectory serviceDirectory) =>
-        new() { Parent = WorkspaceDirectory.From(name, serviceDirectory) };
+    public static WorkspaceDiagnosticsDirectory From(WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+        new() { Parent = WorkspaceDirectory.From(workspaceName, serviceDirectory) };
 
     public static Option<WorkspaceDiagnosticsDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        IsDirectoryNameValid(directory)
+        directory?.Name == Name
             ? from parent in WorkspaceDirectory.TryParse(directory.Parent, serviceDirectory)
               select new WorkspaceDiagnosticsDirectory { Parent = parent }
             : Option<WorkspaceDiagnosticsDirectory>.None;
-
-    internal static bool IsDirectoryNameValid([NotNullWhen(true)] DirectoryInfo? directory) =>
-        directory?.Name == Name;
 }
 
 public sealed record WorkspaceDiagnosticDirectory : ResourceDirectory
 {
     public required WorkspaceDiagnosticsDirectory Parent { get; init; }
 
-    public required DiagnosticName Name { get; init; }
+    public required WorkspaceDiagnosticName Name { get; init; }
 
     protected override DirectoryInfo Value =>
-        Parent.ToDirectoryInfo().GetChildDirectory(Name.ToString());
+        Parent.ToDirectoryInfo().GetChildDirectory(Name.Value);
 
-    public static WorkspaceDiagnosticDirectory From(DiagnosticName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceDiagnosticDirectory From(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
             Parent = WorkspaceDiagnosticsDirectory.From(workspaceName, serviceDirectory),
-            Name = name
+            Name = workspaceDiagnosticName
         };
 
     public static Option<WorkspaceDiagnosticDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        from parent in WorkspaceDiagnosticsDirectory.TryParse(directory?.Parent, serviceDirectory)
-        select new WorkspaceDiagnosticDirectory
-        {
-            Parent = parent,
-            Name = DiagnosticName.From(directory!.Name)
-        };
+        directory is null
+            ? Option<WorkspaceDiagnosticDirectory>.None
+            : from parent in WorkspaceDiagnosticsDirectory.TryParse(directory.Parent, serviceDirectory)
+              let name = WorkspaceDiagnosticName.From(directory.Name)
+              select new WorkspaceDiagnosticDirectory
+              {
+                  Parent = parent,
+                  Name = name
+              };
 }
 
 public sealed record WorkspaceDiagnosticInformationFile : ResourceFile
@@ -95,20 +105,20 @@ public sealed record WorkspaceDiagnosticInformationFile : ResourceFile
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile(Name);
 
-    public static WorkspaceDiagnosticInformationFile From(DiagnosticName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceDiagnosticInformationFile From(WorkspaceDiagnosticName workspaceDiagnosticName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = WorkspaceDiagnosticDirectory.From(name, workspaceName, serviceDirectory)
+            Parent = WorkspaceDiagnosticDirectory.From(workspaceDiagnosticName, workspaceName, serviceDirectory)
         };
 
     public static Option<WorkspaceDiagnosticInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
-        IsFileNameValid(file)
+        file?.Name == Name
             ? from parent in WorkspaceDiagnosticDirectory.TryParse(file.Directory, serviceDirectory)
-              select new WorkspaceDiagnosticInformationFile { Parent = parent }
+              select new WorkspaceDiagnosticInformationFile
+              {
+                  Parent = parent
+              }
             : Option<WorkspaceDiagnosticInformationFile>.None;
-
-    internal static bool IsFileNameValid([NotNullWhen(true)] FileInfo? file) =>
-        file?.Name == Name;
 }
 
 public sealed record WorkspaceDiagnosticDto
@@ -229,19 +239,19 @@ public sealed record WorkspaceDiagnosticDto
 
 public static class WorkspaceDiagnosticModule
 {
-    public static IAsyncEnumerable<DiagnosticName> ListNames(this WorkspaceDiagnosticsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<WorkspaceDiagnosticName> ListNames(this WorkspaceDiagnosticsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
-                .Select(DiagnosticName.From);
+                .Select(WorkspaceDiagnosticName.From);
 
-    public static IAsyncEnumerable<(DiagnosticName Name, WorkspaceDiagnosticDto Dto)> List(this WorkspaceDiagnosticsUri workspaceDiagnosticsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        workspaceDiagnosticsUri.ListNames(pipeline, cancellationToken)
-                               .SelectAwait(async name =>
-                               {
-                                   var uri = new WorkspaceDiagnosticUri { Parent = workspaceDiagnosticsUri, Name = name };
-                                   var dto = await uri.GetDto(pipeline, cancellationToken);
-                                   return (name, dto);
-                               });
+    public static IAsyncEnumerable<(WorkspaceDiagnosticName Name, WorkspaceDiagnosticDto Dto)> List(this WorkspaceDiagnosticsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+        uri.ListNames(pipeline, cancellationToken)
+           .SelectAwait(async name =>
+           {
+               var resourceUri = new WorkspaceDiagnosticUri { Parent = uri, Name = name };
+               var dto = await resourceUri.GetDto(pipeline, cancellationToken);
+               return (name, dto);
+           });
 
     public static async ValueTask<WorkspaceDiagnosticDto> GetDto(this WorkspaceDiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
@@ -257,6 +267,24 @@ public static class WorkspaceDiagnosticModule
         var content = BinaryData.FromObjectAsJson(dto);
         await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
     }
+
+    public static IEnumerable<WorkspaceDiagnosticDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory) =>
+        from workspaceDirectory in WorkspaceModule.ListDirectories(serviceDirectory)
+        let workspaceDiagnosticsDirectory = new WorkspaceDiagnosticsDirectory { Parent = workspaceDirectory }
+        where workspaceDiagnosticsDirectory.ToDirectoryInfo().Exists()
+        from workspaceDiagnosticDirectoryInfo in workspaceDiagnosticsDirectory.ToDirectoryInfo().ListDirectories("*")
+        let name = WorkspaceDiagnosticName.From(workspaceDiagnosticDirectoryInfo.Name)
+        select new WorkspaceDiagnosticDirectory
+        {
+            Parent = workspaceDiagnosticsDirectory,
+            Name = name
+        };
+
+    public static IEnumerable<WorkspaceDiagnosticInformationFile> ListInformationFiles(ManagementServiceDirectory serviceDirectory) =>
+        from workspaceDiagnosticDirectory in ListDirectories(serviceDirectory)
+        let informationFile = new WorkspaceDiagnosticInformationFile { Parent = workspaceDiagnosticDirectory }
+        where informationFile.ToFileInfo().Exists()
+        select informationFile;
 
     public static async ValueTask WriteDto(this WorkspaceDiagnosticInformationFile file, WorkspaceDiagnosticDto dto, CancellationToken cancellationToken)
     {

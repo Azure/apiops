@@ -1,24 +1,59 @@
-﻿using Azure;
-using Azure.Core;
+﻿using Azure.Core;
 using Azure.Core.Pipeline;
 using Flurl;
 using LanguageExt;
-using Polly;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
-using System.Text.Json;
+using System.Net;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using YamlDotNet.System.Text.Json;
+using Azure;
+using Polly;
+using System.Text.Json;
 
 namespace common;
+
+public sealed record WorkspaceApiName : ResourceName, IResourceName<WorkspaceApiName>
+{
+    private const string RevisionSeparator = ";rev=";
+
+    private WorkspaceApiName(string value) : base(value) { }
+
+    public static WorkspaceApiName From(string value) => new(value);
+
+    private static Either<string, (WorkspaceApiName RootName, ApiRevisionNumber RevisionNumber)> TryParseRevisionedName(string name) =>
+        name.Split(RevisionSeparator) switch
+        {
+        [var rootName, var revisionNumberString] =>
+            ApiRevisionNumber.TryFrom(revisionNumberString)
+                             .Map(revisionNumber => (WorkspaceApiName.From(rootName), revisionNumber))
+                             .ToEither($"'{revisionNumberString}' is not a valid revision number."),
+            _ => $"Cannot parse name '{name}' as a revisioned API name."
+        };
+
+    public static Either<string, (WorkspaceApiName RootName, ApiRevisionNumber RevisionNumber)> TryParseRevisionedName(WorkspaceApiName name) =>
+        TryParseRevisionedName(name.Value);
+
+    public static bool IsNotRevisioned(WorkspaceApiName name) => TryParseRevisionedName(name).IsLeft;
+
+    public static bool IsRevisioned(WorkspaceApiName name) => TryParseRevisionedName(name).IsRight;
+
+    public static WorkspaceApiName GetRootName(WorkspaceApiName name) =>
+        TryParseRevisionedName(name).Map(revisionedName => revisionedName.RootName).IfLeft(name);
+
+    public static WorkspaceApiName GetRevisionedName(WorkspaceApiName name, ApiRevisionNumber revisionNumber)
+    {
+        var rootName = GetRootName(name);
+        return WorkspaceApiName.From($"{rootName.Value}{RevisionSeparator}{revisionNumber.ToInt()}");
+    }
+}
 
 public sealed record WorkspaceApisUri : ResourceUri
 {
@@ -37,16 +72,16 @@ public sealed record WorkspaceApiUri : ResourceUri
 {
     public required WorkspaceApisUri Parent { get; init; }
 
-    public required ApiName Name { get; init; }
+    public required WorkspaceApiName Name { get; init; }
 
     protected override Uri Value =>
-        Parent.ToUri().AppendPathSegment(Name.ToString()).ToUri();
+        Parent.ToUri().AppendPathSegment(Name.Value).ToUri();
 
-    public static WorkspaceApiUri From(ApiName name, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
+    public static WorkspaceApiUri From(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, ManagementServiceUri serviceUri) =>
         new()
         {
             Parent = WorkspaceApisUri.From(workspaceName, serviceUri),
-            Name = name
+            Name = workspaceApiName
         };
 }
 
@@ -63,8 +98,7 @@ public sealed record WorkspaceApisDirectory : ResourceDirectory
         new() { Parent = WorkspaceDirectory.From(workspaceName, serviceDirectory) };
 
     public static Option<WorkspaceApisDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        directory is not null
-        && directory.Name == Name
+        directory?.Name == Name
             ? from parent in WorkspaceDirectory.TryParse(directory.Parent, serviceDirectory)
               select new WorkspaceApisDirectory { Parent = parent }
             : Option<WorkspaceApisDirectory>.None;
@@ -74,48 +108,47 @@ public sealed record WorkspaceApiDirectory : ResourceDirectory
 {
     public required WorkspaceApisDirectory Parent { get; init; }
 
-    public required ApiName Name { get; init; }
+    public required WorkspaceApiName Name { get; init; }
 
     protected override DirectoryInfo Value =>
         Parent.ToDirectoryInfo().GetChildDirectory(Name.Value);
 
-    public static WorkspaceApiDirectory From(ApiName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceApiDirectory From(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
             Parent = WorkspaceApisDirectory.From(workspaceName, serviceDirectory),
-            Name = name
+            Name = workspaceApiName
         };
 
     public static Option<WorkspaceApiDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
-        directory is not null
-            ? from parent in WorkspaceApisDirectory.TryParse(directory?.Parent, serviceDirectory)
-              let name = ApiName.From(directory!.Name)
+        directory is null
+            ? Option<WorkspaceApiDirectory>.None
+            : from parent in WorkspaceApisDirectory.TryParse(directory.Parent, serviceDirectory)
+              let name = WorkspaceApiName.From(directory.Name)
               select new WorkspaceApiDirectory
               {
                   Parent = parent,
                   Name = name
-              }
-            : Option<WorkspaceApiDirectory>.None;
+              };
 }
 
 public sealed record WorkspaceApiInformationFile : ResourceFile
 {
     public required WorkspaceApiDirectory Parent { get; init; }
 
-    public static string Name { get; } = "apiInformation.json";
+    private static string Name { get; } = "apiInformation.json";
 
     protected override FileInfo Value =>
         Parent.ToDirectoryInfo().GetChildFile(Name);
 
-    public static WorkspaceApiInformationFile From(ApiName name, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
+    public static WorkspaceApiInformationFile From(WorkspaceApiName workspaceApiName, WorkspaceName workspaceName, ManagementServiceDirectory serviceDirectory) =>
         new()
         {
-            Parent = WorkspaceApiDirectory.From(name, workspaceName, serviceDirectory)
+            Parent = WorkspaceApiDirectory.From(workspaceApiName, workspaceName, serviceDirectory)
         };
 
     public static Option<WorkspaceApiInformationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
-        file is not null &&
-        file.Name == Name
+        file?.Name == Name
             ? from parent in WorkspaceApiDirectory.TryParse(file.Directory, serviceDirectory)
               select new WorkspaceApiInformationFile
               {
@@ -352,20 +385,12 @@ public sealed record WorkspaceApiDto
 
 public static class WorkspaceApiModule
 {
-    public static async ValueTask DeleteAll(this WorkspaceApisUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        await uri.ListNames(pipeline, cancellationToken)
-                 .IterParallel(async name =>
-                 {
-                     var resourceUri = new WorkspaceApiUri { Parent = uri, Name = name };
-                     await resourceUri.Delete(pipeline, cancellationToken);
-                 }, cancellationToken);
-
-    public static IAsyncEnumerable<ApiName> ListNames(this WorkspaceApisUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<WorkspaceApiName> ListNames(this WorkspaceApisUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
-                .Select(ApiName.From);
+                .Select(WorkspaceApiName.From);
 
-    public static IAsyncEnumerable<(ApiName Name, WorkspaceApiDto Dto)> List(this WorkspaceApisUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
+    public static IAsyncEnumerable<(WorkspaceApiName Name, WorkspaceApiDto Dto)> List(this WorkspaceApisUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         uri.ListNames(pipeline, cancellationToken)
            .SelectAwait(async name =>
            {
@@ -380,17 +405,17 @@ public static class WorkspaceApiModule
         return content.ToObjectFromJson<WorkspaceApiDto>();
     }
 
-    public static async ValueTask<Option<BinaryData>> TryGetSpecificationContents(this WorkspaceApiUri apiUri, ApiSpecification specification, HttpPipeline pipeline, CancellationToken cancellationToken)
+    public static async ValueTask<Option<BinaryData>> TryGetSpecificationContents(this WorkspaceApiUri workspaceApiUri, ApiSpecification specification, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         if (specification is ApiSpecification.GraphQl)
         {
-            return await apiUri.TryGetGraphQlSchema(pipeline, cancellationToken);
+            return await workspaceApiUri.TryGetGraphQlSchema(pipeline, cancellationToken);
         }
 
         BinaryData? content;
         try
         {
-            var exportUri = GetExportUri(apiUri, specification, includeLink: true);
+            var exportUri = GetExportUri(workspaceApiUri, specification, includeLink: true);
             var downloadUri = await GetSpecificationDownloadUri(exportUri, pipeline, cancellationToken);
 
             var nonAuthenticatedHttpPipeline = HttpPipelineBuilder.Build(ClientOptions.Default);
@@ -405,7 +430,7 @@ public static class WorkspaceApiModule
                 return Option<BinaryData>.None;
             }
 
-            var exportUri = GetExportUri(apiUri, specification, includeLink: false);
+            var exportUri = GetExportUri(workspaceApiUri, specification, includeLink: false);
             var json = await pipeline.GetJsonObject(exportUri, cancellationToken);
             var contentString = json.GetProperty("value") switch
             {
@@ -423,6 +448,27 @@ public static class WorkspaceApiModule
         }
 
         return content;
+    }
+
+    public static async ValueTask<Option<BinaryData>> TryGetGraphQlSchema(this WorkspaceApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var schemaUri = uri.ToUri()
+                           .AppendPathSegment("schemas")
+                           .AppendPathSegment("graphql")
+                           .ToUri();
+
+        var schemaJsonOption = await pipeline.GetJsonObjectOption(schemaUri, cancellationToken);
+
+        return schemaJsonOption.Map(GetGraphQlSpecificationFromSchemaResponse);
+    }
+
+    private static BinaryData GetGraphQlSpecificationFromSchemaResponse(JsonObject responseJson)
+    {
+        var schema = responseJson.GetJsonObjectProperty("properties")
+                                 .GetJsonObjectProperty("document")
+                                 .GetNonEmptyOrWhiteSpaceStringProperty("value");
+
+        return BinaryData.FromString(schema);
     }
 
     private static Uri GetExportUri(WorkspaceApiUri apiUri, ApiSpecification specification, bool includeLink)
@@ -513,9 +559,9 @@ public static class WorkspaceApiModule
     {
         // Import API with specification
         var soapUri = uri.ToUri().SetQueryParam("import", "true").ToUri();
-        var soapDto = new ApiDto
+        var soapDto = new WorkspaceApiDto
         {
-            Properties = new ApiDto.ApiCreateOrUpdateProperties
+            Properties = new WorkspaceApiDto.ApiCreateOrUpdateProperties
             {
                 Format = "wsdl",
                 Value = dto.Properties.Value,
@@ -616,33 +662,12 @@ public static class WorkspaceApiModule
                                      .ToUri(), contents, cancellationToken);
     }
 
-    public static async ValueTask<Option<BinaryData>> TryGetGraphQlSchema(this WorkspaceApiUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
-    {
-        var schemaUri = uri.ToUri()
-                           .AppendPathSegment("schemas")
-                           .AppendPathSegment("graphql")
-                           .ToUri();
-
-        var schemaJsonOption = await pipeline.GetJsonObjectOption(schemaUri, cancellationToken);
-
-        return schemaJsonOption.Map(GetGraphQlSpecificationFromSchemaResponse);
-    }
-
-    private static BinaryData GetGraphQlSpecificationFromSchemaResponse(JsonObject responseJson)
-    {
-        var schema = responseJson.GetJsonObjectProperty("properties")
-                                 .GetJsonObjectProperty("document")
-                                 .GetNonEmptyOrWhiteSpaceStringProperty("value");
-
-        return BinaryData.FromString(schema);
-    }
-
     public static IEnumerable<WorkspaceApiDirectory> ListDirectories(ManagementServiceDirectory serviceDirectory) =>
         from workspaceDirectory in WorkspaceModule.ListDirectories(serviceDirectory)
         let workspaceApisDirectory = new WorkspaceApisDirectory { Parent = workspaceDirectory }
         where workspaceApisDirectory.ToDirectoryInfo().Exists()
         from workspaceApiDirectoryInfo in workspaceApisDirectory.ToDirectoryInfo().ListDirectories("*")
-        let name = ApiName.From(workspaceApiDirectoryInfo.Name)
+        let name = WorkspaceApiName.From(workspaceApiDirectoryInfo.Name)
         select new WorkspaceApiDirectory
         {
             Parent = workspaceApisDirectory,
@@ -661,12 +686,15 @@ public static class WorkspaceApiModule
         await file.ToFileInfo().OverwriteWithBinaryData(content, cancellationToken);
     }
 
-    public static async ValueTask WriteSpecification(this WorkspaceApiSpecificationFile file, BinaryData contents, CancellationToken cancellationToken) =>
-        await file.ToFileInfo().OverwriteWithBinaryData(contents, cancellationToken);
-
     public static async ValueTask<WorkspaceApiDto> ReadDto(this WorkspaceApiInformationFile file, CancellationToken cancellationToken)
     {
         var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
         return content.ToObjectFromJson<WorkspaceApiDto>();
     }
+
+    public static Option<VersionSetName> TryGetVersionSetName(WorkspaceApiDto dto) =>
+        from versionSetId in Prelude.Optional(dto.Properties.ApiVersionSetId)
+        from versionSetNameString in versionSetId.Split('/')
+                                                 .LastOrNone()
+        select VersionSetName.From(versionSetNameString);
 }

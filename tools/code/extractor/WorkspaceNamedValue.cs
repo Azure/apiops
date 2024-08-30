@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 namespace extractor;
 
 public delegate ValueTask ExtractWorkspaceNamedValues(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate IAsyncEnumerable<(NamedValueName Name, WorkspaceNamedValueDto Dto)> ListWorkspaceNamedValues(WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceNamedValueArtifacts(NamedValueName name, WorkspaceNamedValueDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
-public delegate ValueTask WriteWorkspaceNamedValueInformationFile(NamedValueName name, WorkspaceNamedValueDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<(WorkspaceNamedValueName Name, WorkspaceNamedValueDto Dto)> ListWorkspaceNamedValues(WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceNamedValueArtifacts(WorkspaceNamedValueName name, WorkspaceNamedValueDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
+public delegate ValueTask WriteWorkspaceNamedValueInformationFile(WorkspaceNamedValueName name, WorkspaceNamedValueDto dto, WorkspaceName workspaceName, CancellationToken cancellationToken);
 
 internal static class WorkspaceNamedValueModule
 {
@@ -38,11 +38,13 @@ internal static class WorkspaceNamedValueModule
         {
             using var _ = activitySource.StartActivity(nameof(ExtractWorkspaceNamedValues));
 
-            logger.LogInformation("Extracting named values for workspace {WorkspaceName}...", workspaceName);
+            logger.LogInformation("Extracting named values in workspace {WorkspaceName}...", workspaceName);
 
             await list(workspaceName, cancellationToken)
-                    .IterParallel(async namedValue => await writeArtifacts(namedValue.Name, namedValue.Dto, workspaceName, cancellationToken),
-                                  cancellationToken);
+                    .IterParallel(async resource =>
+                    {
+                        await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                    }, cancellationToken);
         };
     }
 
@@ -60,8 +62,10 @@ internal static class WorkspaceNamedValueModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
         return (workspaceName, cancellationToken) =>
-            WorkspaceNamedValuesUri.From(workspaceName, serviceUri)
-                                   .List(pipeline, cancellationToken);
+        {
+            var workspaceNamedValuesUri = WorkspaceNamedValuesUri.From(workspaceName, serviceUri);
+            return workspaceNamedValuesUri.List(pipeline, cancellationToken);
+        };
     }
 
     private static void ConfigureWriteWorkspaceNamedValueArtifacts(IHostApplicationBuilder builder)
@@ -76,9 +80,7 @@ internal static class WorkspaceNamedValueModule
         var writeInformationFile = provider.GetRequiredService<WriteWorkspaceNamedValueInformationFile>();
 
         return async (name, dto, workspaceName, cancellationToken) =>
-        {
             await writeInformationFile(name, dto, workspaceName, cancellationToken);
-        };
     }
 
     private static void ConfigureWriteWorkspaceNamedValueInformationFile(IHostApplicationBuilder builder)

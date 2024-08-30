@@ -8,7 +8,7 @@
 		<UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
 		<OutputType>Exe</OutputType>
 		<Nullable>enable</Nullable>
-    <Version>6.0.1.1</Version>
+    <Version>6.0.2</Version>
 	</PropertyGroup>
 
 	<ItemGroup>

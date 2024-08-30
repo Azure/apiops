@@ -8,11 +8,11 @@
     <OutputType>Exe</OutputType>
     <Nullable>enable</Nullable>
     <UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
-    <Version>6.0.1.1</Version>
+    <Version>6.0.2</Version>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="DotNext.Threading" Version="5.12.0" />
+    <PackageReference Include="DotNext.Threading" Version="5.12.1" />
     <PackageReference Include="LibGit2Sharp" Version="0.30.0" />
     <PackageReference Include="Microsoft.FeatureManagement" Version="3.5.0" />
   </ItemGroup>
