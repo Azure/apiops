@@ -127,6 +127,7 @@ internal static class ApiDiagnosticModule
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
         CommonModule.ConfigureTryGetFileContents(builder);
+        OverrideDtoModule.ConfigureOverrideDtoFactory(builder);
 
         builder.Services.TryAddSingleton(GetFindApiDiagnosticDto);
     }
@@ -136,13 +137,18 @@ internal static class ApiDiagnosticModule
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
 
+        var overrideFactory = provider.GetRequiredService<OverrideDtoFactory>();
+
+        var overrideDto = overrideFactory.Create<ApiDiagnosticName, ApiDiagnosticDto>();
+
         return async (name, apiName, cancellationToken) =>
         {
             var informationFile = ApiDiagnosticInformationFile.From(name, apiName, serviceDirectory);
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
-                   select contents.ToObjectFromJson<ApiDiagnosticDto>();
+                   let dto = contents.ToObjectFromJson<ApiDiagnosticDto>()
+                   select overrideDto(name, dto);
         };
     }
 
