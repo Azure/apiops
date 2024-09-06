@@ -253,7 +253,8 @@ public static class HttpPipelineExtensions
     private static async ValueTask<Response> WaitForLongRunningOperation(this HttpPipeline pipeline, Response response, CancellationToken cancellationToken)
     {
         var updatedResponse = response;
-        while ((updatedResponse.Status == ((int)HttpStatusCode.Accepted))
+        while (((updatedResponse.Status is (int)HttpStatusCode.OK or (int)HttpStatusCode.Created && IsProvisioningInProgress(updatedResponse)) || 
+                updatedResponse.Status == (int)HttpStatusCode.Accepted)
                && updatedResponse.Headers.TryGetValue("Location", out var locationHeaderValue)
                && Uri.TryCreate(locationHeaderValue, UriKind.Absolute, out var locationUri)
                && locationUri is not null)
@@ -277,6 +278,23 @@ public static class HttpPipelineExtensions
         }
 
         return updatedResponse;
+    }
+
+    private static bool IsProvisioningInProgress(Response response)
+    {
+        try
+        {
+            return response.Content.ToObjectFromJson<JsonObject>()
+                .TryGetJsonObjectProperty("properties")
+                .Bind(json => json.TryGetStringProperty("ProvisioningState"))
+                .ToOption()
+                .Where(state => state.Equals("InProgress", StringComparison.OrdinalIgnoreCase))
+                .IsSome;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }
 
