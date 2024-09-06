@@ -23,6 +23,8 @@ internal static class WorkspaceTagModule
     {
         ConfigureListWorkspaceTags(builder);
         ConfigureWriteWorkspaceTagArtifacts(builder);
+        WorkspaceTagApiModule.ConfigureExtractWorkspaceTagApis(builder);
+        WorkspaceTagProductModule.ConfigureExtractWorkspaceTagProducts(builder);
 
         builder.Services.TryAddSingleton(GetExtractWorkspaceTags);
     }
@@ -31,6 +33,8 @@ internal static class WorkspaceTagModule
     {
         var list = provider.GetRequiredService<ListWorkspaceTags>();
         var writeArtifacts = provider.GetRequiredService<WriteWorkspaceTagArtifacts>();
+        var extractApis = provider.GetRequiredService<ExtractWorkspaceTagApis>();
+        var extractProducts = provider.GetRequiredService<ExtractWorkspaceTagProducts>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
@@ -44,6 +48,8 @@ internal static class WorkspaceTagModule
                     .IterParallel(async resource =>
                     {
                         await writeArtifacts(resource.Name, resource.Dto, workspaceName, cancellationToken);
+                        await extractApis(resource.Name, workspaceName, cancellationToken);
+                        await extractProducts(resource.Name, workspaceName, cancellationToken);
                     }, cancellationToken);
         };
     }

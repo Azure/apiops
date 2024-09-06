@@ -52,6 +52,10 @@ internal static class AppModule
         WorkspaceProductPolicyModule.ConfigurePutWorkspaceProductPolicies(builder);
         WorkspaceProductGroupModule.ConfigurePutWorkspaceProductGroups(builder);
         WorkspaceProductApiModule.ConfigurePutWorkspaceProductApis(builder);
+        WorkspaceTagProductModule.ConfigurePutWorkspaceTagProducts(builder);
+        WorkspaceTagApiModule.ConfigurePutWorkspaceTagApis(builder);
+        WorkspaceTagApiModule.ConfigureDeleteWorkspaceTagApis(builder);
+        WorkspaceTagProductModule.ConfigureDeleteWorkspaceTagProducts(builder);
         WorkspaceProductApiModule.ConfigureDeleteWorkspaceProductApis(builder);
         WorkspaceProductGroupModule.ConfigureDeleteWorkspaceProductGroups(builder);
         WorkspaceProductPolicyModule.ConfigureDeleteWorkspaceProductPolicies(builder);
@@ -138,6 +142,10 @@ internal static class AppModule
         var putWorkspaceProductPolicies = provider.GetRequiredService<PutWorkspaceProductPolicies>();
         var putWorkspaceProductGroups = provider.GetRequiredService<PutWorkspaceProductGroups>();
         var putWorkspaceProductApis = provider.GetRequiredService<PutWorkspaceProductApis>();
+        var putWorkspaceTagProducts = provider.GetRequiredService<PutWorkspaceTagProducts>();
+        var putWorkspaceTagApis = provider.GetRequiredService<PutWorkspaceTagApis>();
+        var deleteWorkspaceTagApis = provider.GetRequiredService<DeleteWorkspaceTagApis>();
+        var deleteWorkspaceTagProducts = provider.GetRequiredService<DeleteWorkspaceTagProducts>();
         var deleteWorkspaceProductApis = provider.GetRequiredService<DeleteWorkspaceProductApis>();
         var deleteWorkspaceProductGroups = provider.GetRequiredService<DeleteWorkspaceProductGroups>();
         var deleteWorkspaceSubscriptions = provider.GetRequiredService<DeleteWorkspaceSubscriptions>();
@@ -227,6 +235,10 @@ internal static class AppModule
             await putWorkspaceProductPolicies(cancellationToken);
             await putWorkspaceProductGroups(cancellationToken);
             await putWorkspaceProductApis(cancellationToken);
+            await putWorkspaceTagProducts(cancellationToken);
+            await putWorkspaceTagApis(cancellationToken);
+            await deleteWorkspaceTagApis(cancellationToken);
+            await deleteWorkspaceTagProducts(cancellationToken);
             await deleteWorkspaceProductApis(cancellationToken);
             await deleteWorkspaceProductGroups(cancellationToken);
             await deleteWorkspaceProductPolicies(cancellationToken);
