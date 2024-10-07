@@ -2,14 +2,16 @@
 using common;
 using DotNext.Threading;
 using LanguageExt;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi;
 using Microsoft.OpenApi.Exceptions;
+using Microsoft.OpenApi.Extensions;
 using Microsoft.OpenApi.Models;
 using Microsoft.OpenApi.Readers;
-using Microsoft.OpenApi;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
@@ -19,9 +21,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using static Azure.Core.HttpHeader;
-using Microsoft.OpenApi.Extensions;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace publisher;
 
