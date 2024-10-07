@@ -127,14 +127,16 @@ internal static class ApiDiagnosticModule
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
         CommonModule.ConfigureTryGetFileContents(builder);
+        ConfigurationJsonModule.ConfigureFindConfigurationSection(builder);
 
         builder.Services.TryAddSingleton(GetFindApiDiagnosticDto);
     }
 
-    private static FindApiDiagnosticDto GetFindApiDiagnosticDto(IServiceProvider provider)
+    public static FindApiDiagnosticDto GetFindApiDiagnosticDto(IServiceProvider provider)
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
+        var findConfigurationSection = provider.GetRequiredService<FindConfigurationSection>();
 
         return async (name, apiName, cancellationToken) =>
         {
@@ -142,8 +144,14 @@ internal static class ApiDiagnosticModule
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
-                   select contents.ToObjectFromJson<ApiDiagnosticDto>();
+                   let dto = contents.ToObjectFromJson<ApiDiagnosticDto>()
+                   select overrideDto(dto, name, apiName);
         };
+
+        ApiDiagnosticDto overrideDto(ApiDiagnosticDto dto, ApiDiagnosticName name, ApiName apiName) =>
+            findConfigurationSection(["apis", apiName.Value, "diagnostics", name.Value])
+                .Map(configurationJson => OverrideDtoFactory.Override(dto, configurationJson))
+                .IfNone(dto);
     }
 
     private static void ConfigurePutApiDiagnosticInApim(IHostApplicationBuilder builder)

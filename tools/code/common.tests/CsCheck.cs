@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Text.Json.Nodes;
 
 namespace common.tests;
 
@@ -43,6 +44,26 @@ public static class Generator
 
     public static Gen<string> NonEmptyString { get; } =
         Gen.String.Where(x => string.IsNullOrWhiteSpace(x) is false);
+
+    public static Gen<JsonValue> JsonValue { get; } =
+        Gen.OneOf(Gen.Int.Select(x => System.Text.Json.Nodes.JsonValue.Create(x)),
+                  Gen.Float.Select(x => System.Text.Json.Nodes.JsonValue.Create(x)),
+                  Gen.String.Select(x => System.Text.Json.Nodes.JsonValue.Create(x)),
+                  Gen.Bool.Select(x => System.Text.Json.Nodes.JsonValue.Create(x)),
+                  Gen.Date.Select(x => System.Text.Json.Nodes.JsonValue.Create(x)),
+                  Gen.DateTime.Select(x => System.Text.Json.Nodes.JsonValue.Create(x)),
+                  Gen.DateTimeOffset.Select(x => System.Text.Json.Nodes.JsonValue.Create(x)));
+
+    public static Gen<JsonNode> JsonNode { get; } =
+        Gen.Recursive<JsonNode>((iterations, gen) => iterations < 2
+                                                       ? Gen.OneOf(JsonValue.Select(x => (JsonNode)x),
+                                                                   GetJsonArray(gen).Select(x => (JsonNode)x),
+                                                                   GetJsonObject(gen).Select(x => (JsonNode)x))
+                                                       : JsonValue.Select(x => (JsonNode)x));
+
+    public static Gen<JsonArray> JsonArray { get; } = GetJsonArray(JsonNode);
+
+    public static Gen<JsonObject> JsonObject { get; } = GetJsonObject(JsonNode);
 
     public static Gen<string> AlphaNumericStringBetween(int minimumLength, int maximumLength) =>
         Gen.Char
@@ -203,6 +224,14 @@ public static class Generator
 
         public Option<int> MaxSize { get; init; } = Option<int>.None;
     }
+
+    private static Gen<JsonArray> GetJsonArray(Gen<JsonNode> nodeGen) =>
+        from nodes in nodeGen.Null().Array[0, 5]
+        select new JsonArray(nodes);
+
+    private static Gen<JsonObject> GetJsonObject(Gen<JsonNode> nodeGen) =>
+        from properties in Gen.Dictionary(NonEmptyString, nodeGen.Null())[0, 5]
+        select new JsonObject(properties);
 }
 
 /// <summary>
