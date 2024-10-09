@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -122,10 +124,19 @@ public sealed record ProductGroupDto
 
 public static class ProductGroupModule
 {
-    public static IAsyncEnumerable<GroupName> ListNames(this ProductGroupsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+    public static IAsyncEnumerable<GroupName> ListNames(this ProductGroupsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var exceptionHandler = (HttpRequestException exception) =>
+            exception.StatusCode == HttpStatusCode.BadRequest
+             && exception.Message.Contains("MethodNotAllowedInPricingTier", StringComparison.OrdinalIgnoreCase)
+            ? AsyncEnumerable.Empty<GroupName>()
+            : throw exception;
+
+        return pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
-                .Select(GroupName.From);
+                .Select(GroupName.From)
+                .Catch(exceptionHandler);
+    }
 
     public static IAsyncEnumerable<(GroupName Name, ProductGroupDto Dto)> List(this ProductGroupsUri productGroupsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         productGroupsUri.ListNames(pipeline, cancellationToken)
