@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -149,10 +150,19 @@ public static class GroupModule
                                                                 .Delete(pipeline, cancellationToken),
                                cancellationToken);
 
-    public static IAsyncEnumerable<GroupName> ListNames(this GroupsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
-        pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
+    public static IAsyncEnumerable<GroupName> ListNames(this GroupsUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        var exceptionHandler = (HttpRequestException exception) =>
+            exception.StatusCode == HttpStatusCode.BadRequest
+             && exception.Message.Contains("MethodNotAllowedInPricingTier", StringComparison.OrdinalIgnoreCase)
+            ? AsyncEnumerable.Empty<GroupName>()
+            : throw exception;
+
+        return pipeline.ListJsonObjects(uri.ToUri(), cancellationToken)
                 .Select(jsonObject => jsonObject.GetStringProperty("name"))
-                .Select(GroupName.From);
+                .Select(GroupName.From)
+                .Catch(exceptionHandler);
+    }
 
     public static IAsyncEnumerable<(GroupName Name, GroupDto Dto)> List(this GroupsUri groupsUri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
         groupsUri.ListNames(pipeline, cancellationToken)
