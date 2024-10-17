@@ -40,7 +40,7 @@ backends:
   - name: helloworldfromfuncapp
     properties:
       url: "https://helloworldfromprodfuncapp.azurewebsites.net/api"
-      resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Web/sites/helloworldfromprodfuncapp"
+      resourceId: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Web/sites/helloworldfromprodfuncapp"
       credentials:
         header:
           "INSERT-HEADER-NAME": [
@@ -52,7 +52,7 @@ backends:
   - name: LogicApp_helloworldfromlogicapp_rg-apim-lab_77fadbdc74f14ce88962b34400a1f170
     properties:
       url: "https://prod-75.eastus.logic.azure.com/workflows/[guid goes here]/triggers"
-      resourceid: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Logic/workflows/helloworldfromprodlogicapp"
+      resourceId: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Logic/workflows/helloworldfromprodlogicapp"
 apis:
   - name: demo-conference-api
     diagnostics:
