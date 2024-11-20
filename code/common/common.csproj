@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net9.0</TargetFramework>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<AnalysisLevel>latest-all</AnalysisLevel>
+		<Nullable>enable</Nullable>
+		<InvariantGlobalization>true</InvariantGlobalization>
+		<!-- <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+		<CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath> -->
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Exclude the output of source generators from the compilation -->
+		<!-- <Compile Remove="$(CompilerGeneratedFilesOutputPath)/**/*.cs" /> -->
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Azure.Core" Version="1.42.0" />
+		<PackageReference Include="Bogus" Version="35.6.1" />
+		<PackageReference Include="CsCheck" Version="4.1.0" />
+		<PackageReference Include="Flurl" Version="4.0.0" />
+		<PackageReference Include="LanguageExt.Core" Version="5.0.0-beta-36" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+		<PackageReference Include="System.Interactive.Async" Version="6.0.1" />
+		<PackageReference Include="System.Linq.Async" Version="6.0.1" />
+		<PackageReference Include="System.Memory.Data" Version="9.0.0-rc.2.24473.5" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\common.codegen\common.codegen.csproj"
+			ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
+	</ItemGroup>
+
+</Project>
