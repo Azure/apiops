@@ -1,3 +1,4 @@
+using LanguageExt;
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
@@ -15,12 +16,16 @@ public static class Generator
         from seed in Gen.Int.Positive
         select new Randomizer(seed);
 
-    public static Gen<Lorem> Word { get; } =
+    public static Gen<Lorem> Lorem { get; } =
         from randomizer in Randomizer
         select new Lorem()
         {
             Random = randomizer
         };
+
+    public static Gen<string> LoremWord { get; } =
+        from lorem in Lorem
+        select lorem.Word();
 
     public static Gen<Internet> Internet { get; } =
         from randomizer in Randomizer
@@ -35,6 +40,10 @@ public static class Generator
         {
             Random = randomizer
         };
+
+    public static Gen<Option<T>> OptionOf<T>(this Gen<T> gen) =>
+        Gen.Frequency((1, Gen.Const(Option<T>.None)),
+                      (4, gen.Select(Option<T>.Some)));
 
     public static Gen<ImmutableArray<T>> ImmutableArrayOf<T>(this Gen<T> gen) =>
         from items in gen.List
@@ -67,7 +76,7 @@ public static class Generator
             not null => comparer,
             null => enumerable switch
             {
-                HashSet<T> hashSet => hashSet.Comparer,
+                System.Collections.Generic.HashSet<T> hashSet => hashSet.Comparer,
                 FrozenSet<T> frozenSet => frozenSet.Comparer,
                 ImmutableHashSet<T> immutableHashSet => immutableHashSet.KeyComparer,
                 _ => comparer

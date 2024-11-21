@@ -1,8 +1,14 @@
-﻿namespace common.codegen;
+﻿namespace codegen.resources;
 
 internal sealed class NamedValue : IResourceWithDirectory, IResourceWithInformationFile
 {
     public string NameType { get; } = "NamedValueName";
+    public string NameTypePluralCamelCase { get; } = "namedValueNames";
+    public string NameTypePluralPascalCase { get; } = "NamedValueNames";
+    public string SingularDescription { get; } = "NamedValue";
+    public string PluralDescription { get; } = "NamedValues";
+    public string LoggerSingularDescription { get; } = "named value";
+    public string LoggerPluralDescription { get; } = "named values";
     public string CollectionDirectoryType { get; } = "NamedValuesDirectory";
     public string CollectionDirectoryName { get; } = "named values";
     public string DirectoryType { get; } = "NamedValueDirectory";

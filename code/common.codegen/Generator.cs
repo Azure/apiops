@@ -1,9 +1,9 @@
-﻿using Microsoft.CodeAnalysis;
+﻿using codegen.resources;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -13,15 +13,11 @@ namespace common.codegen;
 [Generator]
 public class CommonGenerator : IIncrementalGenerator
 {
-    private readonly ImmutableArray<IResource> resources = [
-        new NamedValue()
-        ];
-
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         context.RegisterPostInitializationOutput(context =>
         {
-            foreach (var resource in resources)
+            foreach (var resource in ApimResources.All)
             {
                 var fileName = $"{resource.GetType().Name}.common.g.cs";
 
@@ -36,10 +32,11 @@ public class CommonGenerator : IIncrementalGenerator
                               {
                                   var dictionary = GetClassMethodParameterDictionary(classMethodParameters);
 
-                                  return resources.Select(resource => dictionary.TryGetValue(new ClassName(resource.ModuleType),
-                                                                                             out var methodParameters)
-                                                                      ? (resource, methodParameters)
-                                                                      : (resource, FrozenDictionary<MethodName, FrozenSet<ParameterName>>.Empty));
+                                  return ApimResources.All
+                                                      .Select(resource => dictionary.TryGetValue(new ClassName(resource.ModuleType),
+                                                                                                out var methodParameters)
+                                                                            ? (resource, methodParameters)
+                                                                            : (resource, FrozenDictionary<MethodName, FrozenSet<ParameterName>>.Empty));
                               });
 
         context.RegisterSourceOutput(provider,

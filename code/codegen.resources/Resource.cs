@@ -1,14 +1,20 @@
-﻿namespace common.codegen;
+﻿namespace codegen.resources;
 
 public interface IResource
 {
     public string NameType { get; }
+    public string NameTypePluralCamelCase { get; }
+    public string NameTypePluralPascalCase { get; }
 #pragma warning disable CA1056 // URI-like properties should not be strings
     public string CollectionUriType { get; }
     public string CollectionUriPath { get; }
     public string UriType { get; }
 #pragma warning restore CA1056 // URI-like properties should not be strings
     public string ModuleType { get; }
+    public string SingularDescription { get; }
+    public string PluralDescription { get; }
+    public string LoggerSingularDescription { get; }
+    public string LoggerPluralDescription { get; }
 }
 
 public interface IChildResource : IResource
