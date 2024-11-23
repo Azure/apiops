@@ -5,6 +5,9 @@ namespace codegen.resources;
 public static class ApimResources
 {
     public static ImmutableArray<IResource> All { get; } = [
-        new NamedValue()
+        NamedValue.Instance,
+        Api.Instance,
+        ApiOperation.Instance,
+        ApiOperationPolicy.Instance
         ];
 }

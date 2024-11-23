@@ -1,11 +1,12 @@
-﻿using System;
-using System.Collections.Frozen;
-using System.Linq;
-using System.Threading;
-using codegen.resources;
+﻿using codegen.resources;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using System;
+using System.Collections.Frozen;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 
 namespace extractor.codegen;
 
@@ -13,38 +14,13 @@ namespace extractor.codegen;
 public class CommonGenerator : IIncrementalGenerator
 {
     public void Initialize(IncrementalGeneratorInitializationContext context) =>
-        context.RegisterSourceOutput(GetProvider(context),
-                                     (context, source) => GenerateExtractorContent(context, source));
+        context.RegisterSourceOutput(GetProvider(context), GenerateContent);
 
     private static IncrementalValuesProvider<OutputSource> GetProvider(IncrementalGeneratorInitializationContext context) =>
         context.SyntaxProvider
                .CreateSyntaxProvider(IsInScope, GetMonitoredNode)
                .Collect()
-               .SelectMany((monitoredNodes, _) =>
-               {
-                   var delegateNames = monitoredNodes.Where(node => node is MonitoredNode.Delegate)
-                                                     .Select(node => ((MonitoredNode.Delegate)node).Name)
-                                                     .ToFrozenSet();
-
-                   var parameterDictionary = monitoredNodes.Where(node => node is MonitoredNode.ModuleParameter)
-                                                           .Select(node => (MonitoredNode.ModuleParameter)node)
-                                                           .GroupBy(node => node.ClassName)
-                                                           .ToFrozenDictionary(group => group.Key,
-                                                                               group => group.GroupBy(node => node.MethodName)
-                                                                                             .ToFrozenDictionary(methodGroup => methodGroup.Key,
-                                                                                                                 methodGroup => methodGroup.Select(node => node.ParameterName)
-                                                                                                                                           .ToFrozenSet()));
-
-                   return ApimResources.All
-                                       .Select(resource => new OutputSource
-                                       {
-                                           Resource = resource,
-                                           DelegateNames = delegateNames,
-                                           ModuleMethodParameters = parameterDictionary.TryGetValue(resource.ModuleType, out var methodParameters)
-                                                                     ? methodParameters
-                                                                     : FrozenDictionary<string, FrozenSet<string>>.Empty
-                                       });
-               });
+               .SelectMany((monitoredNodes, _) => GetOutputSources(ApimResources.All, monitoredNodes));
 
     private static bool IsInScope(SyntaxNode syntaxNode, CancellationToken _) =>
         syntaxNode switch
@@ -92,6 +68,36 @@ public class CommonGenerator : IIncrementalGenerator
             _ => throw new InvalidOperationException($"Node type {context.Node.GetType()} is not supported.")
         };
 
+    private static IEnumerable<OutputSource> GetOutputSources(IEnumerable<IResource> resources, IEnumerable<MonitoredNode> monitoredNodes)
+    {
+        var delegateNames = GetDelegateNames(monitoredNodes);
+        var parameterDictionary = GetClassModuleParameterDictionary(monitoredNodes);
+
+        return resources.Select(resource => new OutputSource
+        {
+            Resource = resource,
+            DelegateNames = delegateNames,
+            ModuleMethodParameters = parameterDictionary.TryGetValue(resource.ModuleType, out var methodParameters)
+                                      ? methodParameters
+                                      : FrozenDictionary<string, FrozenSet<string>>.Empty
+        });
+    }
+
+    private static FrozenSet<string> GetDelegateNames(IEnumerable<MonitoredNode> monitoredNodes) =>
+        monitoredNodes.Where(node => node is MonitoredNode.Delegate)
+                      .Select(node => ((MonitoredNode.Delegate)node).Name)
+                      .ToFrozenSet();
+
+    private static FrozenDictionary<string, FrozenDictionary<string, FrozenSet<string>>> GetClassModuleParameterDictionary(IEnumerable<MonitoredNode> monitoredNodes) =>
+        monitoredNodes.Where(node => node is MonitoredNode.ModuleParameter)
+                      .Select(node => (MonitoredNode.ModuleParameter)node)
+                      .GroupBy(node => node.ClassName)
+                      .ToFrozenDictionary(group => group.Key,
+                                          group => group.GroupBy(node => node.MethodName)
+                                                          .ToFrozenDictionary(methodGroup => methodGroup.Key,
+                                                                              methodGroup => methodGroup.Select(node => node.ParameterName)
+                                                                                                                                           .ToFrozenSet()));
+
     private abstract record MonitoredNode
     {
         public sealed record Delegate : MonitoredNode
@@ -114,11 +120,11 @@ public class CommonGenerator : IIncrementalGenerator
         public required FrozenDictionary<string, FrozenSet<string>> ModuleMethodParameters { get; init; }
     }
 
-    private static void GenerateExtractorContent(SourceProductionContext context, OutputSource source) =>
+    private static void GenerateContent(SourceProductionContext context, OutputSource source) =>
         context.AddSource($"{source.Resource.GetType().Name}.extractor.g.cs",
-                          GenerateExtractorContent(source));
+                          GenerateContent(source));
 
-    private static string GenerateExtractorContent(OutputSource source) =>
+    private static string GenerateContent(OutputSource source) =>
 $$"""
 using Azure.Core.Pipeline;
 using common;
@@ -160,7 +166,7 @@ public delegate ValueTask Extract{source.Resource.PluralDescription}(Cancellatio
             _ when source.DelegateNames.Contains($"List{source.Resource.PluralDescription}") => string.Empty,
             { Resource: IResourceWithDto resourceWithDto } =>
 $"""
-public delegate IAsyncEnumerable<({resourceWithDto.NameType} Name, {resourceWithDto.DtoType} Dto)> List{source.Resource.PluralDescription}(CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<({resourceWithDto.NameTypePascalCase} Name, {resourceWithDto.DtoType} Dto)> List{source.Resource.PluralDescription}(CancellationToken cancellationToken);
 """,
             _ => string.Empty
         };
@@ -171,7 +177,7 @@ public delegate IAsyncEnumerable<({resourceWithDto.NameType} Name, {resourceWith
             _ when source.DelegateNames.Contains($"Write{source.Resource.SingularDescription}Artifacts") => string.Empty,
             { Resource: IResourceWithDto resourceWithDto } =>
 $"""
-public delegate ValueTask Write{source.Resource.SingularDescription}Artifacts({resourceWithDto.NameType} name, {resourceWithDto.DtoType} dto, CancellationToken cancellationToken);
+public delegate ValueTask Write{source.Resource.SingularDescription}Artifacts({resourceWithDto.NameTypePascalCase} name, {resourceWithDto.DtoType} dto, CancellationToken cancellationToken);
 """,
             _ => string.Empty
         };
@@ -182,7 +188,7 @@ public delegate ValueTask Write{source.Resource.SingularDescription}Artifacts({r
             _ when source.DelegateNames.Contains($"Write{source.Resource.SingularDescription}InformationFile") => string.Empty,
             { Resource: IResourceWithInformationFile resourceWithInformationFile } =>
 $"""
-public delegate ValueTask Write{source.Resource.SingularDescription}InformationFile({resourceWithInformationFile.NameType} name, {resourceWithInformationFile.DtoType} dto, CancellationToken cancellationToken);
+public delegate ValueTask Write{source.Resource.SingularDescription}InformationFile({resourceWithInformationFile.NameTypePascalCase} name, {resourceWithInformationFile.DtoType} dto, CancellationToken cancellationToken);
 """,
             _ => string.Empty
         };
@@ -285,7 +291,7 @@ $$"""
                 .Map(names => listFromSet(names, cancellationToken))
                 .IfNone(() => listAll(cancellationToken));
 
-        Option<IEnumerable<{{resourceWithDto.NameType}}>> findConfigurationNames()
+        Option<IEnumerable<{{resourceWithDto.NameTypePascalCase}}>> findConfigurationNames()
         {
             var nameStringsResult = from jsonArray in configurationJsonObject.GetJsonArrayProperty("{{source.Resource.NameTypePluralCamelCase}}")
                                     from jsonValues in jsonArray.AsIterable()
@@ -296,14 +302,14 @@ $$"""
                                     select nameStrings;
 
             var result = from nameStrings in nameStringsResult.ToFin()
-                         from names in nameStrings.Traverse({{resourceWithDto.NameType}}.From)
+                         from names in nameStrings.Traverse({{resourceWithDto.NameTypePascalCase}}.From)
                                                   .As()
                          select names.AsEnumerable();
 
             return result.ToOption();
         }
 
-        IAsyncEnumerable<({{resourceWithDto.NameType}} Name, {{resourceWithDto.DtoType}} Dto)> listFromSet(IEnumerable<{{resourceWithDto.NameType}}> names, CancellationToken cancellationToken) =>
+        IAsyncEnumerable<({{resourceWithDto.NameTypePascalCase}} Name, {{resourceWithDto.DtoType}} Dto)> listFromSet(IEnumerable<{{resourceWithDto.NameTypePascalCase}}> names, CancellationToken cancellationToken) =>
             names.Select(name => {{resourceWithDto.UriType}}.From(name, serviceUri))
                  .ToAsyncEnumerable()
                  .Choose(async uri =>
@@ -314,7 +320,7 @@ $$"""
                             select (uri.Name, dto);
                  });
 
-        IAsyncEnumerable<({{resourceWithDto.NameType}} Name, {{resourceWithDto.DtoType}} Dto)> listAll(CancellationToken cancellationToken)
+        IAsyncEnumerable<({{resourceWithDto.NameTypePascalCase}} Name, {{resourceWithDto.DtoType}} Dto)> listAll(CancellationToken cancellationToken)
         {
             var collectionUri = {{resourceWithDto.CollectionUriType}}.From(serviceUri);
 

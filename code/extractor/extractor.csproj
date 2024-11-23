@@ -7,7 +7,8 @@
     <AnalysisLevel>latest-all</AnalysisLevel>
     <Nullable>enable</Nullable>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <!--<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>-->
+    <UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
     <!--<CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>-->
   </PropertyGroup>
 

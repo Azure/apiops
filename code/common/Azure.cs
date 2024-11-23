@@ -1,19 +1,19 @@
-using Azure.ResourceManager;
+using Azure.Core;
+using Azure.Core.Pipeline;
 using Azure.Identity;
+using Azure.ResourceManager;
+using LanguageExt;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.IdentityModel.JsonWebTokens;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Configuration;
-using LanguageExt;
-using Azure.Core.Pipeline;
-using Azure.Core;
-using Microsoft.IdentityModel.JsonWebTokens;
-using Microsoft.Extensions.Logging;
 using System.Reflection;
 
 namespace common;
@@ -85,7 +85,7 @@ public static class AzureModule
         builder.Services.TryAddSingleton(GetHttpPipeline);
     }
 
-    private static void ConfigureTokenCredential(IHostApplicationBuilder builder)
+    public static void ConfigureTokenCredential(IHostApplicationBuilder builder)
     {
         ConfigureAzureEnvironment(builder);
 
@@ -100,7 +100,6 @@ public static class AzureModule
         return configuration.GetValue("AZURE_BEARER_TOKEN")
                             .Map(GetCredentialFromToken)
                             .IfNone(() => GetDefaultAzureCredential(environment.AuthorityHost));
-
 
         static TokenCredential GetCredentialFromToken(string token)
         {

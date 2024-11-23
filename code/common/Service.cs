@@ -105,7 +105,7 @@ public static class ServiceModule
         var configuration = provider.GetRequiredService<IConfiguration>();
 
         var apiVersion = configuration.GetValue("ARM_API_VERSION")
-                                      .IfNone("2024-05-01");
+                                      .IfNone("2024-06-01-preview");
 
         return ServiceProviderUri.From(environment.ManagementEndpoint
                                                   .AppendPathSegment("subscriptions")

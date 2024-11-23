@@ -13,7 +13,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0-3.final" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0-3.final" PrivateAssets="all"/>
     <PackageReference Include="PolySharp" Version="1.14.1" PrivateAssets="all" />
     <Compile Include="..\codegen.resources\**\*.cs" Link="codegen.resources" />
     <Compile Remove="..\codegen.resources\obj\**\*.cs" Link="codegen.resources" />

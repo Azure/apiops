@@ -6,14 +6,9 @@
 		<AnalysisLevel>latest-all</AnalysisLevel>
 		<Nullable>enable</Nullable>
 		<InvariantGlobalization>true</InvariantGlobalization>
-		<!-- <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-		<CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath> -->
+		 <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+		<!--<CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>--> 
 	</PropertyGroup>
-
-	<ItemGroup>
-		<!-- Exclude the output of source generators from the compilation -->
-		<!-- <Compile Remove="$(CompilerGeneratedFilesOutputPath)/**/*.cs" /> -->
-	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Azure.Core" Version="1.44.1" />
@@ -31,6 +26,7 @@
 		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.2.1" />
 		<PackageReference Include="NetEscapades.Configuration.Yaml" Version="3.1.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.10.0" />
+		<PackageReference Include="Polly" Version="8.5.0" />
 		<PackageReference Include="System.Interactive.Async" Version="6.0.1" />
 		<PackageReference Include="System.Linq.Async" Version="6.0.1" />
 		<PackageReference Include="System.Memory.Data" Version="9.0.0" />

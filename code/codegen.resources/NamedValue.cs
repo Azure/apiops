@@ -1,10 +1,13 @@
 ﻿namespace codegen.resources;
 
-internal sealed class NamedValue : IResourceWithDirectory, IResourceWithInformationFile
+internal sealed record NamedValue : IResourceWithName, IResourceWithInformationFile
 {
+    public static NamedValue Instance = new();
+
     public string NameType { get; } = "NamedValueName";
-    public string NameTypePluralCamelCase { get; } = "namedValueNames";
-    public string NameTypePluralPascalCase { get; } = "NamedValueNames";
+    public string NameParameter { get; } = "namedValueName";
+
+    public string NameParameterPlural => $"{NameParameter}s";
     public string SingularDescription { get; } = "NamedValue";
     public string PluralDescription { get; } = "NamedValues";
     public string LoggerSingularDescription { get; } = "named value";
@@ -15,7 +18,6 @@ internal sealed class NamedValue : IResourceWithDirectory, IResourceWithInformat
     public string CollectionUriType { get; } = "NamedValuesUri";
     public string CollectionUriPath { get; } = "namedValues";
     public string UriType { get; } = "NamedValueUri";
-    public string ModuleType { get; } = "NamedValueModule";
 
     public string InformationFileType { get; } = "NamedValueInformationFile";
 

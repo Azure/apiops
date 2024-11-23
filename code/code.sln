@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "extractor.codegen", "extrac
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "codegen.resources", "codegen.resources\codegen.resources.csproj", "{0ED72FFE-2160-499D-800F-89F3546E4BEE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "integration.tests", "integration.tests\integration.tests.csproj", "{CFFE60F8-E079-428B-BF3B-0B0FE5C04E7E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -51,6 +53,10 @@ Global
 		{0ED72FFE-2160-499D-800F-89F3546E4BEE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0ED72FFE-2160-499D-800F-89F3546E4BEE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0ED72FFE-2160-499D-800F-89F3546E4BEE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CFFE60F8-E079-428B-BF3B-0B0FE5C04E7E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CFFE60F8-E079-428B-BF3B-0B0FE5C04E7E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CFFE60F8-E079-428B-BF3B-0B0FE5C04E7E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CFFE60F8-E079-428B-BF3B-0B0FE5C04E7E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

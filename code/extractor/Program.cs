@@ -8,25 +8,31 @@ using System.Threading.Tasks;
 
 namespace extractor;
 
-internal static class Program
+#pragma warning disable CA1515 // Consider making public types internal
+public static class Program
+#pragma warning restore CA1515 // Consider making public types internal
 {
-    private static async Task Main(string[] args) =>
+    public static async Task Main(string[] args) =>
         await HostingModule.RunHost(args, "extractor", ConfigureRunApplication);
 
     private static void ConfigureRunApplication(IHostApplicationBuilder builder)
     {
+        NamedValueModule.ConfigureExtractNamedValues(builder);
+
         builder.Services.TryAddSingleton(GetRunApplication);
     }
 
     private static RunApplication GetRunApplication(IServiceProvider provider)
     {
+        var extractNamedValues = provider.GetRequiredService<ExtractNamedValues>();
+
         var logger = provider.GetRequiredService<ILogger>();
 
         return async cancellationToken =>
         {
             logger.LogInformation("Running extractor...");
 
-            await ValueTask.CompletedTask;
+            await extractNamedValues(cancellationToken);
 
             logger.LogInformation("Extractor finished.");
         };

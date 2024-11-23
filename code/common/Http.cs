@@ -141,7 +141,7 @@ public static class HttpPipelineExtensions
         if (response.IsError)
         {
             return response;
-        };
+        }
 
         using (response)
         {
@@ -183,7 +183,7 @@ public static class HttpPipelineExtensions
         if (response.IsError)
         {
             return response;
-        };
+        }
 
         using (response)
         {
@@ -218,7 +218,7 @@ public static class HttpPipelineExtensions
         if (response.IsError)
         {
             return response;
-        };
+        }
 
         using (response)
         {
