@@ -8,6 +8,7 @@ public static class ApimResources
         NamedValue.Instance,
         Api.Instance,
         ApiOperation.Instance,
-        ApiOperationPolicy.Instance
+        ApiOperationPolicy.Instance,
+        ApiDiagnostic.Instance
         ];
 }

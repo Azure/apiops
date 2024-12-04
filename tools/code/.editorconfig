@@ -15,6 +15,9 @@ dotnet_diagnostic.IDE0058.severity = suggestion
 # CA2007: Consider calling ConfigureAwait on the awaited task
 dotnet_diagnostic.CA2007.severity = suggestion
 
+# CA1724: Type names should not match namespaces
+dotnet_diagnostic.CA1859.severity = suggestion
+
 # CA1859: Use concrete types when possible for improved performance
 dotnet_diagnostic.CA1859.severity = suggestion
 

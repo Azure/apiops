@@ -1,4 +1,6 @@
-﻿using System.Collections.Immutable;
+﻿using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
 
 namespace codegen.resources;
 
@@ -63,29 +65,31 @@ public interface IResourceWithInformationFile : IResourceWithDto, IResourceWithD
 
 public static class ResourceExtensions
 {
-    //public static ImmutableArray<string> GetSelfAndParentNameFunctionParameters(this IResource resource) =>
-    //    resource.GetSelfAndParents()
-    //            .Select(GetNameFunctionParameters)
-    //            .ToImmutableArray();
+    public static string GetBestNameType(this IResource resource) =>
+        resource.GetNameTypeHierarchy()
+                .First();
 
-    //public static ImmutableArray<string> GetParentNameFunctionParameters(this IResource resource) =>
-    //    resource.GetParentsFromClosestToFarthest()
-    //            .Select(GetNameFunctionParameters)
-    //            .ToImmutableArray();
+    public static string GetBestNameTypeParameter(this IResource resource) =>
+        resource.GetNameTypeParameterHierarchy()
+                .First();
 
-    //public static ImmutableArray<IResource> GetSelfAndParents(this IResource resource) =>
-    //    [resource, .. resource.GetParentsFromClosestToFarthest()];
+    public static string GetBestNameTypeWithParameter(this IResource resource) =>
+        resource.GetNameTypeWithParameterHierarchy()
+                .First();
 
-    //public static ImmutableArray<string> GetSelfAndParentNameFunctionArguments(this IResource resource) =>
-    //    ImmutableArray.Create(resource)
-    //                  .AddRange(resource.GetParentsFromClosestToFarthest())
-    //                  .Select(GetNameFunctionArguments)
-    //                  .ToImmutableArray();
+    public static IEnumerable<string> GetNameTypeHierarchy(this IResource resource) =>
+        resource.GetResourceHierarchyBottomUp()
+                .Choose(resource => resource as IResourceWithName)
+                .Select(resource => resource.NameType);
 
-    //public static ImmutableArray<string> GetParentNameFunctionArguments(this IResource resource) =>
-    //    resource.GetParentsFromClosestToFarthest()
-    //            .Select(GetNameFunctionArguments)
-    //            .ToImmutableArray();
+    public static IEnumerable<string> GetNameTypeParameterHierarchy(this IResource resource) =>
+        resource.GetNameTypeHierarchy()
+                .Select(StringModule.FirstLetterToLowerCase);
+
+    public static IEnumerable<string> GetNameTypeWithParameterHierarchy(this IResource resource) =>
+        resource.GetNameTypeHierarchy()
+                .Zip(resource.GetNameTypeParameterHierarchy(),
+                     (nameType, parameter) => $"{nameType} {parameter}");
 
     public static ImmutableArray<IResource> GetResourceHierarchyBottomUp(this IResource resource) =>
         resource switch

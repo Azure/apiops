@@ -6,8 +6,6 @@ internal sealed record NamedValue : IResourceWithName, IResourceWithInformationF
 
     public string NameType { get; } = "NamedValueName";
     public string NameParameter { get; } = "namedValueName";
-
-    public string NameParameterPlural => $"{NameParameter}s";
     public string SingularDescription { get; } = "NamedValue";
     public string PluralDescription { get; } = "NamedValues";
     public string LoggerSingularDescription { get; } = "named value";

@@ -12,6 +12,9 @@ dotnet_diagnostic.CA1707.severity = suggestion
 # CA1715: Identifiers should have correct prefix
 dotnet_diagnostic.CA1715.severity = suggestion
 
+# CA1724: Type names should not match namespaces
+dotnet_diagnostic.CA1724.severity = suggestion
+
 # CA1848: Use the LoggerMessage delegates
 dotnet_diagnostic.CA1848.severity = suggestion
 

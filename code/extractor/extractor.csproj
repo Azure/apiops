@@ -1,25 +1,25 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <AnalysisLevel>latest-all</AnalysisLevel>
-    <Nullable>enable</Nullable>
-    <InvariantGlobalization>true</InvariantGlobalization>
-    <!--<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>-->
-    <UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
-    <!--<CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>-->
-  </PropertyGroup>
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net9.0</TargetFramework>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<AnalysisLevel>latest-all</AnalysisLevel>
+		<Nullable>enable</Nullable>
+		<InvariantGlobalization>true</InvariantGlobalization>
+		<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+		<UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
+		<!--<CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>-->
+	</PropertyGroup>
 
-  <ItemGroup>
-    <!-- Exclude the output of source generators from the compilation -->
-    <!-- <Compile Remove="$(CompilerGeneratedFilesOutputPath)/**/*.cs" /> -->
-  </ItemGroup>
+	<ItemGroup>
+		<!-- Exclude the output of source generators from the compilation -->
+		<!-- <Compile Remove="$(CompilerGeneratedFilesOutputPath)/**/*.cs" /> -->
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\common\common.csproj" />
-    <ProjectReference Include="..\extractor.codegen\extractor.codegen.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\common\common.csproj" />
+		<ProjectReference Include="..\extractor.codegen\extractor.codegen.csproj" ReferenceOutputAssembly="false" OutputItemType="Analyzer" />
+	</ItemGroup>
 
 </Project>

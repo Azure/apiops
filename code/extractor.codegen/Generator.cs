@@ -77,7 +77,7 @@ public class CommonGenerator : IIncrementalGenerator
         {
             Resource = resource,
             DelegateNames = delegateNames,
-            ModuleMethodParameters = parameterDictionary.TryGetValue(resource.ModuleType, out var methodParameters)
+            ModuleMethodParameters = parameterDictionary.TryGetValue(resource.GetModuleClassName(), out var methodParameters)
                                       ? methodParameters
                                       : FrozenDictionary<string, FrozenSet<string>>.Empty
         });
@@ -94,8 +94,8 @@ public class CommonGenerator : IIncrementalGenerator
                       .GroupBy(node => node.ClassName)
                       .ToFrozenDictionary(group => group.Key,
                                           group => group.GroupBy(node => node.MethodName)
-                                                          .ToFrozenDictionary(methodGroup => methodGroup.Key,
-                                                                              methodGroup => methodGroup.Select(node => node.ParameterName)
+                                                        .ToFrozenDictionary(methodGroup => methodGroup.Key,
+                                                                            methodGroup => methodGroup.Select(node => node.ParameterName)
                                                                                                                                            .ToFrozenSet()));
 
     private abstract record MonitoredNode
@@ -142,60 +142,132 @@ using System.Threading.Tasks;
 
 namespace extractor;
 
-{{GenerateExtractDelegate(source)}}
-{{GenerateListDelegate(source)}}
-{{GenerateWriteArtifactsDelegate(source)}}
-{{GenerateWriteInformationFileDelegate(source)}}
+{{GenerateDelegates(source)}}
 
 {{GenerateModule(source)}}
+""".RemoveExtraneousLinesFromCode();
+
+    private static string GenerateDelegates(OutputSource source) =>
+$"""
+{GenerateExtractDelegate(source)}
+
+{GenerateListDelegate(source)}
+
+{GenerateWriteInformationFileDelegate(source)}
+
+{GenerateWritePolicyFileDelegate(source)}
+""".WithMaxBlankLines(0);
+
+    private static string GenerateExtractDelegate(OutputSource source)
+    {
+        switch (source)
+        {
+            case object when source.DelegateNames.Contains($"Extract{source.Resource.PluralDescription}"):
+                return string.Empty;
+            case { Resource: var resource }:
+                var typedParameters =
+                    resource.GetNameTypeWithParameterHierarchy()
+                            .Skip(1)
+                            .Concat(["CancellationToken cancellationToken"])
+                            .CommaSeparate();
+
+                return
+$"""
+public delegate ValueTask Extract{resource.PluralDescription}({typedParameters});
 """;
-
-    private static string GenerateExtractDelegate(OutputSource source) =>
-        source switch
-        {
-            _ when source.DelegateNames.Contains($"Extract{source.Resource.PluralDescription}") => string.Empty,
-            _ =>
-$"""
-public delegate ValueTask Extract{source.Resource.PluralDescription}(CancellationToken cancellationToken);
-"""
+            default:
+                return string.Empty;
         };
+    }
 
-    private static string GenerateListDelegate(OutputSource source) =>
-        source switch
+    private static string GenerateListDelegate(OutputSource source)
+    {
+        switch (source)
         {
-            _ when source.DelegateNames.Contains($"List{source.Resource.PluralDescription}") => string.Empty,
-            { Resource: IResourceWithDto resourceWithDto } =>
+            case object when source.DelegateNames.Contains($"List{source.Resource.PluralDescription}"):
+                return string.Empty;
+            case { Resource: var resource }:
+                var typedParameters =
+                    resource.GetNameTypeWithParameterHierarchy()
+                            .Skip(1)
+                            .Concat(["CancellationToken cancellationToken"])
+                            .CommaSeparate();
+
+                return resource switch
+                {
+                    IResourceWithDto resourceWithDto and IResourceWithName resourceWithName =>
 $"""
-public delegate IAsyncEnumerable<({resourceWithDto.NameTypePascalCase} Name, {resourceWithDto.DtoType} Dto)> List{source.Resource.PluralDescription}(CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<({resourceWithName.NameType} Name, {resourceWithDto.DtoType} Dto)> List{resource.PluralDescription}({typedParameters});
 """,
-            _ => string.Empty
-        };
-
-    private static string GenerateWriteArtifactsDelegate(OutputSource source) =>
-        source switch
-        {
-            _ when source.DelegateNames.Contains($"Write{source.Resource.SingularDescription}Artifacts") => string.Empty,
-            { Resource: IResourceWithDto resourceWithDto } =>
+                    IResourceWithName resourceWithName =>
 $"""
-public delegate ValueTask Write{source.Resource.SingularDescription}Artifacts({resourceWithDto.NameTypePascalCase} name, {resourceWithDto.DtoType} dto, CancellationToken cancellationToken);
+public delegate IAsyncEnumerable<{resourceWithName.NameType}> List{resource.PluralDescription}({typedParameters});
 """,
-            _ => string.Empty
+                    _ => string.Empty
+                };
+            default:
+                return string.Empty;
         };
+    }
 
-    private static string GenerateWriteInformationFileDelegate(OutputSource source) =>
-        source switch
+    private static string GenerateWriteInformationFileDelegate(OutputSource source)
+    {
+        switch (source)
         {
-            _ when source.DelegateNames.Contains($"Write{source.Resource.SingularDescription}InformationFile") => string.Empty,
-            { Resource: IResourceWithInformationFile resourceWithInformationFile } =>
+            case object when source.DelegateNames.Contains($"Write{source.Resource.SingularDescription}InformationFile"):
+                return string.Empty;
+            case { Resource: IResourceWithInformationFile resource }
+                when source.DelegateNames.Contains($"Write{resource.InformationFileType}"):
+                return string.Empty;
+            case { Resource: IResourceWithInformationFile resource }:
+                var typedParameters =
+                    resource.GetNameTypeWithParameterHierarchy()
+                            .Concat(["CancellationToken cancellationToken"])
+                            .Prepend($"{resource.DtoType} dto")
+                            .CommaSeparate();
+
+                return
 $"""
-public delegate ValueTask Write{source.Resource.SingularDescription}InformationFile({resourceWithInformationFile.NameTypePascalCase} name, {resourceWithInformationFile.DtoType} dto, CancellationToken cancellationToken);
-""",
-            _ => string.Empty
+public delegate ValueTask Write{resource.InformationFileType}({typedParameters});
+""";
+            default:
+                return string.Empty;
         };
+    }
+
+    private static string GenerateWritePolicyFileDelegate(OutputSource source)
+    {
+        switch (source)
+        {
+            case object when source.DelegateNames.Contains($"Write{source.Resource.SingularDescription}PolicyFile"):
+                return string.Empty;
+            case { Resource: IPolicyResource resource }
+                when source.DelegateNames.Contains($"Write{resource.PolicyFileType}"):
+                return string.Empty;
+            case { Resource: IPolicyResource resource }:
+                var typedParameters =
+                    resource.GetNameTypeWithParameterHierarchy()
+                            .Skip(1)
+                            .Concat(["CancellationToken cancellationToken"])
+                            .Prepend($"{resource.DtoType} dto")
+                            .CommaSeparate();
+
+                return
+$"""
+public delegate ValueTask Write{resource.PolicyFileType}({typedParameters});
+""";
+            default:
+                return string.Empty;
+        };
+    }
+
+    private static bool MethodExists(string methodName, IEnumerable<string> parameterNames, IDictionary<string, FrozenSet<string>> methodParameters) =>
+        methodParameters.TryGetValue(methodName, out var parameters)
+        && parameterNames.All(parameters.Contains);
 
     private static string GenerateModule(OutputSource source) =>
 $$"""
-internal static partial class {{source.Resource.ModuleType}}
+internal static partial class {{source.Resource.GetModuleClassName()}}
 {
 {{GenerateConfigureExtract(source)}}
 
@@ -204,25 +276,42 @@ internal static partial class {{source.Resource.ModuleType}}
 {{GenerateConfigureList(source)}}
 
 {{GenerateGetList(source)}}
-
-{{GenerateConfigureWriteArtifacts(source)}}
-
-{{GenerateGetWriteArtifacts(source)}}
 }
 """;
 
     private static string GenerateConfigureExtract(OutputSource source) =>
         source switch
         {
-            _ when source.DelegateNames.Contains($"ConfigureExtract{source.Resource.PluralDescription}") => string.Empty,
-            _ =>
+            _ when MethodExists(methodName: $"ConfigureExtract{source.Resource.PluralDescription}",
+                                parameterNames: ["builder"],
+                                source.ModuleMethodParameters) => string.Empty,
+            { Resource: IResource resource } =>
 $$"""
-    public static void ConfigureExtract{{source.Resource.PluralDescription}}(IHostApplicationBuilder builder)
+    public static void ConfigureExtract{{resource.PluralDescription}}(IHostApplicationBuilder builder)
     {
-        ConfigureList{{source.Resource.PluralDescription}}(builder);
-        ConfigureWrite{{source.Resource.SingularDescription}}Artifacts(builder);
+{{$"""
+        ConfigureList{resource.PluralDescription}(builder);
 
-        builder.Services.TryAddSingleton(GetExtract{{source.Resource.PluralDescription}});
+{resource switch
+{
+    IPolicyResource policyResource =>
+$"""
+        ConfigureWrite{policyResource.PolicyFileType}(builder);
+""",
+    _ => string.Empty
+}}
+
+{resource switch
+{
+    IResourceWithInformationFile resourceWithInformationFile =>
+$"""
+        ConfigureWrite{resourceWithInformationFile.InformationFileType}(builder);
+""",
+    _ => string.Empty
+}}
+""".WithMaxBlankLines(0)}}
+
+        builder.Services.TryAddSingleton(GetExtract{{resource.PluralDescription}});
     }
 """
         };
@@ -230,26 +319,72 @@ $$"""
     private static string GenerateGetExtract(OutputSource source) =>
         source switch
         {
-            _ when source.DelegateNames.Contains($"GetExtract{source.Resource.PluralDescription}") => string.Empty,
-            _ =>
-    $$"""
-    private static Extract{{source.Resource.PluralDescription}} GetExtract{{source.Resource.PluralDescription}}(IServiceProvider provider)
+            _ when MethodExists(methodName: $"GetExtract{source.Resource.PluralDescription}",
+                                parameterNames: ["provider"],
+                                source.ModuleMethodParameters) => string.Empty,
+            { Resource: IResource resource } =>
+$$"""
+    private static Extract{{resource.PluralDescription}} GetExtract{{resource.PluralDescription}}(IServiceProvider provider)
     {
-        var list = provider.GetRequiredService<List{{source.Resource.PluralDescription}}>();
-        var writeArtifacts = provider.GetRequiredService<Write{{source.Resource.SingularDescription}}Artifacts>();
+{{$"""
+        var list = provider.GetRequiredService<List{resource.PluralDescription}>();
+
+{resource switch
+{
+    IPolicyResource policyResource =>
+$"""
+        var writePolicyFile = provider.GetRequiredService<Write{policyResource.PolicyFileType}>();
+""",
+    IResourceWithInformationFile resourceWithInformationFile =>
+$"""
+        var writeInformationFile = provider.GetRequiredService<Write{resourceWithInformationFile.InformationFileType}>();
+""",
+    _ => string.Empty
+}}
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
+""".WithMaxBlankLines(0)}}
 
-        return async cancellationToken =>
+        return {{resource.GetNameTypeParameterHierarchy().Skip(1).ToArray() switch
+{
+[] => "async cancellationToken =>",
+    var values => $"async ({values.Concat(["cancellationToken"]).CommaSeparate()}) =>"
+}}}
         {
-            using var _ = activitySource.StartActivity(nameof(Extract{{source.Resource.PluralDescription}}));
+            using var _ = activitySource.StartActivity(nameof(Extract{{resource.PluralDescription}}));
 
-            logger.LogInformation("Extracting {{source.Resource.LoggerPluralDescription}}...");
+            logger.LogInformation("Extracting {{resource.LoggerPluralDescription}}...");
 
             await list(cancellationToken)
-                    .IterParallel(async resource => await writeArtifacts(resource.Name, resource.Dto, cancellationToken),
+                    .IterParallel({{resource switch
+{
+    IResourceWithDto and IResourceWithName => "async resource => await extract(resource.Name, resource.Dto, cancellationToken),",
+    IResourceWithName => "async name => await extract(name, cancellationToken),",
+    _ => string.Empty
+}}}
                                   cancellationToken);
         };
+
+        async ValueTask extract({{resource switch
+{
+    IResourceWithDto resourceWithDto and IResourceWithName resourceWithName => $"{resourceWithName.NameType} name, {resourceWithDto.DtoType} dto, ",
+    IResourceWithName resourceWithName => $"{resourceWithName.NameType} name, ",
+    _ => string.Empty
+}}}CancellationToken cancellationToken)
+        {
+{{resource switch
+{
+    IPolicyResource =>
+$"""
+            await writePolicyFile(dto, name, cancellationToken);
+""",
+    IResourceWithInformationFile =>
+$"""
+            await writeInformationFile(dto, name, cancellationToken);
+""",
+    _ => string.Empty
+}}}
+        }
     }
 """
         };
@@ -257,16 +392,18 @@ $$"""
     private static string GenerateConfigureList(OutputSource source) =>
         source switch
         {
-            _ when source.DelegateNames.Contains($"ConfigureList{source.Resource.PluralDescription}") => string.Empty,
-            { Resource: IResourceWithDto } =>
+            _ when MethodExists(methodName: $"ConfigureList{source.Resource.PluralDescription}",
+                                parameterNames: ["builder"],
+                                source.ModuleMethodParameters) => string.Empty,
+            { Resource: var resource } =>
 $$"""
-    private static void ConfigureList{{source.Resource.PluralDescription}}(IHostApplicationBuilder builder)
+    private static void ConfigureList{{resource.PluralDescription}}(IHostApplicationBuilder builder)
     {
         ConfigurationModule.ConfigureConfigurationJson(builder);
         ServiceModule.ConfigureServiceUri(builder);
         AzureModule.ConfigureHttpPipeline(builder);
 
-        builder.Services.TryAddSingleton(GetList{{source.Resource.PluralDescription}});
+        builder.Services.TryAddSingleton(GetList{{resource.PluralDescription}});
     }
 """,
             _ => string.Empty
@@ -275,98 +412,86 @@ $$"""
     private static string GenerateGetList(OutputSource source) =>
         source switch
         {
-            _ when source.DelegateNames.Contains($"GetList{source.Resource.PluralDescription}") => string.Empty,
-            { Resource: IResourceWithDto resourceWithDto } =>
+            _ when MethodExists(methodName: $"GetList{source.Resource.PluralDescription}",
+                                parameterNames: ["provider"],
+                                source.ModuleMethodParameters) => string.Empty,
+            { Resource: IResource resource } =>
 $$"""
-    private static List{{source.Resource.PluralDescription}} GetList{{source.Resource.PluralDescription}}(IServiceProvider provider)
+    private static List{{resource.PluralDescription}} GetList{{resource.PluralDescription}}(IServiceProvider provider)
     {
         var configurationJson = provider.GetRequiredService<ConfigurationJson>();
         var serviceUri = provider.GetRequiredService<ServiceUri>();
         var pipeline = provider.GetRequiredService<HttpPipeline>();
 
-        var configurationJsonObject = configurationJson.ToJsonObject();
-
-        return cancellationToken =>
-            findConfigurationNames()
-                .Map(names => listFromSet(names, cancellationToken))
-                .IfNone(() => listAll(cancellationToken));
-
-        Option<IEnumerable<{{resourceWithDto.NameTypePascalCase}}>> findConfigurationNames()
+        return ({{resource.GetNameTypeParameterHierarchy().Skip(1).Concat(["cancellationToken"]).CommaSeparate()}}) =>
         {
-            var nameStringsResult = from jsonArray in configurationJsonObject.GetJsonArrayProperty("{{source.Resource.NameTypePluralCamelCase}}")
-                                    from jsonValues in jsonArray.AsIterable()
-                                                                .Traverse(node => node.AsJsonValue())
-                                                                .As()
-                                    from nameStrings in jsonValues.Traverse(value => value.AsString())
-                                                                  .As()
-                                    select nameStrings;
-
-            var result = from nameStrings in nameStringsResult.ToFin()
-                         from names in nameStrings.Traverse({{resourceWithDto.NameTypePascalCase}}.From)
-                                                  .As()
-                         select names.AsEnumerable();
-
-            return result.ToOption();
-        }
-
-        IAsyncEnumerable<({{resourceWithDto.NameTypePascalCase}} Name, {{resourceWithDto.DtoType}} Dto)> listFromSet(IEnumerable<{{resourceWithDto.NameTypePascalCase}}> names, CancellationToken cancellationToken) =>
-            names.Select(name => {{resourceWithDto.UriType}}.From(name, serviceUri))
-                 .ToAsyncEnumerable()
-                 .Choose(async uri =>
-                 {
-                     var dtoOption = await uri.GetOptionalDto(pipeline, cancellationToken);
-
-                     return from dto in dtoOption
-                            select (uri.Name, dto);
-                 });
-
-        IAsyncEnumerable<({{resourceWithDto.NameTypePascalCase}} Name, {{resourceWithDto.DtoType}} Dto)> listAll(CancellationToken cancellationToken)
-        {
-            var collectionUri = {{resourceWithDto.CollectionUriType}}.From(serviceUri);
-
-            return collectionUri.List(pipeline, cancellationToken);
-        }
-    }
-""",
-            _ => string.Empty
-        };
-
-    private static string GenerateConfigureWriteArtifacts(OutputSource source) =>
-        source switch
-        {
-            _ when source.DelegateNames.Contains($"Write{source.Resource.SingularDescription}Artifacts") => string.Empty,
-            { Resource: IResourceWithDto } =>
-$$"""
-    private static void ConfigureWrite{{source.Resource.SingularDescription}}Artifacts(IHostApplicationBuilder builder)
-    {
-        ServiceModule.ConfigureServiceDirectory(builder);
-
-        builder.Services.TryAddSingleton(GetWrite{{source.Resource.SingularDescription}}Artifacts);
-    }
-""",
-            _ => string.Empty
-        };
-
-    private static string GenerateGetWriteArtifacts(OutputSource source) =>
-        source switch
-        {
-            _ when source.DelegateNames.Contains($"Write{source.Resource.SingularDescription}Artifacts") => string.Empty,
-            { Resource: IResourceWithInformationFile resourceWithInformationFile } =>
-$$"""
-    private static Write{{source.Resource.SingularDescription}}Artifacts GetWrite{{source.Resource.SingularDescription}}Artifacts(IServiceProvider provider)
-    {
-        var serviceDirectory = provider.GetRequiredService<ServiceDirectory>();
-        var logger = provider.GetRequiredService<ILogger>();
-
-        return async (name, dto, cancellationToken) =>
-        {
-            var informationFile = {{resourceWithInformationFile.InformationFileType}}.From(name, serviceDirectory);
-
-            logger.LogInformation("Writing {{source.Resource.LoggerSingularDescription}} information file {{{resourceWithInformationFile.InformationFileType}}}...", informationFile);
-            await informationFile.WriteDto(dto, cancellationToken);
+            var collectionUri = {{resource.CollectionUriType}}.From({{resource.GetNameTypeParameterHierarchy().Skip(1).Concat(["serviceUri"]).CommaSeparate()}});
+            return collectionUri.{{resource switch
+{
+    IResourceWithDto => "List(pipeline, cancellationToken);",
+    _ => "ListNames(pipeline, cancellationToken);"
+}}}
         };
     }
-""",
-            _ => string.Empty
+"""
         };
+
+    //    private static string GenerateGetList(OutputSource source) =>
+    //        source switch
+    //        {
+    //            _ when source.DelegateNames.Contains($"GetList{source.Resource.PluralDescription}") => string.Empty,
+    //            { Resource: IResourceWithName resourceWithDto } =>
+    //$$"""
+    //    private static List{{source.Resource.PluralDescription}} GetList{{source.Resource.PluralDescription}}(IServiceProvider provider)
+    //    {
+    //        var configurationJson = provider.GetRequiredService<ConfigurationJson>();
+    //        var serviceUri = provider.GetRequiredService<ServiceUri>();
+    //        var pipeline = provider.GetRequiredService<HttpPipeline>();
+
+    //        var configurationJsonObject = configurationJson.ToJsonObject();
+
+    //        return cancellationToken =>
+    //            findConfigurationNames()
+    //                .Map(names => listFromSet(names, cancellationToken))
+    //                .IfNone(() => listAll(cancellationToken));
+
+    //        Option<IEnumerable<{{resourceWithDto.NameTypePascalCase}}>> findConfigurationNames()
+    //        {
+    //            var nameStringsResult = from jsonArray in configurationJsonObject.GetJsonArrayProperty("{{source.Resource.NameTypePluralCamelCase}}")
+    //                                    from jsonValues in jsonArray.AsIterable()
+    //                                                                .Traverse(node => node.AsJsonValue())
+    //                                                                .As()
+    //                                    from nameStrings in jsonValues.Traverse(value => value.AsString())
+    //                                                                  .As()
+    //                                    select nameStrings;
+
+    //            var result = from nameStrings in nameStringsResult.ToFin()
+    //                         from names in nameStrings.Traverse({{resourceWithDto.NameTypePascalCase}}.From)
+    //                                                  .As()
+    //                         select names.AsEnumerable();
+
+    //            return result.ToOption();
+    //        }
+
+    //        IAsyncEnumerable<({{resourceWithDto.NameTypePascalCase}} Name, {{resourceWithDto.DtoType}} Dto)> listFromSet(IEnumerable<{{resourceWithDto.NameTypePascalCase}}> names, CancellationToken cancellationToken) =>
+    //            names.Select(name => {{resourceWithDto.UriType}}.From(name, serviceUri))
+    //                 .ToAsyncEnumerable()
+    //                 .Choose(async uri =>
+    //                 {
+    //                     var dtoOption = await uri.GetOptionalDto(pipeline, cancellationToken);
+
+    //                     return from dto in dtoOption
+    //                            select (uri.Name, dto);
+    //                 });
+
+    //        IAsyncEnumerable<({{resourceWithDto.NameTypePascalCase}} Name, {{resourceWithDto.DtoType}} Dto)> listAll(CancellationToken cancellationToken)
+    //        {
+    //            var collectionUri = {{resourceWithDto.CollectionUriType}}.From(serviceUri);
+
+    //            return collectionUri.List(pipeline, cancellationToken);
+    //        }
+    //    }
+    //""",
+    //            _ => string.Empty
+    //        };
 }
