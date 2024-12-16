@@ -11,9 +11,9 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "publisher", "publisher\publ
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "common.tests", "common.tests\common.tests.csproj", "{D1ED4FC5-8C52-4380-8520-BC46F475A4F8}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "integration.tests", "integration.tests\integration.tests.csproj", "{05923D65-3595-445A-8EB3-5ECC1F99A727}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "integration.tests", "integration.tests\integration.tests.csproj", "{05923D65-3595-445A-8EB3-5ECC1F99A727}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "aspire", "aspire\aspire.csproj", "{C0AD9089-77B8-4E2F-ADD3-1F0846B8D370}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "aspire", "aspire\aspire.csproj", "{C0AD9089-77B8-4E2F-ADD3-1F0846B8D370}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "publisher.unit.tests", "publisher.unit.tests\publisher.unit.tests.csproj", "{C24D7BC6-5BFA-4D11-A903-63049623258D}"
 EndProject
