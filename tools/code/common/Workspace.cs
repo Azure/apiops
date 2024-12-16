@@ -88,7 +88,7 @@ public sealed record WorkspaceDirectory : ResourceDirectory
 
     public static Option<WorkspaceDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
         directory is not null
-            ? from parent in WorkspacesDirectory.TryParse(directory?.Parent, serviceDirectory)
+            ? from parent in WorkspacesDirectory.TryParse(directory.Parent, serviceDirectory)
               let name = WorkspaceName.From(directory!.Name)
               select new WorkspaceDirectory
               {

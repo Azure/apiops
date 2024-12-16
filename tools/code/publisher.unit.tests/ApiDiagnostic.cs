@@ -84,7 +84,7 @@ public class FindApiDiagnosticDtoTests
             return await findDto(Name, ApiName, cancellationToken);
         }
 
-        private IServiceProvider GetServiceProvider()
+        private ServiceProvider GetServiceProvider()
         {
             var services = new ServiceCollection();
 

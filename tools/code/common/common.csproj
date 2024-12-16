@@ -4,35 +4,33 @@
 		<TargetFramework>net8.0</TargetFramework>
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<AnalysisLevel>8-all</AnalysisLevel>
-    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
-		<WarningsNotAsErrors>CA1034,CA1062,CA1724,CA2007,CA1848</WarningsNotAsErrors>
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Core" Version="1.43.0" />
-		<PackageReference Include="Azure.Identity" Version="1.12.0" />
+		<PackageReference Include="Azure.Core" Version="1.44.1" />
+		<PackageReference Include="Azure.Identity" Version="1.13.1" />
     <PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.2.0" />
     <PackageReference Include="Azure.ResourceManager" Version="1.13.0" />
 		<PackageReference Include="Flurl" Version="4.0.0" />
 		<PackageReference Include="LanguageExt.Core" Version="5.0.0-beta-01" />
-		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="8.0.0" />
-		<PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
-		<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="8.9.1" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
-		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.0.2" />
-		<PackageReference Include="Microsoft.OpenApi.Readers" Version="1.6.21" />
+		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.3.0" />
+		<PackageReference Include="Microsoft.OpenApi.Readers" Version="1.6.22" />
     <PackageReference Include="NetEscapades.Configuration.Yaml" Version="3.1.0" />
 		<PackageReference Include="Nito.Comparers" Version="6.2.2" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.9.0" />
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.9.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.9.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.9.0" />
-		<PackageReference Include="Polly" Version="8.4.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.10.0" />
+		<PackageReference Include="Polly" Version="8.5.0" />
 		<PackageReference Include="System.Interactive.Async" Version="6.0.1" />
 		<PackageReference Include="System.Linq.Async" Version="6.0.1" />
-		<PackageReference Include="Yaml2JsonNode" Version="2.1.1" />
-		<PackageReference Include="YamlDotNet.System.Text.Json" Version="1.5.0" />
+		<PackageReference Include="Yaml2JsonNode" Version="2.2.0" />
+		<PackageReference Include="YamlDotNet.System.Text.Json" Version="1.6.4" />
 	</ItemGroup>
 
 </Project>

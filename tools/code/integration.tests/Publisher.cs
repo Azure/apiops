@@ -18,6 +18,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using YamlDotNet.System.Text.Json;
+using ILogger = Microsoft.Extensions.Logging.ILogger;
 
 namespace integration.tests;
 

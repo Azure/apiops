@@ -88,7 +88,7 @@ public sealed record WorkspaceApiDirectory : ResourceDirectory
 
     public static Option<WorkspaceApiDirectory> TryParse(DirectoryInfo? directory, ManagementServiceDirectory serviceDirectory) =>
         directory is not null
-            ? from parent in WorkspaceApisDirectory.TryParse(directory?.Parent, serviceDirectory)
+            ? from parent in WorkspaceApisDirectory.TryParse(directory.Parent, serviceDirectory)
               let name = ApiName.From(directory!.Name)
               select new WorkspaceApiDirectory
               {

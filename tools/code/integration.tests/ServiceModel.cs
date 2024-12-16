@@ -19,7 +19,7 @@ public delegate ValueTask PutServiceModel(ServiceModel serviceModel, ManagementS
 public delegate ValueTask WriteServiceModelArtifacts(ServiceModel serviceModel, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 public delegate ValueTask<ImmutableArray<CommitId>> WriteServiceModelCommits(IEnumerable<ServiceModel> serviceModels, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken);
 
-internal sealed class ServiceModelModule
+internal static class ServiceModelModule
 {
     public static void ConfigurePutServiceModel(IHostApplicationBuilder builder)
     {

@@ -21,8 +21,6 @@ public sealed record AzureEnvironment(Uri AuthorityHost, string DefaultScope, Ur
 
     public static AzureEnvironment USGovernment { get; } = new(AzureAuthorityHosts.AzureGovernment, ArmEnvironment.AzureGovernment.DefaultScope, ArmEnvironment.AzureGovernment.Endpoint);
 
-    public static AzureEnvironment Germany { get; } = new(AzureAuthorityHosts.AzureGermany, ArmEnvironment.AzureGermany.DefaultScope, ArmEnvironment.AzureGermany.Endpoint);
-
     public static AzureEnvironment China { get; } = new(AzureAuthorityHosts.AzureChina, ArmEnvironment.AzureChina.DefaultScope, ArmEnvironment.AzureChina.Endpoint);
 }
 
@@ -53,7 +51,6 @@ public static class AzureModule
                                 "AzureGlobalCloud" or nameof(ArmEnvironment.AzurePublicCloud) => AzureEnvironment.Public,
                                 "AzureChinaCloud" or nameof(ArmEnvironment.AzureChina) => AzureEnvironment.China,
                                 "AzureUSGovernment" or nameof(ArmEnvironment.AzureGovernment) => AzureEnvironment.USGovernment,
-                                "AzureGermanCloud" or nameof(ArmEnvironment.AzureGermany) => AzureEnvironment.Germany,
                                 _ => throw new InvalidOperationException($"AZURE_CLOUD_ENVIRONMENT is invalid. Valid values are {nameof(ArmEnvironment.AzurePublicCloud)}, {nameof(ArmEnvironment.AzureChina)}, {nameof(ArmEnvironment.AzureGovernment)}, {nameof(ArmEnvironment.AzureGermany)}")
                             })
                             .IfNone(() => AzureEnvironment.Public);

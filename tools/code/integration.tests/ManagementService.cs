@@ -282,37 +282,3 @@ public static class ManagementServiceModule
                                                                           .ToUri());
     }
 }
-
-file sealed class WriteServiceModelArtifactsHandler(ILogger<WriteServiceModelArtifacts> logger,
-                                                    ActivitySource activitySource,
-                                                    WriteNamedValueModels writeNamedValues,
-                                                    WriteTagModels writeTags,
-                                                    WriteVersionSetModels writeVersionSets,
-                                                    WriteBackendModels writeBackends,
-                                                    WriteLoggerModels writeLoggers,
-                                                    WriteDiagnosticModels writeDiagnostics,
-                                                    WritePolicyFragmentModels writePolicyFragments,
-                                                    WriteServicePolicyModels writeServicePolicies,
-                                                    WriteGroupModels writeGroups,
-                                                    WriteProductModels writeProducts,
-                                                    WriteApiModels writeApis)
-{
-    public async ValueTask Handle(ServiceModel serviceModel, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
-    {
-        using var _ = activitySource.StartActivity(nameof(WriteServiceModelArtifacts));
-
-        logger.LogInformation("Writing service model artifacts to {ServiceDirectory}...", serviceDirectory);
-
-        await writeNamedValues(serviceModel.NamedValues, serviceDirectory, cancellationToken);
-        await writeTags(serviceModel.Tags, serviceDirectory, cancellationToken);
-        await writeVersionSets(serviceModel.VersionSets, serviceDirectory, cancellationToken);
-        await writeBackends(serviceModel.Backends, serviceDirectory, cancellationToken);
-        await writeLoggers(serviceModel.Loggers, serviceDirectory, cancellationToken);
-        await writeDiagnostics(serviceModel.Diagnostics, serviceDirectory, cancellationToken);
-        await writePolicyFragments(serviceModel.PolicyFragments, serviceDirectory, cancellationToken);
-        await writeServicePolicies(serviceModel.ServicePolicies, serviceDirectory, cancellationToken);
-        await writeGroups(serviceModel.Groups, serviceDirectory, cancellationToken);
-        await writeProducts(serviceModel.Products, serviceDirectory, cancellationToken);
-        await writeApis(serviceModel.Apis, serviceDirectory, cancellationToken);
-    }
-}

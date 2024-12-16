@@ -106,7 +106,7 @@ public class FindConfigurationSectionTests
             return findConfigurationSection(sectionNames);
         }
 
-        private IServiceProvider GetServiceProvider()
+        private ServiceProvider GetServiceProvider()
         {
             var services = new ServiceCollection();
 
