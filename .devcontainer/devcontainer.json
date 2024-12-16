@@ -1,11 +1,10 @@
 {
-	"name": "C# (.NET)",
+	"name": "Dev container",
 	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
 	"features": {
 		"ghcr.io/devcontainers/features/dotnet:2": {
 			"version": "8.0",
-			"additionalVersions": "9.0",
-			"workloads": "aspire"
+			"additionalVersions": "9.0"
 		},
 		"ghcr.io/devcontainers/features/azure-cli:1": {
 			"version": "latest",
@@ -14,18 +13,21 @@
 		"ghcr.io/devcontainers/features/powershell:1": {
 			"version": "latest"
 		},
-		"ghcr.io/devcontainers/features/git:1": {}
+		"ghcr.io/devcontainers/features/git:1": {},
+		"ghcr.io/devcontainers/features/github-cli:1": {}
 	},
-	"postCreateCommand": "./.devcontainer/postCreateCommand.sh",
+	"postCreateCommand": "sh .devcontainer/install.sh",
 	"customizations": {
 		"vscode": {
 			"extensions": [
 				"ms-azuretools.vscode-bicep",
-				"ms-azure-devops.azure-pipelines",
 				"ms-dotnettools.csdevkit",
-				"github.copilot",
-				"github.copilot-chat",
-				"timonwong.shellcheck"
+				"ms-azure-devops.azure-pipelines",
+				"GitHub.vscode-github-actions",
+				"GitHub.copilot",
+				"timonwong.shellcheck",
+				"foxundermoon.shell-format",
+				"redhat.vscode-yaml"
 			]
 		}
 	}
