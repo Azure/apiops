@@ -52,7 +52,10 @@ internal static class GatewayModule
 
         async ValueTask extractGateway(GatewayName name, GatewayDto dto, CancellationToken cancellationToken)
         {
-            await writeArtifacts(name, dto, cancellationToken);
+            if (name != GatewayName.Managed)
+            {
+                await writeArtifacts(name, dto, cancellationToken);
+            }
             await extractGatewayApis(name, cancellationToken);
         }
     }
@@ -97,7 +100,8 @@ internal static class GatewayModule
         IAsyncEnumerable<(GatewayName, GatewayDto)> listAll(CancellationToken cancellationToken)
         {
             var gatewaysUri = GatewaysUri.From(serviceUri);
-            return gatewaysUri.List(pipeline, cancellationToken);
+            return gatewaysUri.List(pipeline, cancellationToken)
+                .Append((GatewayName.Managed, GatewayDto.Managed));
         }
     }
 
