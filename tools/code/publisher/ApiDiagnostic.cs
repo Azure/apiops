@@ -127,7 +127,7 @@ internal static class ApiDiagnosticModule
     {
         AzureModule.ConfigureManagementServiceDirectory(builder);
         CommonModule.ConfigureTryGetFileContents(builder);
-        ConfigurationJsonModule.ConfigureFindConfigurationSection(builder);
+        ConfigurationModule.ConfigureConfigurationJson(builder);
 
         builder.Services.TryAddSingleton(GetFindApiDiagnosticDto);
     }
@@ -136,7 +136,7 @@ internal static class ApiDiagnosticModule
     {
         var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var tryGetFileContents = provider.GetRequiredService<TryGetFileContents>();
-        var findConfigurationSection = provider.GetRequiredService<FindConfigurationSection>();
+        var configurationJson = provider.GetRequiredService<ConfigurationJson>();
 
         return async (name, apiName, cancellationToken) =>
         {
@@ -148,10 +148,33 @@ internal static class ApiDiagnosticModule
                    select overrideDto(dto, name, apiName);
         };
 
-        ApiDiagnosticDto overrideDto(ApiDiagnosticDto dto, ApiDiagnosticName name, ApiName apiName) =>
-            findConfigurationSection(["apis", apiName.Value, "diagnostics", name.Value])
-                .Map(configurationJson => OverrideDtoFactory.Override(dto, configurationJson))
-                .IfNone(dto);
+        ApiDiagnosticDto overrideDto(ApiDiagnosticDto dto, ApiDiagnosticName name, ApiName apiName)
+        {
+            var diagnosticSectionOption =
+                // Get the apis section from the configuration json
+                from apis in configurationJson.Value
+                                              .TryGetJsonArrayProperty("apis")
+                                              .ToOption()
+                    // Get the API with the specified name
+                from api in apis.PickJsonObjects()
+                                .Where(api => api.TryGetStringProperty("name")
+                                                 .Where(name => name.Equals(apiName.ToString(), StringComparison.OrdinalIgnoreCase))
+                                                 .Any())
+                                .HeadOrNone()
+                    // Get the diagnostics section from the API
+                from diagnostics in api.TryGetJsonArrayProperty("diagnostics")
+                                       .ToOption()
+                    // Get the diagnostic with the specified name
+                from diagnostic in diagnostics.PickJsonObjects()
+                                              .Where(diagnostic => diagnostic.TryGetStringProperty("name")
+                                                                         .Where(name => name.Equals(name.ToString(), StringComparison.OrdinalIgnoreCase))
+                                                                         .Any())
+                                              .HeadOrNone()
+                select diagnostic;
+
+            return diagnosticSectionOption.Map(json => OverrideDtoFactory.Override(dto, json))
+                                          .IfNone(dto);
+        }
     }
 
     private static void ConfigurePutApiDiagnosticInApim(IHostApplicationBuilder builder)
