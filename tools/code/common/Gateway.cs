@@ -15,6 +15,8 @@ namespace common;
 
 public sealed record GatewayName : ResourceName, IResourceName<GatewayName>
 {
+    public static GatewayName Managed { get; } = From("managed");
+
     private GatewayName(string value) : base(value) { }
 
     public static GatewayName From(string value) => new(value);
@@ -119,6 +121,15 @@ public sealed record GatewayInformationFile : ResourceFile
 
 public sealed record GatewayDto
 {
+    public static GatewayDto Managed { get; } = new()
+    {
+        Properties = new GatewayContract
+        {
+            Description = null,
+            LocationData = null
+        }
+    };
+
     [JsonPropertyName("properties")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public required GatewayContract Properties { get; init; }
