@@ -85,16 +85,6 @@ internal static class AppModule
         builder.Services.TryAddSingleton(GetRunApplication);
     }
 
-    [System.AttributeUsage(System.AttributeTargets.Assembly, Inherited = false, AllowMultiple = false)]
-    sealed class PublisherReleaseVersionAttribute : System.Attribute
-    {
-        public string Version { get; }
-        public PublisherReleaseVersionAttribute(string releaseVersion)
-        {
-            this.Version = releaseVersion;
-        }
-    }
-
     private static RunApplication GetRunApplication(IServiceProvider provider)
     {
         var putNamedValues = provider.GetRequiredService<PutNamedValues>();
