@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.FeatureManagement;
 using System;
 using System.Diagnostics;
+using System.Reflection;
 
 namespace extractor;
 
@@ -51,12 +52,13 @@ internal static class AppModule
         var featureManager = provider.GetRequiredService<IFeatureManager>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
+        var releaseVersion = Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version ?? "0.0.0";
 
         return async cancellationToken =>
         {
             using var activity = activitySource.StartActivity(nameof(RunApplication));
 
-            logger.LogInformation("Running extractor...");
+            logger.LogInformation("Running extractor {ReleaseVersion}...", releaseVersion);
 
             await extractNamedValues(cancellationToken);
             await extractTags(cancellationToken);

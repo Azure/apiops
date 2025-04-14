@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.FeatureManagement;
 using System;
 using System.Diagnostics;
+using System.Reflection;
 
 namespace publisher;
 
@@ -84,6 +85,16 @@ internal static class AppModule
         builder.Services.TryAddSingleton(GetRunApplication);
     }
 
+    [System.AttributeUsage(System.AttributeTargets.Assembly, Inherited = false, AllowMultiple = false)]
+    sealed class PublisherReleaseVersionAttribute : System.Attribute
+    {
+        public string Version { get; }
+        public PublisherReleaseVersionAttribute(string releaseVersion)
+        {
+            this.Version = releaseVersion;
+        }
+    }
+
     private static RunApplication GetRunApplication(IServiceProvider provider)
     {
         var putNamedValues = provider.GetRequiredService<PutNamedValues>();
@@ -156,11 +167,14 @@ internal static class AppModule
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
+        var releaseVersion = Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version ?? "0.0.0";
+
+
         return async cancellationToken =>
         {
             using var activity = activitySource.StartActivity(nameof(RunApplication));
 
-            logger.LogInformation("Running publisher...");
+            logger.LogInformation("Running publisher {ReleaseVersion}...", releaseVersion);
 
             await putNamedValues(cancellationToken);
             await putGateways(cancellationToken);
