@@ -17,7 +17,7 @@ on:
         type: string
 
 env:
-  apiops_release_version: desired-version-goes-here
+  apiops_release_version: v6.0.1.7
   #By default, this will be Information but if you want something different you will need to add a variable in the Settings -> Environment -> Environment variables section
   Logging__LogLevel__Default: ${{ vars.LOG_LEVEL }}
 
