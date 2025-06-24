@@ -365,3 +365,4 @@ appsettings.json
 # These files are your personal settings - don't commit them to source control.
 tools/code/.env.publisher
 tools/code/.env.extractor
+apim_tf/.terraform/

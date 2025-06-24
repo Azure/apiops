@@ -21,7 +21,7 @@ on:
         - OpenAPIV2Json
 
 env:
-  apiops_release_version: v6.0.1.7
+  apiops_release_version: desired-version-goes-here
 
 jobs:
   extract:
