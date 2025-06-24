@@ -7,7 +7,7 @@
 <policies>
 	<!-- Throttle, authorize, validate, cache, or transform the requests -->
 	<inbound>
-		<rate-limit calls="5" renewal-period="60" />
+		<rate-limit calls="5" renewal-period="50" />
 		<base />
 	</inbound>
 	<!-- Control if and how the requests are forwarded to services  -->
