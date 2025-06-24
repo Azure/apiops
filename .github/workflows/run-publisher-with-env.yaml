@@ -1,25 +1,25 @@
 name: Run Publisher with Environment
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
       API_MANAGEMENT_ENVIRONMENT:
+        description: 'Choose the environment to deploy to.'
         required: true
-        type: string
-      CONFIGURATION_YAML_PATH:
-        required: false
-        type: string
-      COMMIT_ID:
-        required: false
-        type: string
+        type: choice
+        options:
+          - dev
+          - prod
       API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH:
+        description: 'The path to the artifacts folder (e.g., apimartifacts).'
         required: true
         type: string
+        default: 'apimartifacts'
 
 env:
   apiops_release_version: v6.0.1.7
-  #By default, this will be Information but if you want something different you will need to add a variable in the Settings -> Environment -> Environment variables section
-  Logging__LogLevel__Default: ${{ vars.LOG_LEVEL }}
+  # By default, this will be Information but if you want something different you will need to add a variable in the Settings -> Environment -> Environment variables section
+  Logging__LogLevel__Default: ${{ vars.LOG_LEVEL || 'Information' }}
 
 jobs:
   build:
