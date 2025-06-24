@@ -1,0 +1,29 @@
+openapi: 3.0.1
+info:
+  title: Test Product
+  description: ''
+  version: '1.0'
+servers:
+  - url: https://apim-test-1-dxyf7x.azure-api.net
+paths:
+  /test:
+    get:
+      summary: test
+      description: test
+      operationId: test
+      responses:
+        '200':
+          description: 
+components:
+  securitySchemes:
+    apiKeyHeader:
+      type: apiKey
+      name: Ocp-Apim-Subscription-Key
+      in: header
+    apiKeyQuery:
+      type: apiKey
+      name: subscription-key
+      in: query
+security:
+  - apiKeyHeader: [ ]
+  - apiKeyQuery: [ ]
