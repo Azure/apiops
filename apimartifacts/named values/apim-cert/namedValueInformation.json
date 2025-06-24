@@ -1,0 +1,8 @@
+{
+  "properties": {
+    "displayName": "apim-cert-test",
+    "secret": false,
+    "tags": [],
+    "value": "nur30apim1"
+  }
+}
