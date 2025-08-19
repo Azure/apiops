@@ -76,7 +76,7 @@ If you are trying to override a secret stored as secret namedvalue type in APIM 
 The important thing to note here is that the value included in the configuration override needs to be defined as a secret in your Azure Devops (as a variable group secret) and Github (as an environment secret) and then passed as an environment variable in the yaml files. The sample configuration yaml files provided in this repository set a variable name called testSecretValue which is the value that gets set on Azure APIM. Another thing to note here is that there is that you need to surround your secret with {#[your secret]#}. Set the list of environments variables as you fit for your scenario. 
 
 ```
-Note: You will need to install the Replace Tokens Extension in the Azure DevOps environment. Go to the marketplace and search for Replace Tokens. You don't need to install any extension for Github as its not required there.
+Note: You will need to install the Replace Tokens Extension in the Azure DevOps environment. Go to the marketplace and search for Replace Tokens.  The marketplace has multiple Replace Token extensions. You can use:  https://marketplace.visualstudio.com/items?itemName=qetza.replacetokens.  You don't need to install any extension for Github as its not required there.
 ```
 
 ```
