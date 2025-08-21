@@ -25,9 +25,9 @@ jobs:
       # Set the COMMIT_ID env variable
       - name: Set the Commit Id
         id: commit
-        run: echo "commit_id=${{ github.sha }}" >> $GITHUB_ENV
+        run: echo "commit_id=${github.sha}" >> $GITHUB_OUTPUT
     outputs:
-      commit_id: ${{ github.sha }}
+      commit_id: ${{ steps.commit.outputs.commit_id }}
   #Publish with Commit ID
   Push-Changes-To-APIM-Dev-With-Commit-ID:
     if: (github.event.inputs.COMMIT_ID_CHOICE == 'publish-artifacts-in-last-commit' || github.event.inputs.COMMIT_ID_CHOICE == '')
