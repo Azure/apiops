@@ -435,7 +435,7 @@ public static class ApiModule
             var apiName = getApiName(name, revision, index);
             var informationFile = ApiInformationFile.From(apiName, serviceDirectory);
             var rootApiName = ApiName.GetRootName(name);
-            var dto = getDto(rootApiName, type, path, version, revision);
+            var dto = GetDto(rootApiName, type, path, version, revision);
 
             await informationFile.WriteDto(dto, cancellationToken);
         }
@@ -471,46 +471,6 @@ public static class ApiModule
                 await specificationFile.WriteSpecification(BinaryData.FromString(contents), cancellationToken);
             });
         }
-
-        static ApiDto getDto(ApiName name, ApiType type, string path, Option<ApiVersion> version, ApiRevision revision) =>
-            new ApiDto()
-            {
-                Properties = new ApiDto.ApiCreateOrUpdateProperties
-                {
-                    // APIM sets the description to null when it imports for SOAP APIs.
-                    DisplayName = name.ToString(),
-                    Path = path,
-                    ApiType = type switch
-                    {
-                        ApiType.Http => null,
-                        ApiType.Soap => "soap",
-                        ApiType.GraphQl => null,
-                        ApiType.WebSocket => null,
-                        _ => throw new NotSupportedException()
-                    },
-                    Type = type switch
-                    {
-                        ApiType.Http => "http",
-                        ApiType.Soap => "soap",
-                        ApiType.GraphQl => "graphql",
-                        ApiType.WebSocket => "websocket",
-                        _ => throw new NotSupportedException()
-                    },
-                    Protocols = type switch
-                    {
-                        ApiType.Http => ["http", "https"],
-                        ApiType.Soap => ["http", "https"],
-                        ApiType.GraphQl => ["http", "https"],
-                        ApiType.WebSocket => ["ws", "wss"],
-                        _ => throw new NotSupportedException()
-                    },
-                    ServiceUrl = revision.ServiceUri.ValueUnsafe()?.ToString(),
-                    ApiRevisionDescription = revision.Description.ValueUnsafe(),
-                    ApiRevision = $"{revision.Number.ToInt()}",
-                    ApiVersion = version.Map(version => version.Version).ValueUnsafe(),
-                    ApiVersionSetId = version.Map(version => $"/apiVersionSets/{version.VersionSetName}").ValueUnsafe()
-                }
-            };
     }
 
     public static void ConfigureValidatePublishedApis(IHostApplicationBuilder builder)
