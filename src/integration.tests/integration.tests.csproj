@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<AnalysisLevel>latest-all</AnalysisLevel>
+		<Nullable>enable</Nullable>
+		<LangVersion>preview</LangVersion>
+		<InvariantGlobalization>true</InvariantGlobalization>
+		<UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
+		<!-- Needed for the new C# 14 extension syntax -->
+		<WarningsNotAsErrors>CA1515</WarningsNotAsErrors>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Bogus" Version="35.6.3" />
+		<PackageReference Include="CsCheck" Version="4.4.1" />
+		<PackageReference Include="FluentAssertions" Version="8.6.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\common\common.csproj" />
+		<ProjectReference Include="..\extractor\extractor.csproj" />
+		<ProjectReference Include="..\publisher\publisher.csproj" />
+	</ItemGroup>
+
+</Project>

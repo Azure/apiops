@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="CHANGELOG.md" />
+  </Folder>
+  <Project Path="src/aspire/aspire.csproj" />
+  <Project Path="src/common/common.csproj" />
+  <Project Path="src/extractor/extractor.csproj" />
+  <Project Path="src/integration.tests/integration.tests.csproj" />
+  <Project Path="src/publisher/publisher.csproj" />
+</Solution>

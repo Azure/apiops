@@ -3,32 +3,28 @@
 	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
 	"features": {
 		"ghcr.io/devcontainers/features/dotnet:2": {
-			"version": "8.0",
+			"version": "10.0-preview",
 			"additionalVersions": "9.0"
 		},
-		"ghcr.io/devcontainers/features/azure-cli:1": {
-			"version": "latest",
-			"installBicep": true
-		},
-		"ghcr.io/devcontainers/features/powershell:1": {
-			"version": "latest"
-		},
 		"ghcr.io/devcontainers/features/git:1": {},
-		"ghcr.io/devcontainers/features/github-cli:1": {}
+		"ghcr.io/devcontainers/features/powershell:1": {
+			"version": "latest",
+			"modules": "Az"
+		},
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		"ghcr.io/devcontainers/features/azure-cli:1": {}
 	},
-	"postCreateCommand": "sh .devcontainer/install.sh",
+	"postStartCommand": "dotnet tool install --global dotnet-outdated-tool",
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"ms-azuretools.vscode-bicep",
 				"ms-dotnettools.csdevkit",
-				"ms-azure-devops.azure-pipelines",
 				"GitHub.vscode-github-actions",
 				"GitHub.copilot",
-				"timonwong.shellcheck",
-				"foxundermoon.shell-format",
+				"GitHub.copilot-chat",
 				"redhat.vscode-yaml"
 			]
 		}
 	}
+
 }
