@@ -54,6 +54,7 @@ internal static class GatewayModule
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
                     .Where(isNameInSourceControl.Invoke)
+                    .Where(name => name != GatewayName.Managed)
                     .Distinct()
                     .IterParallel(put.Invoke, cancellationToken);
         };
@@ -203,6 +204,7 @@ internal static class GatewayModule
             await getPublisherFiles()
                     .Choose(tryParseName.Invoke)
                     .Where(name => isNameInSourceControl(name) is false)
+                    .Where(name => name != GatewayName.Managed)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
         };

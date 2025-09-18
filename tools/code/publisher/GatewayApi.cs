@@ -11,6 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using LanguageExt.UnsafeValueAccess;
 
 namespace publisher;
 
@@ -182,7 +183,9 @@ internal static class GatewayApiModule
     private static DeleteGatewayApis GetDeleteGatewayApis(IServiceProvider provider)
     {
         var getPublisherFiles = provider.GetRequiredService<GetPublisherFiles>();
-        var tryParseName = provider.GetRequiredService<TryParseGatewayApiName>();
+        var tryParseGatewayApiName = provider.GetRequiredService<TryParseGatewayApiName>();
+        var tryParseApiName = provider.GetRequiredService<TryParseApiName>();
+        var serviceDirectory = provider.GetRequiredService<ManagementServiceDirectory>();
         var isNameInSourceControl = provider.GetRequiredService<IsGatewayApiNameInSourceControl>();
         var delete = provider.GetRequiredService<DeleteGatewayApi>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
@@ -194,8 +197,15 @@ internal static class GatewayApiModule
 
             logger.LogInformation("Deleting gateway apis...");
 
-            await getPublisherFiles()
-                    .Choose(tryParseName.Invoke)
+            var publisherFiles = getPublisherFiles();
+            var managedGatewayGatewayApis = publisherFiles.Select(x => tryParseApiName(x))
+                    .Where(x => x.IsSome)
+                    .Select(x => GatewayApiInformationFile.From(x.ValueUnsafe()!, GatewayName.Managed, serviceDirectory)
+                        .ToFileInfo());
+
+            await publisherFiles
+                    .Concat(managedGatewayGatewayApis)
+                    .Choose(tryParseGatewayApiName.Invoke)
                     .Where(api => isNameInSourceControl(api.Name, api.GatewayName) is false)
                     .Distinct()
                     .IterParallel(delete.Invoke, cancellationToken);
