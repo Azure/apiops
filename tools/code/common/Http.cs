@@ -402,6 +402,7 @@ public class CommonRetryPolicy : RetryPolicy
                 (message, exception) switch
                 {
                     ({ Response.Status: 422 or 409 }, _) when HasManagementApiRequestFailedError(message.Response) => true,
+                    ({ Response.Status: 409 }, _) when HasConflictError(message.Response) && HasOperationOnTheApiIsInProgressMessage(message.Response) => true,
                     ({ Response.Status: 412 }, _) => true,
                     ({ Response.Status: 429 }, _) => true,
                     _ => false
@@ -418,6 +419,16 @@ public class CommonRetryPolicy : RetryPolicy
             .Where(code => code.Equals("ManagementApiRequestFailed", StringComparison.OrdinalIgnoreCase))
             .IsSome;
 
+    private static bool HasConflictError(Response response) =>
+        TryGetErrorCode(response)
+            .Where(code => code.Equals("Conflict", StringComparison.OrdinalIgnoreCase))
+            .IsSome;
+
+    private static bool HasOperationOnTheApiIsInProgressMessage(Response response) =>
+        TryGetMessage(response)
+            .Where(code => code.Equals("Operation on the API is in progress", StringComparison.OrdinalIgnoreCase))
+            .IsSome;
+
     private static Option<string> TryGetErrorCode(Response response)
     {
         try
@@ -426,6 +437,22 @@ public class CommonRetryPolicy : RetryPolicy
                            .ToObjectFromJson<JsonObject>()
                            .TryGetJsonObjectProperty("error")
                            .Bind(error => error.TryGetStringProperty("code"))
+                           .ToOption();
+        }
+        catch (Exception exception) when (exception is ArgumentNullException or NotSupportedException or JsonException)
+        {
+            return Option<string>.None;
+        }
+    }
+
+    private static Option<string> TryGetMessage(Response response)
+    {
+        try
+        {
+            return response.Content
+                           .ToObjectFromJson<JsonObject>()
+                           .TryGetJsonObjectProperty("error")
+                           .Bind(error => error.TryGetStringProperty("message"))
                            .ToOption();
         }
         catch (Exception exception) when (exception is ArgumentNullException or NotSupportedException or JsonException)
