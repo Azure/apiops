@@ -14,6 +14,9 @@ internal static class AppModule
 {
     public static void ConfigureRunApplication(IHostApplicationBuilder builder)
     {
+        // Configure configuration validation and loading first
+        ConfigurationModule.ConfigureFindConfigurationNamesFactory(builder);
+        
         NamedValueModule.ConfigureExtractNamedValues(builder);
         TagModule.ConfigureExtractTags(builder);
         GatewayModule.ConfigureExtractGateways(builder);
@@ -59,6 +62,23 @@ internal static class AppModule
             using var activity = activitySource.StartActivity(nameof(RunApplication));
 
             logger.LogInformation("Running extractor {ReleaseVersion}...", releaseVersion);
+            
+            // Validate configuration at runtime
+            try
+            {
+                var configurationNamesFactory =
+                    provider.GetRequiredService<FindConfigurationNamesFactory>();
+                logger.LogInformation("Configuration validation completed successfully.");
+            }
+            catch (InvalidOperationException ex)
+                when (ex.Message.Contains("Configuration validation failed", StringComparison.Ordinal))
+            {
+                logger.LogError(
+                    "Extractor startup failed due to configuration validation errors: {ErrorMessage}",
+                    ex.Message
+                );
+                throw;
+            }
 
             await extractNamedValues(cancellationToken);
             await extractTags(cancellationToken);

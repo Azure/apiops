@@ -22,7 +22,7 @@ The tool expects certain configuration parameters. These can be passed as enviro
 | API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH | Folder where the APIM artifacts will be saved |
 | API_SPECIFICATION_FORMAT | OpenAPI specification format. Valid options are **JSON** or **YAML**. If the variable is missing or invalid, **YAML** will be used by default |
 | ARM_API_VERSION | Azure ARM API version that will be used. This is a optional parameter and will default to **2022-04-01-preview** if not specified. Other versions can be found here [APIM Rest API Reference - Overview Docs](https://learn.microsoft.com/en-us/rest/api/apimanagement/current-ga/api-diagnostic/create-or-update?tabs=HTTP). 
-| CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to specify select apis to extract. A sample yaml extractor configuration file to signal to the extractor to extract select apis. This is an optional parameter and will only come into play if you want different teams to manage different apis. You typically will have one configuration per team. Note: You can call the file whatever you want as long as you reference the right file within your extractor pipeline.
+| CONFIGURATION_YAML_PATH | Path to the Yaml configuration file used to specify select apis to extract. A sample yaml extractor configuration file to signal to the extractor to extract select apis. This is an optional parameter and will only come into play if you want different teams to manage different apis. You typically will have one configuration per team. Note: You can call the file whatever you want as long as you reference the right file within your extractor pipeline. **Configuration files are automatically validated during execution and will fail fast with detailed error messages if invalid.** |
 | AZURE_CLOUD_ENVIRONMENT | Azure Authority Host Service url that will be used. This is a optional parameter and will default to **AzurePublicCloud** if not specified. 
 | Logging__LogLevel__Default:  | The allowed values are either "Information", "Debug", or "Trace". Table below shows the description of each logging level.
 
@@ -98,6 +98,53 @@ The extractor will export the artifacts listed below.
 
 ### Extracting Select Artifacts
 There are cases where you may want to extract select artifacts (e.g. specific apis, products, etc.) instead of extracting everything. This could be a result of having a requirement to promote specific artifacts across environments or as a result of supporting multiple teams where each team may be responsible for select artifacts. ApiOPS supports this feature and you can find the details in the "Supporting Independent API Teams" [section](../6-supportingIndependentAPITeams/index.md). 
+
+### Configuration Validation
+
+The extractor includes comprehensive validation for YAML configuration files to help catch common configuration errors early:
+
+#### Automatic Validation
+
+- **Runtime Validation**: Configuration files are automatically validated when the extractor starts
+- **Fail Fast**: Invalid configurations cause the extractor to exit immediately with detailed error messages
+- **Detailed Errors**: Error messages include specific line numbers and clear descriptions of issues
+
+#### Manual Validation Command
+
+You can validate configuration files before running extraction:
+
+```bash
+# Validate a configuration file
+./extractor validate-config configuration.extractor.yaml
+
+# Example output for valid configuration:
+# ✅ Configuration validation PASSED!
+# The configuration file is valid and ready to use.
+
+# Example output for invalid configuration:
+# ❌ Configuration validation FAILED:
+#   • apiNames[1]: Items cannot be empty or contain only whitespace.
+#   • apiNames: Duplicate item found: 'demo-api'. Each item should be unique.
+#   • productNames: Property 'productNames' must be an array of strings.
+```
+
+#### Validation Rules
+
+The validator checks for:
+
+- **Structural Issues**: Empty files, non-array properties, missing files
+- **Content Issues**: Empty/whitespace strings, duplicate entries, invalid data types
+- **Naming Conventions**: Names too long (>256 characters), invalid characters
+- **Unknown Sections**: Warns about unrecognized configuration sections
+
+#### Best Practices
+
+- Use the validation command in CI/CD pipelines before extraction
+- Fix validation errors immediately - they indicate configuration problems
+- Pay attention to warnings about unknown sections - they may indicate typos
+- Keep configuration files under version control
+
+> Note: Configuration validation is designed to catch common mistakes and improve the developer experience. It does not validate Azure APIM-specific constraints (like API name availability).
 
 > **Note**
 > We recommend looking into [workspaces](https://learn.microsoft.com/en-us/azure/api-management/workspaces-overview) in the future which allows decentralized API development teams to manage and productize their own APIs, while a central API platform team maintains the API Management infrastructure. Each workspace contains APIs, products, subscriptions, and related entities that are accessible only to the workspace collaborators. Access is controlled through Azure role-based access control (RBAC). `ApiOPS` will bring support for workspaces when it becomes generally available.

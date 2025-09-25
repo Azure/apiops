@@ -1,0 +1,22 @@
+# Example INVALID extractor configuration file - for testing validation
+# This file contains intentional errors to demonstrate validation capabilities
+# Test validation with: ./extractor validate-config configuration.extractor.invalid-example.yaml
+# Expected validation errors:
+#   - Empty string in apiNames
+#   - Duplicate entry in apiNames
+#   - productNames should be array, not string
+#   - Unknown section warning
+
+apiNames:
+  - demo-conference-api
+  - ""                    # Empty string - should fail
+  - demo-conference-api   # Duplicate - should fail
+
+productNames: "not-an-array"  # Should be array - should fail
+
+invalidSection:               # Unknown section - should warn
+  - some-value
+
+backendNames:
+  - backend1
+  - backend2

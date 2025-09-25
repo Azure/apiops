@@ -1,5 +1,36 @@
 Kindly observe that even though the extractor and publisher binaries are not tightly coupled with the CI/CD pipelines we furnish, it is highly recommended to execute them within the provided pipelines. You can consider utilizing the techniques outlined below for running them as an internal development loop, while utilizing the pipelines we offer for executing the binaries can be seen as an external development loop.
 
+# Configuration Validation
+
+## Validate Configuration Files
+
+Before running the extractor, you can validate your YAML configuration files to catch common errors:
+
+```bash
+# Validate extractor configuration
+./extractor validate-config configuration.extractor.yaml
+
+# Example output for valid configuration:
+✅ Configuration validation PASSED!
+The configuration file is valid and ready to use.
+
+# Example output with errors:
+❌ Configuration validation FAILED:
+  • apiNames[1]: Items cannot be empty or contain only whitespace.
+  • apiNames: Duplicate item found: 'demo-api'. Each item should be unique.
+  • productNames: Property 'productNames' must be an array of strings.
+```
+
+Configuration validation helps catch:
+
+- Empty or whitespace entries
+- Duplicate items (case-insensitive)
+- Invalid data types (non-arrays where arrays expected)
+- Unknown configuration sections (warnings)
+- Names that are too long (>256 characters)
+
+The validation runs automatically when you use configuration files, but using the validation command helps catch issues early in development.
+
 # Debug Instructions using Visual Studio Code Dev Container
 This option allows you to run the extractor and publisher binaries on your local machine inside a container. Thus you won't need to install any SDKs on your local machine.
 

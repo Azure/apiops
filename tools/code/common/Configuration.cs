@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -195,21 +196,40 @@ public static class ConfigurationModule
     private static ConfigurationJson GetConfigurationJson(IServiceProvider provider)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
+        var logger = provider.GetRequiredService<ILogger<ConfigurationJson>>();
 
         var configurationJson = ConfigurationJson.From(configuration);
 
-        return TryGetConfigurationJsonFromYaml(configuration)
+        return TryGetConfigurationJsonFromYaml(configuration, logger)
                 .Map(configurationJson.MergeWith)
                 .IfNone(configurationJson);
     }
 
-    private static Option<ConfigurationJson> TryGetConfigurationJsonFromYaml(IConfiguration configuration) =>
+    private static Option<ConfigurationJson> TryGetConfigurationJsonFromYaml(IConfiguration configuration, ILogger logger) =>
         configuration.TryGetValue("CONFIGURATION_YAML_PATH")
                      .Map(path => new FileInfo(path))
                      .Where(file => file.Exists)
                      .Map(file =>
                      {
-                         using var reader = File.OpenText(file.FullName);
-                         return ConfigurationJson.FromYaml(reader);
+                         logger.LogInformation("Loading configuration from YAML file: {FilePath}", file.FullName);
+                         
+                         // Validate the YAML configuration before loading
+                         var validationResult = ConfigurationValidator.ValidateExtractorConfigurationFromFile(file, logger);
+                         
+                         return validationResult.Match(
+                             errors =>
+                             {
+                                 var errorMessages = string.Join(Environment.NewLine, errors.Select(e => $"  - {e}"));
+                                 var fullMessage = $"Configuration validation failed for file '{file.FullName}':{Environment.NewLine}{errorMessages}";
+                                 
+                                 logger.LogError("Configuration validation errors: {Errors}", errorMessages);
+                                 throw new InvalidOperationException(fullMessage);
+                             },
+                             validConfig =>
+                             {
+                                 logger.LogInformation("Configuration validation passed for file: {FilePath}", file.FullName);
+                                 return validConfig;
+                             }
+                         );
                      });
 }

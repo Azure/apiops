@@ -1,6 +1,11 @@
 # Note: With the introduction of workspaces we recommend using workspaces with APIOps when possible to limit what can be extracted whenever possible. 
 # More information about workspaces can be found here https://learn.microsoft.com/en-us/azure/api-management/workspaces-overview
 
+# Configuration Validation:
+# This file is automatically validated when used with the extractor.
+# You can manually validate it by running: ./extractor validate-config configuration.extractor.yaml
+# The validator checks for empty entries, duplicates, invalid data types, and unknown sections.
+
  apiNames:
   - apiName1
   - apiName2

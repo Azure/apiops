@@ -3,10 +3,12 @@ using LanguageExt;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Nodes;
 
 namespace extractor;
 
@@ -83,7 +85,57 @@ internal static class ConfigurationModule
     private static FindConfigurationNamesFactory GetFindConfigurationNamesFactory(IServiceProvider provider)
     {
         var configurationJson = provider.GetRequiredService<ConfigurationJson>();
+        var logger = provider.GetRequiredService<ILogger<FindConfigurationNamesFactory>>();
+
+        // Perform additional validation specific to extractor configuration
+        ValidateExtractorSpecificConfiguration(configurationJson, logger);
 
         return new FindConfigurationNamesFactory(configurationJson);
+    }
+
+    private static void ValidateExtractorSpecificConfiguration(ConfigurationJson configurationJson, ILogger logger)
+    {
+        // Additional validation logic specific to extractor can go here
+        var rootObject = configurationJson.Value;
+        
+        // Log configuration summary
+        var configuredSections = rootObject
+            .Where(kvp => kvp.Value is JsonArray array && array.Count > 0)
+            .Select(kvp => $"{kvp.Key} ({((JsonArray)kvp.Value!).Count} items)")
+            .ToList();
+            
+        if (configuredSections.Any())
+        {
+            logger.LogInformation("Extractor configured to extract: {ConfiguredSections}", 
+                string.Join(", ", configuredSections));
+        }
+        else
+        {
+            logger.LogWarning("No extraction configuration found. Extractor will extract all resources.");
+        }
+
+        // Validate cross-section dependencies (example: if APIs are specified, ensure related resources are considered)
+        ValidateCrossSectionDependencies(rootObject, logger);
+    }
+
+    private static void ValidateCrossSectionDependencies(System.Text.Json.Nodes.JsonObject rootObject, ILogger logger)
+    {
+        var hasApis = rootObject.ContainsKey("apiNames") && 
+                     rootObject["apiNames"] is JsonArray apiArray && apiArray.Count > 0;
+        
+        var hasProducts = rootObject.ContainsKey("productNames") && 
+                         rootObject["productNames"] is JsonArray productArray && productArray.Count > 0;
+        
+        if (hasApis && !hasProducts)
+        {
+            logger.LogInformation("APIs are configured for extraction but no products specified. " +
+                                "Consider if related products should also be extracted.");
+        }
+
+        if (hasProducts && !hasApis)
+        {
+            logger.LogInformation("Products are configured for extraction but no APIs specified. " +
+                                "Consider if related APIs should also be extracted.");
+        }
     }
 }

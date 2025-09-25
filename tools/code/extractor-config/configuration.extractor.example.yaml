@@ -1,0 +1,22 @@
+# Example valid extractor configuration file
+# This file demonstrates proper YAML structure for the APIOPS extractor
+# Validate this file with: ./extractor validate-config configuration.extractor.example.yaml
+
+apiNames:
+  - demo-conference-api
+  - spacex-api
+
+productNames:
+  - starter
+  - unlimited
+
+backendNames:
+  - helloworldfromfuncapp
+
+namedValueNames:
+  - environment
+  - mysecretvalue
+
+tagNames:
+  - booking
+  - tag2
