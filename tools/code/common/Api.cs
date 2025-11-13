@@ -542,6 +542,10 @@ public static class ApiModule
             {
                 await PutSoapApi(uri, dto, pipeline, cancellationToken);
             }
+            else if (dto.Properties.ApiType is "odata")
+            {
+                await PutODataApi(uri, dto, pipeline, cancellationToken);
+            }
             else
             {
                 await PutNonSoapApi(uri, dto, pipeline, cancellationToken);
@@ -603,6 +607,32 @@ public static class ApiModule
                         ShouldHandle = new PredicateBuilder().Handle<HttpRequestException>(exception => exception.StatusCode == HttpStatusCode.Conflict && exception.Message.Contains("IdentifierAlreadyInUse", StringComparison.OrdinalIgnoreCase))
                     })
                     .Build());
+
+    private static async ValueTask PutODataApi(ApiUri uri, ApiDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        // Import API with specification
+        var odataUri = uri.ToUri().SetQueryParam("import", "true").ToUri();
+        var odataDto = new ApiDto
+        {
+            Properties = new ApiDto.ApiCreateOrUpdateProperties
+            {
+                Format = "odata",
+                Value = dto.Properties.Value,
+                ApiType = "odata",
+                DisplayName = dto.Properties.DisplayName,
+                Path = dto.Properties.Path,
+                Protocols = dto.Properties.Protocols,
+                ApiVersion = dto.Properties.ApiVersion,
+                ApiVersionDescription = dto.Properties.ApiVersionDescription,
+                ApiVersionSetId = dto.Properties.ApiVersionSetId
+            }
+        };
+        await pipeline.PutContent(odataUri, BinaryData.FromObjectAsJson(odataDto), cancellationToken);
+
+        // Put API again without specification
+        var updatedDto = dto with { Properties = dto.Properties with { Format = null, Value = null } };
+        await pipeline.PutContent(uri.ToUri(), BinaryData.FromObjectAsJson(updatedDto), cancellationToken);
+    }
 
     private static async ValueTask PutNonSoapApi(ApiUri uri, ApiDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
