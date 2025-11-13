@@ -697,6 +697,7 @@ file static class Common
         {
             WadlSpecificationFile.Name,
             WsdlSpecificationFile.Name,
+            ODataSpecificationFile.Name,
             GraphQlSpecificationFile.Name,
             JsonOpenApiSpecificationFile.Name,
             YamlOpenApiSpecificationFile.Name

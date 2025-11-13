@@ -456,7 +456,7 @@ public static class ApiModule
         catch (HttpRequestException exception) when (exception.StatusCode == HttpStatusCode.InternalServerError)
         {
             // Don't export XML specifications, as the non-link exports cannot be reimported.
-            if (specification is ApiSpecification.Wsdl or ApiSpecification.Wadl)
+            if (specification is ApiSpecification.Wsdl or ApiSpecification.Wadl or ApiSpecification.OData)
             {
                 return Option<BinaryData>.None;
             }
@@ -498,6 +498,7 @@ public static class ApiModule
         {
             ApiSpecification.Wadl => "wadl",
             ApiSpecification.Wsdl => "wsdl",
+            ApiSpecification.OData => "odata",
             ApiSpecification.OpenApi openApiSpecification =>
                 (openApiSpecification.Version, openApiSpecification.Format) switch
                 {

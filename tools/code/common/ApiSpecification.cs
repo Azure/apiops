@@ -14,6 +14,7 @@ public abstract record ApiSpecification
     public sealed record GraphQl : ApiSpecification;
     public sealed record Wadl : ApiSpecification;
     public sealed record Wsdl : ApiSpecification;
+    public sealed record OData : ApiSpecification;
     public sealed record OpenApi : ApiSpecification
     {
         public required OpenApiVersion Version { get; init; }
@@ -67,6 +68,7 @@ public abstract record ApiSpecificationFile : ResourceFile
             ApiSpecification.GraphQl => GraphQlSpecificationFile.From(apiName, serviceDirectory),
             ApiSpecification.Wadl => WadlSpecificationFile.From(apiName, serviceDirectory),
             ApiSpecification.Wsdl => WsdlSpecificationFile.From(apiName, serviceDirectory),
+            ApiSpecification.OData => ODataSpecificationFile.From(apiName, serviceDirectory),
             ApiSpecification.OpenApi openApi => OpenApiSpecificationFile.From(openApi, apiName, serviceDirectory),
             _ => throw new NotImplementedException()
         };
@@ -88,10 +90,13 @@ public abstract record ApiSpecificationFile : ResourceFile
         var tryParseWsdl = () => (from specificationFile in WsdlSpecificationFile.TryParse(file, serviceDirectory)
                                   select specificationFile as ApiSpecificationFile).AsTask();
 
+        var tryParseOData = () => (from specificationFile in ODataSpecificationFile.TryParse(file, serviceDirectory)
+                                   select specificationFile as ApiSpecificationFile).AsTask();
+
         var tryParseOpenApi = async () => from specificationFile in await OpenApiSpecificationFile.TryParse(file, getFileContents, serviceDirectory, cancellationToken)
                                           select specificationFile as ApiSpecificationFile;
 
-        return await ImmutableArray.Create(tryParseGraphQl, tryParseWadl, tryParseWsdl, tryParseOpenApi)
+        return await ImmutableArray.Create(tryParseGraphQl, tryParseWadl, tryParseWsdl, tryParseOData, tryParseOpenApi)
                                    .Pick(async (f, cancellationToken) => await f(), cancellationToken);
     }
 }
@@ -148,6 +153,24 @@ public sealed record WsdlSpecificationFile : ApiSpecificationFile
             ? from parent in ApiDirectory.TryParse(file.Directory, serviceDirectory)
               select new WsdlSpecificationFile { Parent = parent }
             : Option<WsdlSpecificationFile>.None;
+}
+
+public sealed record ODataSpecificationFile : ApiSpecificationFile
+{
+    public override ApiSpecification Specification { get; } = new ApiSpecification.OData();
+
+    public static string Name => "specification.xml";
+
+    protected override FileInfo Value => new(Path.Combine(Parent.ToDirectoryInfo().FullName, Name));
+
+    public static ODataSpecificationFile From(ApiName apiName, ManagementServiceDirectory serviceDirectory) =>
+        new() { Parent = ApiDirectory.From(apiName, serviceDirectory) };
+
+    public static Option<ODataSpecificationFile> TryParse(FileInfo? file, ManagementServiceDirectory serviceDirectory) =>
+        file is not null && file.Name == Name
+            ? from parent in ApiDirectory.TryParse(file.Directory, serviceDirectory)
+              select new ODataSpecificationFile { Parent = parent }
+            : Option<ODataSpecificationFile>.None;
 }
 
 public abstract record OpenApiSpecificationFile : ApiSpecificationFile
