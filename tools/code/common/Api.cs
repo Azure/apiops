@@ -456,7 +456,7 @@ public static class ApiModule
         catch (HttpRequestException exception) when (exception.StatusCode == HttpStatusCode.InternalServerError)
         {
             // Don't export XML specifications, as the non-link exports cannot be reimported.
-            if (specification is ApiSpecification.Wsdl or ApiSpecification.Wadl)
+            if (specification is ApiSpecification.Wsdl or ApiSpecification.Wadl or ApiSpecification.OData)
             {
                 return Option<BinaryData>.None;
             }
@@ -498,6 +498,7 @@ public static class ApiModule
         {
             ApiSpecification.Wadl => "wadl",
             ApiSpecification.Wsdl => "wsdl",
+            ApiSpecification.OData => "odata",
             ApiSpecification.OpenApi openApiSpecification =>
                 (openApiSpecification.Version, openApiSpecification.Format) switch
                 {
@@ -540,6 +541,10 @@ public static class ApiModule
             if (dto.Properties.Type is "soap")
             {
                 await PutSoapApi(uri, dto, pipeline, cancellationToken);
+            }
+            else if (dto.Properties.ApiType is "odata")
+            {
+                await PutODataApi(uri, dto, pipeline, cancellationToken);
             }
             else
             {
@@ -602,6 +607,32 @@ public static class ApiModule
                         ShouldHandle = new PredicateBuilder().Handle<HttpRequestException>(exception => exception.StatusCode == HttpStatusCode.Conflict && exception.Message.Contains("IdentifierAlreadyInUse", StringComparison.OrdinalIgnoreCase))
                     })
                     .Build());
+
+    private static async ValueTask PutODataApi(ApiUri uri, ApiDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
+    {
+        // Import API with specification
+        var odataUri = uri.ToUri().SetQueryParam("import", "true").ToUri();
+        var odataDto = new ApiDto
+        {
+            Properties = new ApiDto.ApiCreateOrUpdateProperties
+            {
+                Format = "odata",
+                Value = dto.Properties.Value,
+                ApiType = "odata",
+                DisplayName = dto.Properties.DisplayName,
+                Path = dto.Properties.Path,
+                Protocols = dto.Properties.Protocols,
+                ApiVersion = dto.Properties.ApiVersion,
+                ApiVersionDescription = dto.Properties.ApiVersionDescription,
+                ApiVersionSetId = dto.Properties.ApiVersionSetId
+            }
+        };
+        await pipeline.PutContent(odataUri, BinaryData.FromObjectAsJson(odataDto), cancellationToken);
+
+        // Put API again without specification
+        var updatedDto = dto with { Properties = dto.Properties with { Format = null, Value = null } };
+        await pipeline.PutContent(uri.ToUri(), BinaryData.FromObjectAsJson(updatedDto), cancellationToken);
+    }
 
     private static async ValueTask PutNonSoapApi(ApiUri uri, ApiDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {

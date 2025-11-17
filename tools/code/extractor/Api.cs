@@ -179,6 +179,7 @@ internal static class ApiModule
             {
                 "graphql" => new ApiSpecification.GraphQl(),
                 "soap" => new ApiSpecification.Wsdl(),
+                "odata" => new ApiSpecification.OData(),
                 "http" => defaultApiSpecification.Value,
                 null => defaultApiSpecification.Value,
                 _ => Option<ApiSpecification>.None
