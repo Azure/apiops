@@ -227,45 +227,45 @@ public class CommonRetryPolicy : RetryPolicy
 
     private static bool ShouldRetryInner(HttpMessage message, Exception? exception)
     {
-        try
+        var response = message.Response;
+        var errorCode = GetErrorCode(response).IfNone(() => string.Empty);
+        var errorMessage = GetErrorMessage(response).IfNone(() => string.Empty);
+
+        return response.Status switch
         {
-            return
-                (message, exception) switch
-                {
-                    ({ Response.Status: 422 or 409 }, _) when HasManagementApiRequestFailedError(message.Response) => true,
-                    ({ Response.Status: 412 }, _) => true,
-                    ({ Response.Status: 429 }, _) => true,
-                    _ => false
-                };
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
+            429 => true,
+            412 => true,
+            422 or 409 when errorCode.Equals("ManagementApiRequestFailed", StringComparison.OrdinalIgnoreCase) => true,
+            409 when errorMessage.Contains("Operation on the API is in progress", StringComparison.OrdinalIgnoreCase)
+                     && (errorCode.Equals("Conflict", StringComparison.OrdinalIgnoreCase)
+                         || errorCode.Equals("PessimisticConcurrencyConflict", StringComparison.OrdinalIgnoreCase)) => true,
+            _ => false
+        };
     }
 
-    private static bool HasManagementApiRequestFailedError(Response response) =>
-        TryGetErrorCode(response)
-            .Where(code => code.Equals("ManagementApiRequestFailed", StringComparison.OrdinalIgnoreCase))
-            .IsSome;
+    private static Option<string> GetErrorCode(Response response) =>
+        GetError(response)
+            .Bind(error => error.GetStringProperty("code"))
+            .ToOption();
 
-    private static Option<string> TryGetErrorCode(Response response)
+    private static Result<JsonObject> GetError(Response response)
     {
         try
         {
-            var result = from node in JsonNodeModule.From(response.Content)
-                         from jsonObject in node.AsJsonObject()
-                         from errorJsonObject in jsonObject.GetJsonObjectProperty("error")
-                         from errorCode in errorJsonObject.GetStringProperty("code")
-                         select errorCode;
-
-            return result.ToOption();
+            return from content in JsonObjectModule.From(response.Content)
+                   from error in content.GetJsonObjectProperty("error")
+                   select error;
         }
-        catch (Exception exception) when (exception is ArgumentNullException or NotSupportedException or JsonException)
+        catch (Exception exception) when (exception is ArgumentNullException or NotSupportedException or JsonException or InvalidOperationException)
         {
-            return Option.None;
+            return Error.From(exception);
         }
     }
+
+    private static Option<string> GetErrorMessage(Response response) =>
+        GetError(response)
+            .Bind(error => error.GetStringProperty("message"))
+            .ToOption();
 }
 
 public sealed class LoggingPolicy(ILogger logger) : HttpPipelinePolicy
