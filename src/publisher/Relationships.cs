@@ -255,11 +255,11 @@ internal static class RelationshipsModule
                                    pairs.Add((parent, key));
                                }
 
-                               // Get DTO from information file resources
-                               var dtoOption = Option<JsonObject>.None();
+                               // Get DTO JSON from information file resources
+                               var dtoJsonOption = Option<JsonObject>.None();
                                if (key.Resource is IResourceWithInformationFile resourceWithInformationFile)
                                {
-                                   dtoOption = await getDto(resourceWithInformationFile, key.Name, key.Parents, operations.ReadFile, operations.GetSubDirectories, cancellationToken);
+                                   dtoJsonOption = await getDto(resourceWithInformationFile, key.Name, key.Parents, operations.ReadFile, operations.GetSubDirectories, cancellationToken);
                                }
 
                                // Process composite resources
@@ -268,7 +268,7 @@ internal static class RelationshipsModule
                                    var primary = getPrimary(compositeResource, key.Name, key.Parents);
                                    pairs.Add((primary, key));
 
-                                   var dto = dtoOption.IfNone(() => throw new InvalidOperationException($"Could not get DTO for resource '{key}'."));
+                                   var dto = dtoJsonOption.IfNone(() => throw new InvalidOperationException($"Could not get DTO for resource '{key}'."));
 
                                    var secondary = getSecondary(compositeResource, key.Name, key.Parents, dto)
                                                        .IfNone(() => throw new InvalidOperationException($"Could not get secondary resource for composite resource '{key}'."));
@@ -278,7 +278,7 @@ internal static class RelationshipsModule
                                // Process resources with references
                                if (key.Resource is IResourceWithReference resourceWithReference)
                                {
-                                   var dto = dtoOption.IfNone(() => throw new InvalidOperationException($"Could not get DTO for resource '{key}'."));
+                                   var dto = dtoJsonOption.IfNone(() => throw new InvalidOperationException($"Could not get DTO for resource '{key}'."));
 
                                    getReferences(resourceWithReference, key.Name, key.Parents, dto, cancellationToken)
                                        .Iter(reference => pairs.Add((reference, key)));
@@ -303,13 +303,43 @@ internal static class RelationshipsModule
                                                                                         workspaceNamedValues.Head(key => key.Parents.Any(parent => parent == workspace)
                                                                                                                          && key.Name == namedValueName)
                                                                                       select workspaceNamedValue)
-                                                    // If not found, look for a service-level named value
+                                                                       // If not found, look for a service-level named value
                                                                        .IfNone(() => from namedValues in resources.Find(NamedValueResource.Instance)
                                                                                      from namedValue in
                                                                                          namedValues.Head(key => key.Name == namedValueName)
                                                                                      select namedValue))
                                            .Iter(namedValue => pairs.Add((namedValue, key)), cancellationToken);
                                    });
+                               }
+
+                               // Process backend pools for individual backend references
+                               if (key.Resource is BackendResource backendResource)
+                               {
+                                   var parents = key.Parents;
+                                   var serializerOptions = ((IResourceWithDto)backendResource).SerializerOptions;
+
+                                   dtoJsonOption.Bind(json => JsonNodeModule.To<BackendDto>(json, serializerOptions)
+                                                                            .ToOption())
+                                                // Get pool backends
+                                                .Map(dto => dto.Properties.Pool?.Services ?? [])
+                                                .IfNone(() => [])
+                                                // Get backend names from their IDs
+                                                .Choose(backend =>
+                                                {
+                                                    var nameString = backend.Id?.Split('/').LastOrDefault() ?? string.Empty;
+
+                                                    return ResourceName.From(nameString)
+                                                                       .ToOption();
+                                                })
+                                                // Create resource keys for each backend
+                                                .Select(backendName => new ResourceKey
+                                                {
+                                                    Resource = backendResource,
+                                                    Name = backendName,
+                                                    Parents = parents
+                                                })
+                                                // Pair backends with the pool
+                                                .Iter(backendPredecessor => pairs.Add((backendPredecessor, key)), cancellationToken);
                                }
 
                                // Process non-root API revisions
