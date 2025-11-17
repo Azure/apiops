@@ -1,6 +1,8 @@
+using Azure;
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Resources;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -287,59 +289,24 @@ internal static class RelationshipsModule
                                // Process policies for named value references
                                if (key.Resource is IPolicyResource policyResource)
                                {
-                                   var policyContentOption = await getPolicyFileContents(policyResource, key.Name, key.Parents, operations.ReadFile, cancellationToken);
-
-                                   policyContentOption.Iter(policyContent =>
-                                   {
-                                       // Get workspace associated with the policy (if any)
-                                       var workspaceOption = key.Parents.Head(tuple => tuple.Resource is WorkspaceResource);
-
-                                       // Extract all named values from the policy
-                                       getPolicyNamedValues(policyContent)
-                                           .Choose(namedValueName =>
-                                                    // Look for the named value in the same workspace
-                                                    workspaceOption.Bind(workspace => from workspaceNamedValues in resources.Find(WorkspaceNamedValueResource.Instance)
-                                                                                      from workspaceNamedValue in
-                                                                                        workspaceNamedValues.Head(key => key.Parents.Any(parent => parent == workspace)
-                                                                                                                         && key.Name == namedValueName)
-                                                                                      select workspaceNamedValue)
-                                                                       // If not found, look for a service-level named value
-                                                                       .IfNone(() => from namedValues in resources.Find(NamedValueResource.Instance)
-                                                                                     from namedValue in
-                                                                                         namedValues.Head(key => key.Name == namedValueName)
-                                                                                     select namedValue))
-                                           .Iter(namedValue => pairs.Add((namedValue, key)), cancellationToken);
-                                   });
+                                   var namedValues = await getPolicyNamedValues(policyResource, key.Name, key.Parents, operations.ReadFile, resources, cancellationToken);
+                                   namedValues.Iter(namedValue => pairs.Add((namedValue, key)), cancellationToken);
                                }
 
                                // Process backend pools for individual backend references
                                if (key.Resource is BackendResource backendResource)
                                {
-                                   var parents = key.Parents;
-                                   var serializerOptions = ((IResourceWithDto)backendResource).SerializerOptions;
-
-                                   dtoJsonOption.Bind(json => JsonNodeModule.To<BackendDto>(json, serializerOptions)
-                                                                            .ToOption())
-                                                // Get pool backends
-                                                .Map(dto => dto.Properties.Pool?.Services ?? [])
+                                   dtoJsonOption.Map(json => getBackendPoolBackends(backendResource, key.Name, key.Parents, json, cancellationToken))
                                                 .IfNone(() => [])
-                                                // Get backend names from their IDs
-                                                .Choose(backend =>
-                                                {
-                                                    var nameString = backend.Id?.Split('/').LastOrDefault() ?? string.Empty;
+                                                .Iter(backend => pairs.Add((backend, key)), cancellationToken);
+                               }
 
-                                                    return ResourceName.From(nameString)
-                                                                       .ToOption();
-                                                })
-                                                // Create resource keys for each backend
-                                                .Select(backendName => new ResourceKey
-                                                {
-                                                    Resource = backendResource,
-                                                    Name = backendName,
-                                                    Parents = parents
-                                                })
-                                                // Pair backends with the pool
-                                                .Iter(backendPredecessor => pairs.Add((backendPredecessor, key)), cancellationToken);
+                               // Process workspace backend pools for individual backend references
+                               if (key.Resource is WorkspaceBackendResource workspaceBackendResource)
+                               {
+                                   dtoJsonOption.Map(json => getWorkspaceBackendPoolBackends(workspaceBackendResource, key.Name, key.Parents, json, cancellationToken))
+                                                .IfNone(() => [])
+                                                .Iter(backend => pairs.Add((backend, key)), cancellationToken);
                                }
 
                                // Process non-root API revisions
@@ -355,6 +322,7 @@ internal static class RelationshipsModule
                                                             Name = rootName,
                                                             Parents = key.Parents
                                                         };
+
                                                         pairs.Add((currentRevision, key));
                                                     });
                                }
@@ -372,6 +340,7 @@ internal static class RelationshipsModule
                                                             Name = rootName,
                                                             Parents = key.Parents
                                                         };
+
                                                         pairs.Add((currentRevision, key));
                                                     });
                                }
@@ -511,20 +480,87 @@ internal static class RelationshipsModule
                 };
         }
 
-        static ImmutableHashSet<ResourceName> getPolicyNamedValues(BinaryData policyContent)
+        async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyNamedValues(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
         {
-            var policyContentText = policyContent.ToString();
+            var workspaceOption = parents.Head(tuple => tuple.Resource is WorkspaceResource);
 
-            if (string.IsNullOrWhiteSpace(policyContentText))
+            var namedValueNames = await getPolicyNamedValueNames(resource, name, parents, readFile, resources, cancellationToken);
+
+            return [.. namedValueNames.Choose(name => findNamedValue(name, workspaceOption, resources))];
+        }
+
+        async ValueTask<ImmutableHashSet<ResourceName>> getPolicyNamedValueNames(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
+        {
+            var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
+                                 select binaryData.ToString();
+
+            var contents = contentsOption.IfNoneNull() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(contents))
             {
                 return [];
             }
 
             var regex = new Regex("{{\\s*(.*?)\\s*}}", RegexOptions.CultureInvariant);
 
-            return [.. regex.Matches(policyContentText)
+            return [.. regex.Matches(contents)
                             .Choose(match => ResourceName.From(match.Groups[1].Value.Trim())
                                                          .ToOption())];
+        }
+
+        Option<ResourceKey> findNamedValue(ResourceName name, Option<(IResource, ResourceName)> workspaceOption, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources) =>
+            // Look for the named value in the workspace
+            workspaceOption.Bind(workspace => from namedValues in resources.Find(WorkspaceNamedValueResource.Instance)
+                                              from namedValue in namedValues.Head(key => key.Name == name
+                                                                                         && key.Parents.Any(parent => parent == workspace))
+                                              select namedValue)
+                           // If not found, look for a service-level named value
+                           .IfNone(() => from namedValues in resources.Find(NamedValueResource.Instance)
+                                         from namedValue in namedValues.Head(key => key.Name == name)
+                                         select namedValue);
+
+        static ImmutableHashSet<ResourceKey> getBackendPoolBackends(BackendResource resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
+        {
+            var serializerOptions = ((IResourceWithDto)resource).SerializerOptions;
+
+            return [.. JsonNodeModule.To<BackendDto>(dto, serializerOptions)
+                                     .Map(backendDto => backendDto.Properties.Pool?.Services ?? [])
+                                     .IfError(_ => [])
+                                     .Choose(backend =>
+                                     {
+                                         var nameString = backend.Id?.Split('/').LastOrDefault() ?? string.Empty;
+
+                                         return ResourceName.From(nameString)
+                                                            .ToOption();
+                                     })
+                                     .Select(backendName => new ResourceKey
+                                     {
+                                         Resource = resource,
+                                         Name = backendName,
+                                         Parents = parents
+                                     })];
+        }
+
+        static ImmutableHashSet<ResourceKey> getWorkspaceBackendPoolBackends(WorkspaceBackendResource resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
+        {
+            var serializerOptions = ((IResourceWithDto)resource).SerializerOptions;
+
+            return [.. JsonNodeModule.To<WorkspaceBackendDto>(dto, serializerOptions)
+                                     .Map(backendDto => backendDto.Properties.Pool?.Services ?? [])
+                                     .IfError(_ => [])
+                                     .Choose(backend =>
+                                     {
+                                         var nameString = backend.Id?.Split('/').LastOrDefault() ?? string.Empty;
+
+                                         return ResourceName.From(nameString)
+                                                            .ToOption();
+                                     })
+                                     .Select(backendName => new ResourceKey
+                                     {
+                                         Resource = resource,
+                                         Name = backendName,
+                                         Parents = parents
+                                     })];
         }
 
         static bool isPredecessorWithOptionalArtifacts(ResourceKey key) =>
