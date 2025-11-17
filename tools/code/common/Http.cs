@@ -402,7 +402,7 @@ public class CommonRetryPolicy : RetryPolicy
                 (message, exception) switch
                 {
                     ({ Response.Status: 422 or 409 }, _) when HasManagementApiRequestFailedError(message.Response) => true,
-                    ({ Response.Status: 409 }, _) when HasConflictError(message.Response) && HasOperationOnTheApiIsInProgressMessage(message.Response) => true,
+                    ({ Response.Status: 409 }, _) when HasConflictOrPessimisticConcurrencyConflictError(message.Response) && HasOperationOnTheApiIsInProgressMessage(message.Response) => true,
                     ({ Response.Status: 412 }, _) => true,
                     ({ Response.Status: 429 }, _) => true,
                     _ => false
@@ -419,9 +419,12 @@ public class CommonRetryPolicy : RetryPolicy
             .Where(code => code.Equals("ManagementApiRequestFailed", StringComparison.OrdinalIgnoreCase))
             .IsSome;
 
-    private static bool HasConflictError(Response response) =>
+    private static bool HasConflictOrPessimisticConcurrencyConflictError(Response response) =>
         TryGetErrorCode(response)
-            .Where(code => code.Equals("Conflict", StringComparison.OrdinalIgnoreCase))
+            .Where(code => 
+                code.Equals("Conflict", StringComparison.OrdinalIgnoreCase) ||
+                code.Equals("PessimisticConcurrencyConflict", StringComparison.OrdinalIgnoreCase)
+            )
             .IsSome;
 
     private static bool HasOperationOnTheApiIsInProgressMessage(Response response) =>
