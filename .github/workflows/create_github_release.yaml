@@ -284,23 +284,22 @@ jobs:
             --target "$COMMIT_ID"
 
           # Upload assets
-          ls -R "$ARTIFACT_DOWNLOAD_PATH"
           gh release upload "$RELEASE_TAG" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-arm64/extractor-linux-arm64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-musl-arm64/extractor-linux-musl-arm64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-musl-x64/extractor-linux-musl-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-x64/extractor-linux-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-osx-arm64/extractor-osx-arm64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-osx-x64/extractor-osx-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-win-x64/extractor-win-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-arm64/publisher-linux-arm64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-musl-arm64/publisher-linux-musl-arm64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-musl-x64/publisher-linux-musl-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-x64/publisher-linux-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-osx-arm64/publisher-osx-arm64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-osx-x64/publisher-osx-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-win-x64/publisher-win-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/github/Github.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/ado/Azure_DevOps.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-arm64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-musl-arm64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-musl-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-osx-arm64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-osx-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-win-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-arm64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-musl-arm64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-musl-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-osx-arm64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-osx-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-win-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/Github.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/Azure_DevOps.zip" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
