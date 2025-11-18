@@ -46,7 +46,7 @@ jobs:
           New-Item -Path "$outputFolderPath" -ItemType "Directory"
 
           Write-Information "Publishing application..."
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "extractor" "extractor.csproj"
+          $sourcePath = Join-Path "${{ github.workspace }}" "src" "extractor" "extractor.csproj"
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
@@ -102,7 +102,7 @@ jobs:
           New-Item -Path "$outputFolderPath" -ItemType "Directory"
 
           Write-Information "Publishing application..."
-          $sourcePath = Join-Path "${{ github.workspace }}" "tools" "code" "publisher" "publisher.csproj"
+          $sourcePath = Join-Path "${{ github.workspace }}" "src" "publisher" "publisher.csproj"
           & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
