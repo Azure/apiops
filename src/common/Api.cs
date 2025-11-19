@@ -309,7 +309,7 @@ public static partial class ResourceModule
     }
 
     /// <summary>
-    /// If the API type is not 'websocket' or 'graphql', remove the 'serviceUrl' property from the API information file DTO.
+    /// If the 'serviceUrl' property is empty, remove it. APIM doesn't support publishing blank service URLs.
     /// </summary>
     private static JsonObject FormatInformationFileDto(this ApiResource resource, JsonObject dtoJson)
     {
@@ -318,9 +318,9 @@ public static partial class ResourceModule
         var dto = JsonNodeModule.To<ApiDto>(dtoJson, serializerOptions)
                                 .IfErrorThrow();
 
-        dto = new[] { "websocket", "graphql" }.Contains(dto.Properties.Type, StringComparer.OrdinalIgnoreCase)
-                ? dto
-                : dto with { Properties = dto.Properties with { ServiceUrl = null } };
+        dto = string.IsNullOrWhiteSpace(dto.Properties.ServiceUrl)
+                ? dto with { Properties = dto.Properties with { ServiceUrl = null } }
+                : dto;
 
         return JsonObjectModule.From(dto, serializerOptions)
                                .IfErrorThrow();
