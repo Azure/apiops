@@ -89,26 +89,11 @@ public static class DiagnosticModule
         {
             var serviceUri = getServiceUri(serviceName);
 
-            var dto = getDto(model);
+            var dto = MapToDto(model);
 
             await DiagnosticUri.From(model.Name, serviceUri)
                             .PutDto(dto, pipeline, cancellationToken);
         }
-
-        static DiagnosticDto getDto(DiagnosticModel model) =>
-            new()
-            {
-                Properties = new DiagnosticDto.DiagnosticContract
-                {
-                    LoggerId = $"/loggers/{model.LoggerName}",
-                    AlwaysLog = model.AlwaysLog.ValueUnsafe(),
-                    Sampling = model.Sampling.Map(sampling => new DiagnosticDto.SamplingSettings
-                    {
-                        SamplingType = sampling.Type,
-                        Percentage = sampling.Percentage
-                    }).ValueUnsafe()
-                }
-            };
     }
 
     public static void ConfigureValidateExtractedDiagnostics(IHostApplicationBuilder builder)
@@ -154,6 +139,7 @@ public static class DiagnosticModule
             {
                 LoggerId = string.Join('/', dto.Properties.LoggerId?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
                 AlwaysLog = dto.Properties.AlwaysLog ?? string.Empty,
+                LargeLanguageModel = NormalizeLargeLanguageModel(dto.Properties.LargeLanguageModel),
                 Sampling = new
                 {
                     Type = dto.Properties.Sampling?.SamplingType ?? string.Empty,
@@ -275,25 +261,10 @@ public static class DiagnosticModule
         static async ValueTask writeInformationFile(DiagnosticModel model, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
         {
             var informationFile = DiagnosticInformationFile.From(model.Name, serviceDirectory);
-            var dto = getDto(model);
+            var dto = MapToDto(model);
 
             await informationFile.WriteDto(dto, cancellationToken);
         }
-
-        static DiagnosticDto getDto(DiagnosticModel model) =>
-            new()
-            {
-                Properties = new DiagnosticDto.DiagnosticContract
-                {
-                    LoggerId = $"/loggers/{model.LoggerName}",
-                    AlwaysLog = model.AlwaysLog.ValueUnsafe(),
-                    Sampling = model.Sampling.Map(sampling => new DiagnosticDto.SamplingSettings
-                    {
-                        SamplingType = sampling.Type,
-                        Percentage = sampling.Percentage
-                    }).ValueUnsafe()
-                }
-            };
     }
 
     public static void ConfigureValidatePublishedDiagnostics(IHostApplicationBuilder builder)
@@ -335,6 +306,7 @@ public static class DiagnosticModule
             {
                 LoggerId = string.Join('/', dto.Properties.LoggerId?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
                 AlwaysLog = dto.Properties.AlwaysLog ?? string.Empty,
+                LargeLanguageModel = NormalizeLargeLanguageModel(dto.Properties.LargeLanguageModel),
                 Sampling = new
                 {
                     Type = dto.Properties.Sampling?.SamplingType ?? string.Empty,
@@ -346,15 +318,18 @@ public static class DiagnosticModule
     public static Gen<DiagnosticModel> GenerateUpdate(DiagnosticModel original) =>
         from alwaysLog in Gen.Const("allErrors").OptionOf()
         from sampling in DiagnosticSampling.Generate().OptionOf()
+        from largeLanguageModel in DiagnosticLargeLanguageModel.Generate().OptionOf()
         select original with
         {
             AlwaysLog = alwaysLog,
-            Sampling = sampling
+            Sampling = sampling,
+            LargeLanguageModel = largeLanguageModel
         };
 
     public static Gen<DiagnosticDto> GenerateOverride(DiagnosticDto original) =>
         from alwaysLog in Gen.Const("allErrors").OptionOf()
         from sampling in DiagnosticSampling.Generate().OptionOf()
+        from largeLanguageModel in DiagnosticLargeLanguageModel.Generate().OptionOf()
         select new DiagnosticDto
         {
             Properties = new DiagnosticDto.DiagnosticContract
@@ -364,14 +339,17 @@ public static class DiagnosticModule
                 {
                     SamplingType = sampling.Type,
                     Percentage = sampling.Percentage
-                }).ValueUnsafe()
+                }).ValueUnsafe(),
+                LargeLanguageModel = largeLanguageModel.Match(MapLargeLanguageModel, () => original.Properties.LargeLanguageModel)
             }
         };
 
     public static FrozenDictionary<DiagnosticName, DiagnosticDto> GetDtoDictionary(IEnumerable<DiagnosticModel> models) =>
         models.ToFrozenDictionary(model => model.Name, GetDto);
 
-    private static DiagnosticDto GetDto(DiagnosticModel model) =>
+    private static DiagnosticDto GetDto(DiagnosticModel model) => MapToDto(model);
+
+    private static DiagnosticDto MapToDto(DiagnosticModel model) =>
         new()
         {
             Properties = new DiagnosticDto.DiagnosticContract
@@ -382,7 +360,38 @@ public static class DiagnosticModule
                 {
                     SamplingType = sampling.Type,
                     Percentage = sampling.Percentage
-                }).ValueUnsafe()
+                }).ValueUnsafe(),
+                LargeLanguageModel = model.LargeLanguageModel.Match<DiagnosticDto.LargeLanguageModelSettings?>(MapLargeLanguageModel, () => null)
             }
+        };
+
+    private static DiagnosticDto.LargeLanguageModelSettings MapLargeLanguageModel(DiagnosticLargeLanguageModel largeLanguageModel) =>
+        new()
+        {
+            Logs = largeLanguageModel.Logs.Match(logs => logs, () => (string?)null),
+            Requests = largeLanguageModel.Requests.Match<DiagnosticDto.LargeLanguageModelMessageSettings?>(MapLargeLanguageModelMessages, () => null),
+            Responses = largeLanguageModel.Responses.Match<DiagnosticDto.LargeLanguageModelMessageSettings?>(MapLargeLanguageModelMessages, () => null)
+        };
+
+    private static DiagnosticDto.LargeLanguageModelMessageSettings MapLargeLanguageModelMessages(DiagnosticLargeLanguageModelMessages messages) =>
+        new()
+        {
+            Messages = messages.Messages,
+            MaxSizeInBytes = messages.MaxSizeInBytes
+        };
+
+    private static object NormalizeLargeLanguageModel(DiagnosticDto.LargeLanguageModelSettings? largeLanguageModel) =>
+        new
+        {
+            Logs = largeLanguageModel?.Logs ?? string.Empty,
+            Requests = NormalizeLargeLanguageModelMessages(largeLanguageModel?.Requests),
+            Responses = NormalizeLargeLanguageModelMessages(largeLanguageModel?.Responses)
+        };
+
+    private static object NormalizeLargeLanguageModelMessages(DiagnosticDto.LargeLanguageModelMessageSettings? largeLanguageModelMessages) =>
+        new
+        {
+            Messages = largeLanguageModelMessages?.Messages ?? string.Empty,
+            MaxSizeInBytes = largeLanguageModelMessages?.MaxSizeInBytes ?? 0
         };
 }

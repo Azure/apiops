@@ -139,6 +139,10 @@ public sealed record WorkspaceDiagnosticDto
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public string? HttpCorrelationProtocol { get; init; }
 
+        [JsonPropertyName("largeLanguageModel")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public LargeLanguageModelSettings? LargeLanguageModel { get; init; }
+
         [JsonPropertyName("logClientIp")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public bool? LogClientIp { get; init; }
@@ -224,6 +228,32 @@ public sealed record WorkspaceDiagnosticDto
         [JsonPropertyName("samplingType")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public string? SamplingType { get; init; }
+    }
+
+    public sealed record LargeLanguageModelSettings
+    {
+        [JsonPropertyName("logs")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Logs { get; init; }
+
+        [JsonPropertyName("requests")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public LargeLanguageModelMessageSettings? Requests { get; init; }
+
+        [JsonPropertyName("responses")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public LargeLanguageModelMessageSettings? Responses { get; init; }
+    }
+
+    public sealed record LargeLanguageModelMessageSettings
+    {
+        [JsonPropertyName("messages")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Messages { get; init; }
+
+        [JsonPropertyName("maxSizeInBytes")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? MaxSizeInBytes { get; init; }
     }
 }
 

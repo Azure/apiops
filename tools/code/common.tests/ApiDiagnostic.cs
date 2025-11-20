@@ -25,12 +25,46 @@ public sealed record ApiDiagnosticSampling
         };
 }
 
+public sealed record ApiDiagnosticLargeLanguageModelMessages
+{
+    public required string Messages { get; init; }
+    public required int MaxSizeInBytes { get; init; }
+
+    public static Gen<ApiDiagnosticLargeLanguageModelMessages> Generate() =>
+        from messages in Gen.OneOfConst("all", "errors")
+        from maxSize in Gen.Int[0, 65536]
+        select new ApiDiagnosticLargeLanguageModelMessages
+        {
+            Messages = messages,
+            MaxSizeInBytes = maxSize
+        };
+}
+
+public sealed record ApiDiagnosticLargeLanguageModel
+{
+    public Option<string> Logs { get; init; }
+    public Option<ApiDiagnosticLargeLanguageModelMessages> Requests { get; init; }
+    public Option<ApiDiagnosticLargeLanguageModelMessages> Responses { get; init; }
+
+    public static Gen<ApiDiagnosticLargeLanguageModel> Generate() =>
+        from logs in Gen.OneOfConst("enabled", "disabled").OptionOf()
+        from requests in ApiDiagnosticLargeLanguageModelMessages.Generate().OptionOf()
+        from responses in ApiDiagnosticLargeLanguageModelMessages.Generate().OptionOf()
+        select new ApiDiagnosticLargeLanguageModel
+        {
+            Logs = logs,
+            Requests = requests,
+            Responses = responses
+        };
+}
+
 public record ApiDiagnosticModel
 {
     public required ApiDiagnosticName Name { get; init; }
     public required LoggerName LoggerName { get; init; }
     public Option<string> AlwaysLog { get; init; }
     public Option<ApiDiagnosticSampling> Sampling { get; init; }
+    public Option<ApiDiagnosticLargeLanguageModel> LargeLanguageModel { get; init; }
 
     public static Gen<ApiDiagnosticModel> Generate() =>
         from loggerType in LoggerType.Generate()
@@ -38,12 +72,14 @@ public record ApiDiagnosticModel
         from name in GenerateName(loggerType)
         from alwaysLog in Gen.Const("allErrors").OptionOf()
         from sampling in ApiDiagnosticSampling.Generate().OptionOf()
+        from largeLanguageModel in ApiDiagnosticLargeLanguageModel.Generate().OptionOf()
         select new ApiDiagnosticModel
         {
             Name = name,
             LoggerName = loggerName,
             AlwaysLog = alwaysLog,
-            Sampling = sampling
+            Sampling = sampling,
+            LargeLanguageModel = largeLanguageModel
         };
 
     public static Gen<ApiDiagnosticName> GenerateName() =>

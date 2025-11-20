@@ -60,25 +60,10 @@ internal static class ApiDiagnosticModule
         {
             var serviceUri = getServiceUri(serviceName);
             var diagnosticUri = ApiDiagnosticUri.From(model.Name, apiName, serviceUri);
-            var dto = getDto(model);
+            var dto = MapToDto(model);
 
             await diagnosticUri.PutDto(dto, pipeline, cancellationToken);
         }
-
-        static ApiDiagnosticDto getDto(ApiDiagnosticModel model) =>
-            new()
-            {
-                Properties = new ApiDiagnosticDto.DiagnosticContract
-                {
-                    LoggerId = $"/loggers/{model.LoggerName}",
-                    AlwaysLog = model.AlwaysLog.ValueUnsafe(),
-                    Sampling = model.Sampling.Map(sampling => new ApiDiagnosticDto.SamplingSettings
-                    {
-                        SamplingType = sampling.Type,
-                        Percentage = sampling.Percentage
-                    }).ValueUnsafe()
-                }
-            };
     }
 
     public static void ConfigureValidateExtractedApiDiagnostics(IHostApplicationBuilder builder)
@@ -119,6 +104,7 @@ internal static class ApiDiagnosticModule
             {
                 LoggerId = string.Join('/', dto.Properties.LoggerId?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
                 AlwaysLog = dto.Properties.AlwaysLog ?? string.Empty,
+                LargeLanguageModel = NormalizeLargeLanguageModel(dto.Properties.LargeLanguageModel),
                 Sampling = new
                 {
                     Type = dto.Properties.Sampling?.SamplingType ?? string.Empty,
@@ -240,25 +226,10 @@ internal static class ApiDiagnosticModule
         async ValueTask writeInformationFile(ApiDiagnosticModel model, ApiName apiName, ManagementServiceDirectory serviceDirectory, CancellationToken cancellationToken)
         {
             var informationFile = ApiDiagnosticInformationFile.From(model.Name, apiName, serviceDirectory);
-            var dto = getDto(model);
+            var dto = MapToDto(model);
 
             await informationFile.WriteDto(dto, cancellationToken);
         }
-
-        static ApiDiagnosticDto getDto(ApiDiagnosticModel model) =>
-            new()
-            {
-                Properties = new ApiDiagnosticDto.DiagnosticContract
-                {
-                    LoggerId = $"/loggers/{model.LoggerName}",
-                    AlwaysLog = model.AlwaysLog.ValueUnsafe(),
-                    Sampling = model.Sampling.Map(sampling => new ApiDiagnosticDto.SamplingSettings
-                    {
-                        SamplingType = sampling.Type,
-                        Percentage = sampling.Percentage
-                    }).ValueUnsafe()
-                }
-            };
     }
     public static void ConfigureValidatePublishedApiDiagnostics(IHostApplicationBuilder builder)
     {
@@ -298,6 +269,7 @@ internal static class ApiDiagnosticModule
             {
                 LoggerId = string.Join('/', dto.Properties.LoggerId?.Split('/')?.TakeLast(2)?.ToArray() ?? []),
                 AlwaysLog = dto.Properties.AlwaysLog ?? string.Empty,
+                LargeLanguageModel = NormalizeLargeLanguageModel(dto.Properties.LargeLanguageModel),
                 Sampling = new
                 {
                     Type = dto.Properties.Sampling?.SamplingType ?? string.Empty,
@@ -305,6 +277,52 @@ internal static class ApiDiagnosticModule
                 }
             }.ToString()!;
     }
+
+    private static ApiDiagnosticDto MapToDto(ApiDiagnosticModel model) =>
+        new()
+        {
+            Properties = new ApiDiagnosticDto.DiagnosticContract
+            {
+                LoggerId = $"/loggers/{model.LoggerName}",
+                AlwaysLog = model.AlwaysLog.ValueUnsafe(),
+                Sampling = model.Sampling.Map(sampling => new ApiDiagnosticDto.SamplingSettings
+                {
+                    SamplingType = sampling.Type,
+                    Percentage = sampling.Percentage
+                }).ValueUnsafe(),
+                LargeLanguageModel = model.LargeLanguageModel.Match<ApiDiagnosticDto.LargeLanguageModelSettings?>(MapLargeLanguageModel, () => null)
+            }
+        };
+
+    private static ApiDiagnosticDto.LargeLanguageModelSettings MapLargeLanguageModel(ApiDiagnosticLargeLanguageModel largeLanguageModel) =>
+        new()
+        {
+            Logs = largeLanguageModel.Logs.Match(logs => logs, () => (string?)null),
+            Requests = largeLanguageModel.Requests.Match<ApiDiagnosticDto.LargeLanguageModelMessageSettings?>(MapLargeLanguageModelMessages, () => null),
+            Responses = largeLanguageModel.Responses.Match<ApiDiagnosticDto.LargeLanguageModelMessageSettings?>(MapLargeLanguageModelMessages, () => null)
+        };
+
+    private static ApiDiagnosticDto.LargeLanguageModelMessageSettings MapLargeLanguageModelMessages(ApiDiagnosticLargeLanguageModelMessages messages) =>
+        new()
+        {
+            Messages = messages.Messages,
+            MaxSizeInBytes = messages.MaxSizeInBytes
+        };
+
+    private static object NormalizeLargeLanguageModel(ApiDiagnosticDto.LargeLanguageModelSettings? largeLanguageModel) =>
+        new
+        {
+            Logs = largeLanguageModel?.Logs ?? string.Empty,
+            Requests = NormalizeLargeLanguageModelMessages(largeLanguageModel?.Requests),
+            Responses = NormalizeLargeLanguageModelMessages(largeLanguageModel?.Responses)
+        };
+
+    private static object NormalizeLargeLanguageModelMessages(ApiDiagnosticDto.LargeLanguageModelMessageSettings? largeLanguageModelMessages) =>
+        new
+        {
+            Messages = largeLanguageModelMessages?.Messages ?? string.Empty,
+            MaxSizeInBytes = largeLanguageModelMessages?.MaxSizeInBytes ?? 0
+        };
 }
 //internal static class ApiDiagnosticModule
 //{
