@@ -9,6 +9,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -164,8 +165,13 @@ internal static class ProductApiModule
         {
             logger.LogInformation("Adding API {ApiName} to product {ProductName}...", name, productName);
 
-            await ProductApiUri.From(name, productName, serviceUri)
-                               .PutDto(dto, pipeline, cancellationToken);
+            try {
+                await ProductApiUri.From(name, productName, serviceUri)
+                                   .PutDto(dto, pipeline, cancellationToken);
+            } catch (HttpRequestException httpRequestException) when (httpRequestException.Message.Contains("API not found", StringComparison.OrdinalIgnoreCase)){
+                logger.LogWarning("API {ApiName} not found, the API is NOT added to product in the target environment.", name);
+                return;
+            }
         };
     }
 
