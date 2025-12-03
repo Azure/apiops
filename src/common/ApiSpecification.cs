@@ -235,7 +235,14 @@ public static partial class ResourceModule
 
                     var downloadUriResult = from exportResult in await pipeline.GetContent(exportUri, cancellationToken)
                                             from exportJson in JsonObjectModule.From(exportResult)
-                                            from value in exportJson.GetJsonObjectProperty("value")
+                                            from value in resource switch
+                                            {
+                                                ApiResource => exportJson.GetJsonObjectProperty("value"),
+                                                WorkspaceApiResource => from properties in exportJson.GetJsonObjectProperty("properties")
+                                                                        from value in properties.GetJsonObjectProperty("value")
+                                                                        select value,
+                                                _ => throw new InvalidOperationException($"Resource '{resourceKey.Resource}' does not support API specifications.")
+                                            }
                                             from link in value.GetStringProperty("link")
                                             select new Uri(link);
                     var downloadUri = downloadUriResult.IfErrorThrow();
