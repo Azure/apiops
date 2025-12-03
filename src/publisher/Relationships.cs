@@ -565,6 +565,7 @@ internal static class RelationshipsModule
             key.Resource switch
             {
                 ApiOperationResource => true,
+                WorkspaceResource => true,
                 WorkspaceApiOperationResource => true,
                 GroupResource
                     when key.Name == GroupResource.Administrators
