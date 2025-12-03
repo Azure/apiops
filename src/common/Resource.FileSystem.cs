@@ -226,7 +226,14 @@ public static partial class ResourceModule
     private static JsonObject FormatInformationFileDto(this ILinkResource resource, ResourceName name, JsonObject dto)
     {
         // Transform the absolute resource ID in the link property to a relative ID
-        var updatedDto = SetAbsoluteToRelativeId(dto, resource.DtoPropertyNameForLinkedResource);
+        var updatedDto = (resource.Primary, resource.Secondary) switch
+        {
+            // Workspace product groups don't support relative IDs
+            (WorkspaceProductResource, WorkspaceGroupResource) => dto,
+            // Workspace product APIs don't support relative IDs
+            (WorkspaceProductResource, WorkspaceApiResource) => dto,
+            _ => SetAbsoluteToRelativeId(dto, resource.DtoPropertyNameForLinkedResource)
+        };
 
         // Ensure the DTO contains the resource name
         return updatedDto.SetProperty("name", name.ToString());
