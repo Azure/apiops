@@ -1,8 +1,6 @@
-using Azure;
 using common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using OpenTelemetry.Resources;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;

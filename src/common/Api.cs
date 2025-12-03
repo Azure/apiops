@@ -308,9 +308,6 @@ public static partial class ResourceModule
         }
     }
 
-    /// <summary>
-    /// If the 'serviceUrl' property is empty, remove it. APIM doesn't support publishing blank service URLs.
-    /// </summary>
     private static JsonObject FormatInformationFileDto(this ApiResource resource, JsonObject dtoJson)
     {
         var serializerOptions = ((IResourceWithDto)resource).SerializerOptions;
@@ -318,6 +315,7 @@ public static partial class ResourceModule
         var dto = JsonNodeModule.To<ApiDto>(dtoJson, serializerOptions)
                                 .IfErrorThrow();
 
+        // If the 'serviceUrl' property is empty, remove it. APIM doesn't support publishing blank service URLs.
         dto = string.IsNullOrWhiteSpace(dto.Properties.ServiceUrl)
                 ? dto with { Properties = dto.Properties with { ServiceUrl = null } }
                 : dto;

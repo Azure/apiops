@@ -3,12 +3,14 @@ using DotNext.Threading;
 using Flurl;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Resources;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.InteropServices.JavaScript;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -136,17 +138,44 @@ public static partial class ResourceModule
             {
                 case IPolicyResource policyResource:
                     return policyResource.ListDtosFromApim(parents, listNames, getDto, cancellationToken);
+                case var _ when isWorkspaceResource(parents):
+                    return getWorkspaceResourceDtos(resource, parents, cancellationToken);
                 default:
-                    var uri = resource.GetCollectionUri(parents, serviceUri);
-
-                    return pipeline.ListJsonObjects(uri, cancellationToken)
-                                   .Select(jsonObject => from name in jsonObject.GetStringProperty("name")
-                                                         from resourceName in ResourceName.From(name)
-                                                         from normalizedDto in resource.DeserializeToDtoJson(jsonObject)
-                                                         select (resourceName, normalizedDto))
-                                   .Select(result => result.IfErrorThrow());
+                    return getNonWorkspaceResourceDtos(resource, parents, cancellationToken);
             }
         };
+
+        bool isWorkspaceResource(ParentChain parents) =>
+            parents.Any(parent => parent.Resource is WorkspaceResource);
+
+        // The APIM REST API is buggy for some workspace-scoped resources.
+        // If the resource is workspace-scoped, we fetch its DTO individually
+        // rather than relying on the "list-all" response.
+        IAsyncEnumerable<(ResourceName, JsonObject)> getWorkspaceResourceDtos(IResourceWithDto resource, ParentChain parents, CancellationToken cancellationToken)
+        {
+            var uri = resource.GetCollectionUri(parents, serviceUri);
+
+            return pipeline.ListJsonObjects(uri, cancellationToken)
+                           .Select(jsonObject => from nameString in jsonObject.GetStringProperty("name")
+                                                 from name in ResourceName.From(nameString)
+                                                 select name)
+                           .Select(nameResult => nameResult.IfErrorThrow())
+                           .Select(async (name, cancellationToken) => from dto in await resource.GetDtoFromApim(name, parents, serviceUri, pipeline, cancellationToken)
+                                                                      select (name, dto))
+                           .Select(result => result.IfErrorThrow());
+        }
+
+        IAsyncEnumerable<(ResourceName, JsonObject)> getNonWorkspaceResourceDtos(IResourceWithDto resource, ParentChain parents, CancellationToken cancellationToken)
+        {
+            var uri = resource.GetCollectionUri(parents, serviceUri);
+
+            return pipeline.ListJsonObjects(uri, cancellationToken)
+                           .Select(jsonObject => from nameString in jsonObject.GetStringProperty("name")
+                                                 from name in ResourceName.From(nameString)
+                                                 from dto in resource.DeserializeToDtoJson(jsonObject)
+                                                 select (name, dto))
+                           .Select(result => result.IfErrorThrow());
+        }
     }
 
     /// <summary>
