@@ -218,7 +218,7 @@ public static class DiagnosticModule
                 using (contents)
                 {
                     var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
-                    var dto = data.ToObjectFromJson<DiagnosticDto>();
+                    var dto = data.ToObjectFromJson<DiagnosticDto>(JsonObjectExtensions.SerializerOptions);
                     return (name, dto);
                 }
             });

@@ -142,7 +142,7 @@ internal static class WorkspaceDiagnosticModule
             var contentsOption = await tryGetFileContents(informationFile.ToFileInfo(), cancellationToken);
 
             return from contents in contentsOption
-                   select contents.ToObjectFromJson<WorkspaceDiagnosticDto>();
+                   select contents.ToObjectFromJson<WorkspaceDiagnosticDto>(JsonObjectExtensions.SerializerOptions);
         };
     }
 

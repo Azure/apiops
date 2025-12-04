@@ -292,7 +292,7 @@ public static class ApiDiagnosticModule
     public static async ValueTask<ApiDiagnosticDto> GetDto(this ApiDiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
-        return content.ToObjectFromJson<ApiDiagnosticDto>();
+        return content.ToObjectFromJson<ApiDiagnosticDto>(JsonObjectExtensions.SerializerOptions);
     }
 
     public static async ValueTask Delete(this ApiDiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
@@ -300,7 +300,7 @@ public static class ApiDiagnosticModule
 
     public static async ValueTask PutDto(this ApiDiagnosticUri uri, ApiDiagnosticDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var content = BinaryData.FromObjectAsJson(dto);
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
         await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
     }
 
@@ -331,6 +331,6 @@ public static class ApiDiagnosticModule
     public static async ValueTask<ApiDiagnosticDto> ReadDto(this ApiDiagnosticInformationFile file, CancellationToken cancellationToken)
     {
         var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
-        return content.ToObjectFromJson<ApiDiagnosticDto>();
+        return content.ToObjectFromJson<ApiDiagnosticDto>(JsonObjectExtensions.SerializerOptions);
     }
 }

@@ -287,13 +287,13 @@ public static class DiagnosticModule
     public static async ValueTask<Option<DiagnosticDto>> TryGetDto(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var contentOption = await pipeline.GetContentOption(uri.ToUri(), cancellationToken);
-        return contentOption.Map(content => content.ToObjectFromJson<DiagnosticDto>());
+        return contentOption.Map(content => content.ToObjectFromJson<DiagnosticDto>(JsonObjectExtensions.SerializerOptions));
     }
 
     public static async ValueTask<DiagnosticDto> GetDto(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
-        return content.ToObjectFromJson<DiagnosticDto>();
+        return content.ToObjectFromJson<DiagnosticDto>(JsonObjectExtensions.SerializerOptions);
     }
 
     public static async ValueTask Delete(this DiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
@@ -301,7 +301,7 @@ public static class DiagnosticModule
 
     public static async ValueTask PutDto(this DiagnosticUri uri, DiagnosticDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var content = BinaryData.FromObjectAsJson(dto);
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
         await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
     }
 
@@ -329,7 +329,7 @@ public static class DiagnosticModule
     public static async ValueTask<DiagnosticDto> ReadDto(this DiagnosticInformationFile file, CancellationToken cancellationToken)
     {
         var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
-        return content.ToObjectFromJson<DiagnosticDto>();
+        return content.ToObjectFromJson<DiagnosticDto>(JsonObjectExtensions.SerializerOptions);
     }
 
     public static Option<LoggerName> TryGetLoggerName(DiagnosticDto dto) =>

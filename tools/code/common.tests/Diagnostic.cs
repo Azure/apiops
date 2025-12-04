@@ -82,5 +82,20 @@ public record DiagnosticModel
         select DiagnosticName.From(name);
 
     public static Gen<FrozenSet<DiagnosticModel>> GenerateSet() =>
-        Generate().FrozenSetOf(x => x.Name, 0, 20);
+        from diagnostics in Generate().FrozenSetOf(x => x.Name, 0, 20)
+        from largeLanguageModel in DiagnosticLargeLanguageModel.Generate()
+        select EnsureLargeLanguageModel(diagnostics, largeLanguageModel);
+
+    private static FrozenSet<DiagnosticModel> EnsureLargeLanguageModel(FrozenSet<DiagnosticModel> diagnostics, DiagnosticLargeLanguageModel largeLanguageModel)
+    {
+        if (diagnostics.Count == 0 || diagnostics.Any(diagnostic => diagnostic.LargeLanguageModel.IsSome))
+        {
+            return diagnostics;
+        }
+
+        var diagnosticArray = diagnostics.ToArray();
+        diagnosticArray[0] = diagnosticArray[0] with { LargeLanguageModel = LanguageExt.Prelude.Some(largeLanguageModel) };
+
+        return diagnosticArray.ToFrozenSet(x => x.Name);
+    }
 }

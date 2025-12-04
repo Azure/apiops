@@ -181,7 +181,7 @@ internal static class ApiDiagnosticModule
                 using (contents)
                 {
                     var data = await BinaryData.FromStreamAsync(contents, cancellationToken);
-                    var dto = data.ToObjectFromJson<ApiDiagnosticDto>();
+                    var dto = data.ToObjectFromJson<ApiDiagnosticDto>(JsonObjectExtensions.SerializerOptions);
                     return (name, dto);
                 }
             });

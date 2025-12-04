@@ -94,7 +94,9 @@ public record ApiDiagnosticModel
         };
 
     public static Gen<FrozenSet<ApiDiagnosticModel>> GenerateSet() =>
-        Generate().FrozenSetOf(0, 20, Comparer);
+        from diagnostics in Generate().FrozenSetOf(0, 20, Comparer)
+        from largeLanguageModel in ApiDiagnosticLargeLanguageModel.Generate()
+        select EnsureLargeLanguageModel(diagnostics, largeLanguageModel);
 
     public static Gen<FrozenSet<ApiDiagnosticModel>> GenerateSet(FrozenSet<ApiDiagnosticModel> originalSet, ICollection<LoggerModel> loggers)
     {
@@ -113,10 +115,24 @@ public record ApiDiagnosticModel
                                                                     LoggerName = logger.Name
                                                                 })
                                           .SequenceToFrozenSet(originalSet.Comparer)
-               select updates;
+               from largeLanguageModel in ApiDiagnosticLargeLanguageModel.Generate()
+               select EnsureLargeLanguageModel(updates, largeLanguageModel);
     }
 
     private static IEqualityComparer<ApiDiagnosticModel> Comparer { get; } =
         EqualityComparerBuilder.For<ApiDiagnosticModel>()
                                .EquateBy(x => x.Name);
+
+    private static FrozenSet<ApiDiagnosticModel> EnsureLargeLanguageModel(FrozenSet<ApiDiagnosticModel> diagnostics, ApiDiagnosticLargeLanguageModel largeLanguageModel)
+    {
+        if (diagnostics.Count == 0 || diagnostics.Any(diagnostic => diagnostic.LargeLanguageModel.IsSome))
+        {
+            return diagnostics;
+        }
+
+        var diagnosticArray = diagnostics.ToArray();
+        diagnosticArray[0] = diagnosticArray[0] with { LargeLanguageModel = LanguageExt.Prelude.Some(largeLanguageModel) };
+
+        return diagnosticArray.ToFrozenSet(Comparer);
+    }
 }

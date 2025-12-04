@@ -147,7 +147,7 @@ internal static class DiagnosticModule
             var contentsOption = await tryGetFileContents(informationFileInfo, cancellationToken);
 
             return from contents in contentsOption
-                   let dto = contents.ToObjectFromJson<DiagnosticDto>()
+                   let dto = contents.ToObjectFromJson<DiagnosticDto>(JsonObjectExtensions.SerializerOptions)
                    select overrideDto(name, dto);
         };
     }

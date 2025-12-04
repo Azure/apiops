@@ -276,7 +276,7 @@ public static class WorkspaceDiagnosticModule
     public static async ValueTask<WorkspaceDiagnosticDto> GetDto(this WorkspaceDiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
         var content = await pipeline.GetContent(uri.ToUri(), cancellationToken);
-        return content.ToObjectFromJson<WorkspaceDiagnosticDto>();
+        return content.ToObjectFromJson<WorkspaceDiagnosticDto>(JsonObjectExtensions.SerializerOptions);
     }
 
     public static async ValueTask Delete(this WorkspaceDiagnosticUri uri, HttpPipeline pipeline, CancellationToken cancellationToken) =>
@@ -284,7 +284,7 @@ public static class WorkspaceDiagnosticModule
 
     public static async ValueTask PutDto(this WorkspaceDiagnosticUri uri, WorkspaceDiagnosticDto dto, HttpPipeline pipeline, CancellationToken cancellationToken)
     {
-        var content = BinaryData.FromObjectAsJson(dto);
+        var content = BinaryData.FromObjectAsJson(dto, JsonObjectExtensions.SerializerOptions);
         await pipeline.PutContent(uri.ToUri(), content, cancellationToken);
     }
 
@@ -297,6 +297,6 @@ public static class WorkspaceDiagnosticModule
     public static async ValueTask<WorkspaceDiagnosticDto> ReadDto(this WorkspaceDiagnosticInformationFile file, CancellationToken cancellationToken)
     {
         var content = await file.ToFileInfo().ReadAsBinaryData(cancellationToken);
-        return content.ToObjectFromJson<WorkspaceDiagnosticDto>();
+        return content.ToObjectFromJson<WorkspaceDiagnosticDto>(JsonObjectExtensions.SerializerOptions);
     }
 }
