@@ -1,0 +1,46 @@
+# Configuration for GitHub automatically generated release notes
+# https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+    authors:
+      - dependabot
+      - dependabot[bot]
+  categories:
+    - title: Breaking changes
+      labels:
+        - Semver-Major
+        - semver-major
+        - breaking-change
+        - breaking
+    - title: Added
+      labels:
+        - Semver-Minor
+        - semver-minor
+        - feature
+        - enhancement
+        - added
+    - title: Changed
+      labels:
+        - change
+        - changed
+        - refactor
+    - title: Fixed
+      labels:
+        - Semver-Patch
+        - semver-patch
+        - bug
+        - fix
+        - fixed
+    - title: Documentation
+      labels:
+        - docs
+        - documentation
+    - title: Dependencies
+      labels:
+        - dependencies
+    - title: Other changes
+      labels:
+        - "*"

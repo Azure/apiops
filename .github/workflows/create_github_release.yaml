@@ -247,6 +247,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -262,6 +263,7 @@ jobs:
         env:
           ARTIFACT_DOWNLOAD_PATH: ${{ steps.download-artifacts.outputs.download-path }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_WORKSPACE: ${{github.workspace}}
           RELEASE_TAG: ${{ github.event.inputs.Release_Version }}
           COMMIT_ID: ${{ github.sha }}

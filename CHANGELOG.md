@@ -68,23 +68,26 @@ apis: [] # All APIs will be skipped.
 ````
 
 ## Breaking changes
-### New section names in extractor configuration
-We've made the section names in the extractor and publisher identical. This provides a more consistent experience and greatly simplifies code maintenance.
-#### Before (extractor configuration)
-```yaml
-apiNames:
-- api1
-- api2
-productNames:
-- product1
-- product2
-```
-#### After (extractor configuration)
-```yaml
-apis:
-- api1
-- api2
-products:
-- product1
-- product2
-```
+### Section names in extractor and publisher configuration
+
+- We've made the section names in the extractor and publisher identical. This provides a more consistent experience and greatly simplifies code maintenance.
+  #### Before (extractor configuration)
+  ```yaml
+  apiNames:
+  - api1
+  - api2
+  productNames:
+  - product1
+  - product2
+  ```
+  #### After (extractor configuration)
+  ```yaml
+  apis:
+  - api1
+  - api2
+  products:
+  - product1
+  - product2
+  ```
+
+- We've changed the publisher section names from camel casing to spaces (e.g. `namedValues` -> `named values`). Here is an updated sample configuration file.
