@@ -10,6 +10,7 @@ namespace integration.tests;
 
 internal abstract record ApiType
 {
+#pragma warning disable CA1515 // Consider making public types internal
     public sealed record Http : ApiType
     {
         private Http() { }
@@ -45,6 +46,7 @@ internal abstract record ApiType
 
         public override string ToString() => "graphql";
     }
+#pragma warning restore CA1515 // Consider making public types internal
 
     public static Gen<ApiType> Generate() =>
         Gen.OneOfConst<ApiType>(Http.Instance,

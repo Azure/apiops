@@ -81,7 +81,12 @@ internal static class ExtractorModule
 
         async ValueTask extractResource(IResource resource, ResourceName name, Option<JsonObject> dtoOption, ParentChain parents, CancellationToken cancellationToken)
         {
-            var resourceKey = new ResourceKey { Resource = resource, Name = name, Parents = parents };
+            var resourceKey = new ResourceKey
+            {
+                Resource = resource,
+                Name = name,
+                Parents = parents
+            };
 
             // Skip the resource if it should not be extracted.
             if (await shouldExtract(resourceKey, cancellationToken) is false)
@@ -95,17 +100,20 @@ internal static class ExtractorModule
             // Process the resource's successors
             var successorParents = parents.Append(resource, name);
             await graph.ListTraversalSuccessors(resource)
-                       // Only extract releases under the current API
-                       .Where(successor => resource switch
-                       {
-                           ApiResource => successor is not ApiReleaseResource || ApiRevisionModule.IsRootName(name),
-                           WorkspaceApiResource => successor is not WorkspaceApiReleaseResource || ApiRevisionModule.IsRootName(name),
-                           _ => true
-                       })
+                       .Where(successor => shouldExtractSuccessor(successor, resourceKey))
                        .IterTaskParallel(async successor => await processResource(successor, successorParents, cancellationToken),
                                          maxDegreeOfParallelism: Option.None,
                                          cancellationToken);
         }
+
+        static bool shouldExtractSuccessor(IResource successor, ResourceKey parent) =>
+            parent.Resource switch
+            {
+                // API releases are only extracted for root APIs
+                ApiResource => successor is not ApiReleaseResource || ApiRevisionModule.IsRootName(parent.Name),
+                WorkspaceApiResource => successor is not WorkspaceApiReleaseResource || ApiRevisionModule.IsRootName(parent.Name),
+                _ => true
+            };
     }
 
     private static void ConfigureShouldExtract(IHostApplicationBuilder builder)
@@ -126,18 +134,16 @@ internal static class ExtractorModule
             using var activity = activitySource.StartActivity("should.extract")
                                               ?.SetTag("resourceKey", resourceKey);
 
-            var extract = await shouldExtract(resourceKey, cancellationToken);
+            var result = await shouldExtract(resourceKey, cancellationToken);
 
-            activity?.SetTag("extract", extract);
+            activity?.SetTag("result", result);
 
-            return extract;
+            return result;
         };
 
         async ValueTask<bool> shouldExtract(ResourceKey resourceKey, CancellationToken cancellationToken)
         {
-            var resource = resourceKey.Resource;
-            var name = resourceKey.Name;
-            var parents = resourceKey.Parents;
+            var (resource, name, parents) = (resourceKey.Resource, resourceKey.Name, resourceKey.Parents);
 
             // Never extract the `master` subscription
             if (resource is SubscriptionResource && name == SubscriptionResource.Master)
@@ -159,16 +165,22 @@ internal static class ExtractorModule
                 logger.LogWarning("Skipping workspace system group '{Name}'...", name);
                 return false;
             }
-            // Check from configuration. If no configuration was defined for the resource type, extract all.
+            // Check from configuration
             else
             {
                 var option = await resourceIsInConfiguration(resourceKey, cancellationToken);
 
-                // Log a warning if the resource should be skipped.
-                option.Where(result => result is false)
-                      .Iter(_ => logger.LogWarning("Skipping {ResourceKey} as it is not in configuration...", resourceKey));
-
-                return option.IfNone(() => true);
+                return option
+                        // Log a warning if the resource is not in configuration
+                        .Tap(isInConfiguration =>
+                        {
+                            if (isInConfiguration is false)
+                            {
+                                logger.LogWarning("Skipping {ResourceKey} as it is not in configuration...", resourceKey);
+                            }
+                        })
+                        // If no configuration was defined for the resource type, extract all.
+                        .IfNone(() => true);
             }
         }
     }
@@ -199,9 +211,7 @@ internal static class ExtractorModule
 
             await dtoOption.IterTask(async dto =>
             {
-                var resource = resourceKey.Resource;
-                var name = resourceKey.Name;
-                var parents = resourceKey.Parents;
+                var (resource, name, parents) = (resourceKey.Resource, resourceKey.Name, resourceKey.Parents);
 
                 if (resource is IResourceWithInformationFile resourceWithInformationFile)
                 {
@@ -230,6 +240,7 @@ internal static class ExtractorModule
         async ValueTask writeSpecification(ResourceKey resourceKey, JsonObject dto, CancellationToken cancellationToken)
         {
             var option = await getApiSpecification(resourceKey, dto, cancellationToken);
+
             await option.IterTask(async tuple =>
             {
                 var (specification, contents) = tuple;

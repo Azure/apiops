@@ -104,6 +104,10 @@ internal static class Generator
 
         var generator =
             graph.TopologicallySortedResources
+                 // Skip workspasces
+                 .Where(resource => resource.GetType().FullName!.Contains("workspace", StringComparison.OrdinalIgnoreCase) is false)
+                 // Skip API operations
+                 .Where(resource => resource.GetType().FullName!.Contains("ApiOperation", StringComparison.OrdinalIgnoreCase) is false)
                  .Aggregate(Gen.Const(ResourceModels.Empty),
                             (generator, resource) => from accumulated in generator
                                                      let accumulatedNodes = accumulated.SelectMany(kvp => kvp.Value).ToImmutableHashSet()
