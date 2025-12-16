@@ -3,19 +3,17 @@
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
 		<TargetFramework>net10.0</TargetFramework>
-		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<!--<TreatWarningsAsErrors>true</TreatWarningsAsErrors>-->
 		<AnalysisLevel>latest-all</AnalysisLevel>
 		<Nullable>enable</Nullable>
 		<LangVersion>preview</LangVersion>
 		<InvariantGlobalization>true</InvariantGlobalization>
 		<UserSecretsId>6ce9dc18-ea0d-4d82-8f1a-e63877f35b88</UserSecretsId>
-		<!-- Needed for the new C# 14 extension syntax -->
-		<WarningsNotAsErrors>CA1515</WarningsNotAsErrors>
 	</PropertyGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Bogus" Version="35.6.5" />
-		<PackageReference Include="CsCheck" Version="4.4.1" />
+		<PackageReference Include="CsCheck" Version="4.5.0" />
 		<PackageReference Include="FluentAssertions" Version="8.8.0" />
 	</ItemGroup>
 

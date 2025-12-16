@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace extractor;
 
-#pragma warning disable CA1515 // Consider making public types internal
+#pragma warning disable CA1515 // Consider making public types internal. We keep this public because our integration tests call Program.Main.
 public static class Program
 #pragma warning restore CA1515 // Consider making public types internal
 {
@@ -70,9 +70,9 @@ public static class Program
     {
         var provider = host.Services;
         var applicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>();
-        var logger = provider.GetRequiredService<ILogger>();
         var cancellationToken = applicationLifetime.ApplicationStopping;
         var runExtractor = provider.GetRequiredService<RunExtractor>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         try
         {

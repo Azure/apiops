@@ -228,4 +228,13 @@ public static class Option
     public static async ValueTask IterTask<T>(this Option<T> option, Func<T, ValueTask> f) =>
         await option.Match<ValueTask>(async t => await f(t),
                                       () => ValueTask.CompletedTask);
+
+    /// <summary>
+    /// Executes <paramref name="action"/> when the option is Some, then returns the original option.
+    /// </summary>
+    public static Option<T> Tap<T>(this Option<T> option, Action<T> action)
+    {
+        option.Iter(action);
+        return option;
+    }
 }
