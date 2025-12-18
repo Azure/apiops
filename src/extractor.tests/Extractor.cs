@@ -33,9 +33,30 @@ public class RunExtractorTests
             await fixture.Run(cancellationToken);
 
             // Assert
-            var unsupportedResources = fixture.Resources.Where(resource => fixture.SupportedApimResources.Contains(resource) is false);
             var extractedResources = fixture.WrittenResourceDtos.Keys.Select(key => key.Resource);
-            unsupportedResources.Should().NotIntersectWith(extractedResources);
+            var supportedResources = fixture.SupportedApimResources;
+            extractedResources.Should().BeSubsetOf(supportedResources);
+        });
+    }
+
+    [Fact]
+    public async Task Descendants_of_unsupported_parents_are_not_extracted()
+    {
+        var gen = Fixture.Generate();
+
+        await gen.SampleAsync(async fixture =>
+        {
+            // Arrange
+            var cancellationToken = TestContext.Current.CancellationToken;
+
+            // Act
+            await fixture.Run(cancellationToken);
+
+            // Assert
+            var extractedResources = fixture.WrittenResourceDtos.Keys.Select(key => key.Resource);
+            var extractedResourceAncestors = extractedResources.SelectMany(resource => resource.GetTraversalPredecessorHierarchy());
+            var supportedResources = fixture.SupportedApimResources;
+            extractedResourceAncestors.Should().BeSubsetOf(supportedResources);
         });
     }
 
@@ -78,13 +99,14 @@ public class RunExtractorTests
                 fixture.ApimResourceDtos
                        .Should().ContainKey(kvp.Key)
                        .WhoseValue
+                       .IfNoneNull()
                        .Should().BeEquivalentTo(kvp.Value);
             });
         });
     }
 
     [Fact]
-    public async Task Children_of_unsupported_parents_are_not_extracted()
+    public async Task Only_api_releases_of_current_apis_get_extracted()
     {
         var gen = Fixture.Generate();
 
@@ -97,21 +119,43 @@ public class RunExtractorTests
             await fixture.Run(cancellationToken);
 
             // Assert
-            fixture.WrittenResourceDtos.Should().AllSatisfy(kvp =>
-            {
-                var parents = kvp.Key.Resource.GetTraversalPredecessorHierarchy();
-                parents.Should().BeSubsetOf(fixture.SupportedApimResources);
-            });
+            var extractedNonCurrentApiReleases =
+                fixture.WrittenResourceDtos.Keys
+                       .Where(key => key.Resource is ApiReleaseResource or WorkspaceApiReleaseResource)
+                       .Where(key => key.Parents
+                                        .Any(x => x.Resource is ApiResource or WorkspaceApiResource
+                                                  && ApiRevisionModule.IsRootName(x.Name) is false));
+            extractedNonCurrentApiReleases.Should().BeEmpty();
         });
     }
 
     private sealed record Fixture
     {
         private ImmutableDictionary<ResourceKey, JsonObject> writtenResourceDtos = [];
-        public required ImmutableHashSet<IResource> Resources { get; init; }
+
+        private readonly Lazy<ImmutableDictionary<(IResource, ParentChain), ImmutableHashSet<ResourceName>>> resourceNamesDictionary = new();
+        private readonly Lazy<ImmutableDictionary<(IResource, ParentChain), ImmutableArray<(ResourceName, JsonObject)>>> resourceDtosDictionary = new();
+
+        public required ImmutableDictionary<ResourceKey, Option<JsonObject>> ApimResourceDtos
+        {
+            get;
+            init
+            {
+                resourceNamesDictionary = new(() => value.Keys
+                                                         .GroupBy(key => (key.Resource, key.Parents))
+                                                         .ToImmutableDictionary(group => group.Key,
+                                                                                group => group.Select(key => key.Name).ToImmutableHashSet()));
+
+                resourceDtosDictionary = new(() => value.Choose(kvp => from dto in kvp.Value
+                                                                       select (Key: (kvp.Key.Resource, kvp.Key.Parents), Value: (kvp.Key.Name, dto)))
+                                                        .GroupBy(item => item.Key, item => item.Value)
+                                                        .ToImmutableDictionary(group => group.Key, group => group.ToImmutableArray()));
+
+                field = value;
+            }
+        }
+
         public required ImmutableHashSet<IResource> SupportedApimResources { get; init; }
-        public required ImmutableDictionary<(IResource, ParentChain), ImmutableHashSet<ResourceName>> ApimResourceNames { get; init; }
-        public required ImmutableDictionary<ResourceKey, JsonObject> ApimResourceDtos { get; init; }
         public required ImmutableHashSet<ResourceKey> ResourcesToExtract { get; init; }
         public ImmutableDictionary<ResourceKey, JsonObject> WrittenResourceDtos => writtenResourceDtos;
 
@@ -119,7 +163,8 @@ public class RunExtractorTests
         {
             var services = new ServiceCollection();
 
-            services.AddSingleton<ResourceGraph>(ResourceGraph.From(Resources, cancellationToken))
+            services.AddSingleton<ResourceGraph>(ResourceGraph.From(ApimResourceDtos.Keys.Select(key => key.Resource),
+                                                 cancellationToken))
                     .AddSingleton<IsResourceSupportedInApim>(async (resource, cancellationToken) =>
                     {
                         await ValueTask.CompletedTask;
@@ -127,32 +172,17 @@ public class RunExtractorTests
                     })
                     .AddSingleton<ListResourceNamesFromApim>((resource, parents, cancellationToken) =>
                     {
-                        return ApimResourceNames.Find((resource, parents))
-                                                .IfNone(() => [])
-                                                .ToAsyncEnumerable();
+                        return resourceNamesDictionary.Value
+                                                      .Find((resource, parents))
+                                                      .IfNone(() => [])
+                                                      .ToAsyncEnumerable();
                     })
                     .AddSingleton<ListResourceDtosFromApim>((resource, parents, cancellationToken) =>
                     {
-                        if (resource is not IResourceWithDto resourceWithDto)
-                        {
-                            return AsyncEnumerable.Empty<(ResourceName, JsonObject)>();
-                        }
-
-                        return ApimResourceNames.Find((resourceWithDto, parents))
-                                                .IfNone(() => [])
-                                                .ToAsyncEnumerable()
-                                                .Choose(resourceName =>
-                                                {
-                                                    var resourceKey = new ResourceKey
-                                                    {
-                                                        Name = resourceName,
-                                                        Parents = parents,
-                                                        Resource = resourceWithDto
-                                                    };
-
-                                                    return ApimResourceDtos.Find(resourceKey)
-                                                                           .Map(dto => (resourceName, dto));
-                                                });
+                        return resourceDtosDictionary.Value
+                                                     .Find((resource, parents))
+                                                     .IfNone(() => [])
+                                                     .ToAsyncEnumerable();
                     })
                     .AddSingleton<ShouldExtract>(async (resourceKey, cancellationToken) =>
                     {
@@ -175,33 +205,15 @@ public class RunExtractorTests
         }
 
         public static Gen<Fixture> Generate() =>
-            from resources in ResourceGenerator.Resources
-            from supportedApimResources in Generator.SubSetOf(resources)
-            from apimResourceNames in from keys in Generator.Traverse(resources,
-                                                                      resource => from parentChain in ResourceGenerator.GenerateParentChain(resource)
-                                                                                  from names in Generator.ResourceName.HashSetOf()
-                                                                                  select KeyValuePair.Create((resource, parentChain), names))
-                                      select keys.ToImmutableDictionary()
-            let resourceKeys = apimResourceNames.SelectMany(kvp => from name in kvp.Value
-                                                                   select new ResourceKey
-                                                                   {
-                                                                       Name = name,
-                                                                       Parents = kvp.Key.parentChain,
-                                                                       Resource = kvp.Key.resource
-                                                                   })
-                                                .ToImmutableHashSet()
-            let apimResourceDtos = resourceKeys.ToImmutableDictionary(key => key,
-                                                                      key => new JsonObject
-                                                                      {
-                                                                          ["id"] = key.ToString()
-                                                                      })
-            from resourcesToExtract in Generator.SubSetOf(resourceKeys)
+            from resourceDtos in ResourceGenerator.GenerateResourceDtos()
+            from supportedResources in Generator.SubSetOf([.. resourceDtos.Select(kvp => kvp.Key.Resource)])
+            from resourcesToExtract in Generator.SubSetOf([.. from key in resourceDtos.Keys
+                                                              where supportedResources.Contains(key.Resource)
+                                                              select key ])
             select new Fixture
             {
-                Resources = resources,
-                SupportedApimResources = supportedApimResources,
-                ApimResourceNames = apimResourceNames,
-                ApimResourceDtos = apimResourceDtos,
+                ApimResourceDtos = resourceDtos,
+                SupportedApimResources = supportedResources,
                 ResourcesToExtract = resourcesToExtract
             };
     }
@@ -217,8 +229,85 @@ file static class ResourceGenerator
         return provider.GetRequiredService<ResourceGraph>();
     });
 
+    public static Gen<ImmutableDictionary<ResourceKey, Option<JsonObject>>> GenerateResourceDtos()
+    {
+        var graph = LazyFullGraph.Value;
+
+        var rootResources = graph.ListTraversalRootResources();
+
+        return from resources in Generator.Traverse(rootResources,
+                                                    resource => GenerateResources(resource, ParentChain.Empty, graph))
+               select resources.SelectMany(x => x)
+                               .ToImmutableHashSet()
+                               .ToImmutableDictionary(key => key,
+                                                      key => key.Resource is IResourceWithDto
+                                                                ? new JsonObject
+                                                                {
+                                                                    ["id"] = key.ToString()
+                                                                }
+                                                                : Option<JsonObject>.None());
+    }
+
+    private static Gen<ImmutableHashSet<ResourceKey>> GenerateResources(IResource resource, ParentChain ancestors, ResourceGraph graph) =>
+        from resources in GenerateResources(resource, ancestors)
+        from descendants in Generator.Traverse(resources,
+                                               resourceKey => GenerateDescendants(resourceKey, graph))
+                                     .Select(descendants => descendants.SelectMany(x => x).ToImmutableHashSet())
+        select resources.Concat(descendants).ToImmutableHashSet();
+
+    private static Gen<ImmutableHashSet<ResourceKey>> GenerateResources(IResource resource, ParentChain ancestors) =>
+        from names in GenerateResourceNames(resource)
+        let resources = names.Select(name => new ResourceKey
+        {
+            Name = name,
+            Parents = ancestors,
+            Resource = resource
+        })
+        select resources.ToImmutableHashSet();
+
+    private static Gen<ImmutableHashSet<ResourceKey>> GenerateDescendants(ResourceKey resourceKey, ResourceGraph graph)
+    {
+        var (name, ancestors, resource) = (resourceKey.Name, resourceKey.Parents, resourceKey.Resource);
+        var successorAncestors = ParentChain.From([.. ancestors, (resource, name)]);
+        var successors = graph.ListTraversalSuccessors(resource);
+
+        return from descendants in Generator.Traverse(successors,
+                                                      successorResource => GenerateResources(successorResource, successorAncestors, graph))
+               select descendants.SelectMany(x => x).ToImmutableHashSet();
+    }
+
+    private static Gen<ImmutableHashSet<ResourceName>> GenerateResourceNames(IResource resource) =>
+        resource switch
+        {
+            ApiResource => GenerateApiNames(),
+            WorkspaceApiResource => GenerateApiNames(),
+            _ => Generator.ResourceName.HashSetOf(0, 10)
+        };
+
+    // We want to generate a mix of current and revisioned API names
+    private static Gen<ImmutableHashSet<ResourceName>> GenerateApiNames() =>
+        from currentNames in Generator.ResourceName.HashSetOf(0, 10)
+        from currentNamesWithRevisions in Generator.SubSetOf(currentNames)
+        from revisionedNames in Generator.Traverse(currentNamesWithRevisions,
+                                                   name => from revision in Gen.Int[1, 100]
+                                                           select ApiRevisionModule.Combine(name, revision))
+        select currentNames.Concat(revisionedNames).ToImmutableHashSet();
+
     public static Gen<ImmutableHashSet<IResource>> Resources { get; } =
-        Generator.SubSetOf(LazyFullGraph.Value.TopologicallySortedResources);
+        Gen.OneOf(Generator.SubSetOf(LazyFullGraph.Value.TopologicallySortedResources),
+                  Gen.Const(LazyFullGraph.Value.TopologicallySortedResources.ToImmutableHashSet()));
+
+    public static Gen<ResourceKey> GenerateResourceKey(IResource resource)
+    {
+        return from name in Generator.ResourceName
+               from parents in GenerateParentChain(resource)
+               select new ResourceKey
+               {
+                   Name = name,
+                   Parents = parents,
+                   Resource = resource
+               };
+    }
 
     public static Gen<ParentChain> GenerateParentChain(IResource resource)
     {
@@ -229,14 +318,4 @@ file static class ResourceGenerator
                                                                   select (resource, name))
                select ParentChain.From(parentNames);
     }
-
-    public static Gen<ResourceKey> GenerateResourceKey(IResource resource) =>
-        from name in Generator.ResourceName
-        from parents in GenerateParentChain(resource)
-        select new ResourceKey
-        {
-            Name = name,
-            Parents = parents,
-            Resource = resource
-        };
 }

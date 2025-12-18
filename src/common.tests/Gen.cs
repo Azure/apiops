@@ -35,8 +35,8 @@ public static class Generator
         select word;
 
     public static Gen<ResourceName> ResourceName { get; } =
-        from words in AlphanumericWord.Array[1, 5]
-        let name = string.Join("-", words).ToLowerInvariant()
+        from chars in Gen.Char['a', 'z'].Array[3, 10]
+        let name = new string(chars)
         where name.Length <= 25
         select common.ResourceName.From(name)
                                   .IfErrorThrow();
