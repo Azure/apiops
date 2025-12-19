@@ -10,8 +10,21 @@ namespace common;
 
 public sealed record ResourceGraph
 {
-    private ResourceGraph(IEnumerable<IResource> topologicallySortedResources) =>
+    // We list traversal successors a lot, caching to optimize
+    private readonly Lazy<ImmutableDictionary<IResource, ImmutableHashSet<IResource>>> traversalSuccessors;
+
+    private ResourceGraph(IEnumerable<IResource> topologicallySortedResources)
+    {
         TopologicallySortedResources = [.. topologicallySortedResources];
+        traversalSuccessors = new(() =>
+            TopologicallySortedResources.ToImmutableDictionary(
+                resource => resource,
+                resource => TopologicallySortedResources
+                            .Choose(potentialSuccessor => from predecessor in potentialSuccessor.GetTraversalPredecessor()
+                                                          where predecessor == resource
+                                                          select potentialSuccessor)
+                            .ToImmutableHashSet()));
+    }
 
     public ImmutableArray<IResource> TopologicallySortedResources { get; }
 
@@ -94,10 +107,9 @@ public sealed record ResourceGraph
                 .Where(resource => resource.GetTraversalPredecessor().IsNone)];
 
     public ImmutableHashSet<IResource> ListTraversalSuccessors(IResource resource) =>
-        [.. TopologicallySortedResources
-                .Choose(potentialSuccessor => from predecessor in potentialSuccessor.GetTraversalPredecessor()
-                                              where predecessor == resource
-                                              select potentialSuccessor)];
+        traversalSuccessors.Value
+                           .Find(resource)
+                           .IfNone(() => []);
 
     public ImmutableHashSet<IResource> ListDependents(IResource resource) =>
         [.. from potentialDependent in TopologicallySortedResources

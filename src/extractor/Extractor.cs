@@ -124,7 +124,7 @@ internal static class ExtractorModule
         builder.TryAddSingleton(ResolveShouldExtract);
     }
 
-    private static ShouldExtract ResolveShouldExtract(IServiceProvider provider)
+    internal static ShouldExtract ResolveShouldExtract(IServiceProvider provider)
     {
         var resourceIsInConfiguration = provider.GetRequiredService<ResourceIsInConfiguration>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
@@ -196,7 +196,7 @@ internal static class ExtractorModule
         builder.TryAddSingleton(ResolveWriteResource);
     }
 
-    private static WriteResource ResolveWriteResource(IServiceProvider provider)
+    internal static WriteResource ResolveWriteResource(IServiceProvider provider)
     {
         var writeInformationFile = provider.GetRequiredService<WriteInformationFile>();
         var writePolicyFile = provider.GetRequiredService<WritePolicyFile>();

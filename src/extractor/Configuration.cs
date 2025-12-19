@@ -25,7 +25,7 @@ internal static class ConfigurationModule
     public static void ConfigureResourceIsInConfiguration(IHostApplicationBuilder builder) =>
         builder.TryAddSingleton(ResolveResourceIsInConfiguration);
 
-    private static ResourceIsInConfiguration ResolveResourceIsInConfiguration(IServiceProvider provider)
+    internal static ResourceIsInConfiguration ResolveResourceIsInConfiguration(IServiceProvider provider)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
@@ -114,8 +114,6 @@ internal static class ConfigurationModule
         //       apis:
         //         - api1
         //         - api2
-        // The branch `JsonValue jsonValue` would handle workspace1.
-        // The branch `JsonObject jsonObject` would handle workspace2.
         static Option<JsonObject> getParentJsonObject(IResource resource, ResourceName resourceName, JsonObject jsonObject) =>
             // Using our configuration example, for workspaces, we'd get Some[JsonArray]. For products, we'd get None.
             from resourceJson in jsonObject.GetJsonArrayProperty(resource.PluralName).ToOption()
