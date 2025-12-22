@@ -1,4 +1,3 @@
-using AwesomeAssertions;
 using common;
 using common.tests;
 using CsCheck;
@@ -10,13 +9,12 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
-using Xunit;
 
 namespace extractor.tests;
 
-public class ResourceIsInConfigurationTests
+internal sealed class ResourceIsInConfigurationTests
 {
-    [Fact]
+    [Test]
     public async Task Key_with_missing_resource_returns_none()
     {
         var gen = // Generate configuration keys
@@ -24,7 +22,7 @@ public class ResourceIsInConfigurationTests
                   from keys in GenerateResourceKeys()
                   let configuration = ResourceKeysToConfiguration(keys)
                   // Generate a key whose resource is not in configuration
-                  from key in ResourceGenerator.GenerateResourceKey()
+                  from key in Generator.ResourceKey
                   let configurationResources = keys.Select(key => key.Resource).ToImmutableHashSet()
                   where configurationResources.Contains(key.Resource) is false
                   select (key, fixture with
@@ -37,17 +35,17 @@ public class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await resourceIsInConfiguration(key, cancellationToken);
 
             // Assert
-            result.Should().BeNone();
+            await Assert.That(result).IsNone();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Key_with_missing_parent_returns_none()
     {
         var gen =
@@ -84,21 +82,21 @@ public class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await resourceIsInConfiguration(key, cancellationToken);
 
             // Assert
-            result.Should().BeNone();
+            await Assert.That(result).IsNone();
         });
     }
 
     private static Gen<ImmutableHashSet<ResourceKey>> GenerateResourceKeys() =>
-        from resourceKeys in ResourceGenerator.GenerateResourceDtos()
+        from resourceKeys in Generator.ResourceDtos
         select resourceKeys.Keys.ToImmutableHashSet();
 
-    [Fact]
+    [Test]
     public async Task Key_with_existing_resource_and_missing_name_returns_false()
     {
         var gen =
@@ -124,15 +122,16 @@ public class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await resourceIsInConfiguration(key, cancellationToken);
 
             // Assert
-            result.Should().BeSome()
-                  .Which
-                  .Should().BeFalse();
+            await Assert.That(result)
+                        .IsSome()
+                        .And
+                        .IsFalse();
         });
     }
 
@@ -145,7 +144,7 @@ public class ResourceIsInConfigurationTests
            .All(tuple => tuple.Resource is not (ApiResource or WorkspaceApiResource)
                          || ApiRevisionModule.IsRootName(tuple.Name));
 
-    [Fact]
+    [Test]
     public async Task Existing_key_returns_true()
     {
         var gen =
@@ -168,19 +167,20 @@ public class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await resourceIsInConfiguration(key, cancellationToken);
 
             // Assert
-            result.Should().BeSome()
-                  .Which
-                  .Should().BeTrue();
+            await Assert.That(result)
+                        .IsSome()
+                        .And
+                        .IsTrue();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Revisioned_api_names_are_resolved_against_root_names()
     {
         var gen =
@@ -222,15 +222,16 @@ public class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await resourceIsInConfiguration(key, cancellationToken);
 
             // Assert
-            result.Should().BeSome()
-                  .Which
-                  .Should().BeTrue();
+            await Assert.That(result)
+                        .IsSome()
+                        .And
+                        .IsTrue();
         });
     }
 

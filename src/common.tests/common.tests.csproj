@@ -11,13 +11,9 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="AwesomeAssertions" Version="9.3.0" />
-		<PackageReference Include="AwesomeAssertions.Analyzers" Version="9.0.8">
-			<PrivateAssets>all</PrivateAssets>
-			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-		</PackageReference>
 		<PackageReference Include="Bogus" Version="35.6.5" />
 		<PackageReference Include="CsCheck" Version="4.5.0" />
+		<PackageReference Include="TUnit.Assertions" Version="1.6.15" />
 	</ItemGroup>
 
 </Project>

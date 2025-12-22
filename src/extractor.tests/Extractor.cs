@@ -1,4 +1,3 @@
-using AwesomeAssertions;
 using common;
 using common.tests;
 using CsCheck;
@@ -11,13 +10,12 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using Xunit;
 
 namespace extractor.tests;
 
-public class RunExtractorTests
+internal sealed class RunExtractorTests
 {
-    [Fact]
+    [Test]
     public async Task Unsupported_resources_are_not_extracted()
     {
         var gen = Fixture.Generate();
@@ -40,7 +38,7 @@ public class RunExtractorTests
                 }
             };
             var runExtractor = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await runExtractor(cancellationToken);
@@ -51,11 +49,11 @@ public class RunExtractorTests
                                       .Where(async (resource, cancellationToken) => await fixture.IsResourceSupportedInApim(resource, cancellationToken) is false)
                                       .ToArrayAsync(cancellationToken);
 
-            unsupportedWrittenResources.Should().BeEmpty();
+            await Assert.That(unsupportedWrittenResources).IsEmpty();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Descendants_of_unsupported_resources_are_not_extracted()
     {
         var gen = Fixture.Generate();
@@ -78,7 +76,7 @@ public class RunExtractorTests
                 }
             };
             var runExtractor = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await runExtractor(cancellationToken);
@@ -90,11 +88,11 @@ public class RunExtractorTests
                                       .Where(async (resource, cancellationToken) => await fixture.IsResourceSupportedInApim(resource, cancellationToken) is false)
                                       .ToArrayAsync(cancellationToken);
 
-            unsupportedWrittenAncestors.Should().BeEmpty();
+            await Assert.That(unsupportedWrittenAncestors).IsEmpty();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Filtered_out_resources_are_not_extracted()
     {
         var gen = Fixture.Generate();
@@ -117,7 +115,7 @@ public class RunExtractorTests
                 }
             };
             var runExtractor = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await runExtractor(cancellationToken);
@@ -128,11 +126,11 @@ public class RunExtractorTests
                                          .Where(async (resourceKey, cancellationToken) => await fixture.ShouldExtract(resourceKey, cancellationToken) is false)
                                          .ToArrayAsync(cancellationToken);
 
-            filteredOutWrittenResourceKeys.Should().BeEmpty();
+            await Assert.That(filteredOutWrittenResourceKeys).IsEmpty();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Written_dtos_match_apim_dtos()
     {
         var gen = Fixture.Generate();
@@ -150,7 +148,7 @@ public class RunExtractorTests
                 }
             };
             var runExtractor = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await runExtractor(cancellationToken);
@@ -159,19 +157,20 @@ public class RunExtractorTests
             await writtenDtos.IterTaskParallel(async kvp =>
             {
                 var (resource, name, parents, dto) = (kvp.Key.Resource, kvp.Key.Name, kvp.Key.Parents, kvp.Value);
-                var resourceWithDto = resource.Should().BeAssignableTo<IResourceWithDto>().Subject;
+                var resourceWithDto = (IResourceWithDto)resource;
 
                 var apimDtos = await fixture.ListResourceDtosFromApim(resourceWithDto, parents, cancellationToken)
                                             .Where(tuple => tuple.Name == name)
                                             .Select(tuple => tuple.Dto)
                                             .ToArrayAsync(cancellationToken);
-                apimDtos.Should().ContainSingle()
-                        .Which.Should().BeEquivalentTo(dto);
+
+                var apimDto = await Assert.That(apimDtos).HasSingleItem();
+                await Assert.That(apimDto).IsEqualTo(dto);
             }, maxDegreeOfParallelism: Option.None, cancellationToken);
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Only_api_releases_of_current_apis_get_extracted()
     {
         var gen = Fixture.Generate();
@@ -189,7 +188,7 @@ public class RunExtractorTests
                 }
             };
             var runExtractor = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await runExtractor(cancellationToken);
@@ -203,7 +202,8 @@ public class RunExtractorTests
                     .Where(key => key.Parents
                                      .Any(x => x.Resource is ApiResource or WorkspaceApiResource
                                                 && ApiRevisionModule.IsRootName(x.Name) is false));
-            writtenReleasesWithoutCurrentApis.Should().BeEmpty();
+
+            await Assert.That(writtenReleasesWithoutCurrentApis).IsEmpty();
         });
     }
 
@@ -235,7 +235,7 @@ public class RunExtractorTests
         }
 
         public static Gen<Fixture> Generate() =>
-            from resourceDtos in ResourceGenerator.GenerateResourceDtos()
+            from resourceDtos in Generator.ResourceDtos
             select new Fixture
             {
                 Graph = ResourceGraph.From(resourceDtos.Keys.Select(key => key.Resource), CancellationToken.None),
@@ -260,13 +260,13 @@ public class RunExtractorTests
     }
 }
 
-public class ShouldExtractTests
+internal sealed class ShouldExtractTests
 {
-    [Fact]
+    [Test]
     public async Task Resources_in_configuration_are_extracted()
     {
         var gen = from fixture in Fixture.Generate()
-                  from resourceKey in ResourceGenerator.GenerateResourceKey()
+                  from resourceKey in Generator.ResourceKey
                   select (resourceKey, fixture);
 
         await gen.SampleAsync(async tuple =>
@@ -278,21 +278,21 @@ public class ShouldExtractTests
                 ResourceIsInConfiguration = (_, _) => ValueTask.FromResult(Option.Some(true))
             };
             var shouldExtract = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await shouldExtract(resourceKey, cancellationToken);
 
             // Assert
-            result.Should().BeTrue();
+            await Assert.That(result).IsTrue();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Resources_not_in_configuration_are_not_extracted()
     {
         var gen = from fixture in Fixture.Generate()
-                  from resourceKey in ResourceGenerator.GenerateResourceKey()
+                  from resourceKey in Generator.ResourceKey
                   select (resourceKey, fixture);
 
         await gen.SampleAsync(async tuple =>
@@ -304,21 +304,21 @@ public class ShouldExtractTests
                 ResourceIsInConfiguration = (_, _) => ValueTask.FromResult(Option.Some(false))
             };
             var shouldExtract = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await shouldExtract(resourceKey, cancellationToken);
 
             // Assert
-            result.Should().BeFalse();
+            await Assert.That(result).IsFalse();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Unknown_resources_are_extracted()
     {
         var gen = from fixture in Fixture.Generate()
-                  from resourceKey in ResourceGenerator.GenerateResourceKey()
+                  from resourceKey in Generator.ResourceKey
                   select (resourceKey, fixture);
 
         await gen.SampleAsync(async tuple =>
@@ -330,33 +330,33 @@ public class ShouldExtractTests
                 ResourceIsInConfiguration = (_, _) => ValueTask.FromResult(Option<bool>.None())
             };
             var shouldExtract = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await shouldExtract(resourceKey, cancellationToken);
 
             // Assert
-            result.Should().BeTrue();
+            await Assert.That(result).IsTrue();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Known_exceptions_are_skipped()
     {
         var gen = from fixture in Fixture.Generate()
                   from resourceKey in
-                      Gen.OneOf(from resourceKey in ResourceGenerator.GenerateResourceKey(SubscriptionResource.Instance)
+                      Gen.OneOf(from resourceKey in Generator.GenerateResourceKey(SubscriptionResource.Instance)
                                 select resourceKey with
                                 {
                                     Name = SubscriptionResource.Master
                                 },
-                                from resourceKey in ResourceGenerator.GenerateResourceKey(GroupResource.Instance)
+                                from resourceKey in Generator.GenerateResourceKey(GroupResource.Instance)
                                 from name in Gen.OneOfConst(GroupResource.Administrators, GroupResource.Developers, GroupResource.Guests)
                                 select resourceKey with
                                 {
                                     Name = name
                                 },
-                                from resourceKey in ResourceGenerator.GenerateResourceKey(WorkspaceGroupResource.Instance)
+                                from resourceKey in Generator.GenerateResourceKey(WorkspaceGroupResource.Instance)
                                 from name in Gen.OneOfConst(GroupResource.Administrators, GroupResource.Developers, GroupResource.Guests)
                                 select resourceKey with
                                 {
@@ -373,13 +373,13 @@ public class ShouldExtractTests
                 ResourceIsInConfiguration = (_, _) => ValueTask.FromResult(Option.Some(true))
             };
             var shouldExtract = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             var result = await shouldExtract(resourceKey, cancellationToken);
 
             // Assert
-            result.Should().BeFalse();
+            await Assert.That(result).IsFalse();
         });
     }
 
@@ -417,12 +417,12 @@ public class ShouldExtractTests
     }
 }
 
-public class WriteResourceTests
+internal sealed class WriteResourceTests
 {
-    [Fact]
+    [Test]
     public async Task Information_file_with_dto_is_written()
     {
-        var gen = from resourceKey in ResourceGenerator.GenerateResourceKey(resource => resource is IResourceWithInformationFile)
+        var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is IResourceWithInformationFile)
                   let dto = new JsonObject
                   {
                       ["id"] = resourceKey.ToString()
@@ -444,20 +444,20 @@ public class WriteResourceTests
                 }
             };
             var writeResource = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await writeResource(resourceKey, dto, cancellationToken);
 
             // Assert
-            writtenDto.Should().BeEquivalentTo(dto);
+            await Assert.That(writtenDto).IsEqualTo(dto);
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Information_file_without_dto_is_not_written()
     {
-        var gen = from resourceKey in ResourceGenerator.GenerateResourceKey(resource => resource is IResourceWithInformationFile)
+        var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is IResourceWithInformationFile)
                   let dtoOption = Option<JsonObject>.None()
                   from fixture in Fixture.Generate()
                   select (resourceKey, dtoOption, fixture);
@@ -476,19 +476,19 @@ public class WriteResourceTests
                 }
             };
             var writeResource = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await writeResource(resourceKey, dtoOption, cancellationToken);
 
             // Assert
-            wasWritten.Should().BeFalse();
+            await Assert.That(wasWritten).IsFalse();
         });
     }
-    [Fact]
+    [Test]
     public async Task Policy_file_with_dto_is_written()
     {
-        var gen = from resourceKey in ResourceGenerator.GenerateResourceKey(resource => resource is IPolicyResource)
+        var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is IPolicyResource)
                   let dto = new JsonObject
                   {
                       ["id"] = resourceKey.ToString()
@@ -510,20 +510,20 @@ public class WriteResourceTests
                 }
             };
             var writeResource = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await writeResource(resourceKey, dto, cancellationToken);
 
             // Assert
-            writtenDto.Should().BeEquivalentTo(dto);
+            await Assert.That(writtenDto).IsEqualTo(dto);
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Policy_file_without_dto_is_not_written()
     {
-        var gen = from resourceKey in ResourceGenerator.GenerateResourceKey(resource => resource is IPolicyResource)
+        var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is IPolicyResource)
                   let dtoOption = Option<JsonObject>.None()
                   from fixture in Fixture.Generate()
                   select (resourceKey, dtoOption, fixture);
@@ -542,20 +542,20 @@ public class WriteResourceTests
                 }
             };
             var writeResource = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await writeResource(resourceKey, dtoOption, cancellationToken);
 
             // Assert
-            wasWritten.Should().BeFalse();
+            await Assert.That(wasWritten).IsFalse();
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Existing_api_specification_is_written()
     {
-        var gen = from resourceKey in ResourceGenerator.GenerateResourceKey(resource => resource is ApiResource or WorkspaceApiResource)
+        var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is ApiResource or WorkspaceApiResource)
                   let dto = new JsonObject
                   {
                       ["id"] = resourceKey.ToString()
@@ -583,20 +583,20 @@ public class WriteResourceTests
                 }
             };
             var writeResource = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await writeResource(resourceKey, dto, cancellationToken);
 
             // Assert
-            writtenSpecification.ToString().Should().Be(specificationContents.ToString());
+            await Assert.That(writtenSpecification.ToString()).IsEquivalentTo(specificationContents.ToString());
         });
     }
 
-    [Fact]
+    [Test]
     public async Task Missing_api_specification_is_not_written()
     {
-        var gen = from resourceKey in ResourceGenerator.GenerateResourceKey(resource => resource is ApiResource or WorkspaceApiResource)
+        var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is ApiResource or WorkspaceApiResource)
                   let dtoOption = Option.Some(new JsonObject())
                   from fixture in Fixture.Generate()
                   select (resourceKey, dtoOption, fixture);
@@ -620,13 +620,13 @@ public class WriteResourceTests
                 }
             };
             var writeResource = fixture.Resolve();
-            var cancellationToken = TestContext.Current.CancellationToken;
+            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
             await writeResource(resourceKey, dtoOption, cancellationToken);
 
             // Assert
-            wasSpecificationWritten.Should().BeFalse();
+            await Assert.That(wasSpecificationWritten).IsFalse();
         });
     }
 

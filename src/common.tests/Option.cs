@@ -1,54 +1,80 @@
-using AwesomeAssertions;
-using AwesomeAssertions.Execution;
-using AwesomeAssertions.Primitives;
-using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
+using TUnit.Assertions.Core;
 
 namespace common.tests;
 
-public sealed class OptionAssertions<T>(Option<T> subject, AssertionChain assertionChain) : ReferenceTypeAssertions<Option<T>, OptionAssertions<T>>(subject, assertionChain)
+public sealed class OptionIsSomeAssertion<T>(AssertionContext<Option<T>> context) : Assertion<T>(context.Map(Map))
 {
-    protected override string Identifier { get; } = "option";
+    private static readonly string expectation = "Option to be Some.";
 
-    public AndWhichConstraint<OptionAssertions<T>, T> BeSome([StringSyntax("CompositeFormat")] string because = "", params object[] becauseArgs)
+    protected override string GetExpectation() => expectation;
+
+    protected override async Task<AssertionResult> CheckAsync(EvaluationMetadata<T> metadata)
     {
-        CurrentAssertionChain
-            .BecauseOf(because, becauseArgs)
-            .ForCondition(Subject.IsSome)
-            .FailWith("Expected {context:option} to be some{reason}, but it was none.");
+        await ValueTask.CompletedTask;
 
-        return new AndWhichConstraint<OptionAssertions<T>, T>(
-            this,
-            Subject.IfNoneThrow(() => new UnreachableException()));
+        var exception = metadata.Exception;
+
+        if (exception is not null)
+        {
+            return AssertionResult.Failed(exception.Message);
+        }
+        else
+        {
+            return AssertionResult.Passed;
+        }
     }
 
-    public AndConstraint<OptionAssertions<T>> BeNone([StringSyntax("CompositeFormat")] string because = "", params object[] becauseArgs)
-    {
-        CurrentAssertionChain
-            .BecauseOf(because, becauseArgs)
-            .ForCondition(Subject.IsNone)
-            .FailWith("Expected {context:option} to be none{reason}, but it was some with value {0}.",
-                       () => Subject.Match(value => value, () => throw new UnreachableException()));
-
-        return new AndConstraint<OptionAssertions<T>>(this);
-    }
-
-    public AndConstraint<OptionAssertions<T>> Be(Option<T> expected, [StringSyntax("CompositeFormat")] string because = "", params object[] becauseArgs)
-    {
-        CurrentAssertionChain
-            .BecauseOf(because, becauseArgs)
-            .ForCondition(Subject.Equals(expected))
-            .FailWith("Expected {context:option} to be {0}{reason}, but it was {1}.", expected, Subject);
-
-        return new AndConstraint<OptionAssertions<T>>(this);
-    }
+    private static T Map(Option<T>? option) =>
+        option is null
+            ? throw new InvalidOperationException("Option cannot be null.")
+            : option.IfNone(() => throw new InvalidOperationException("Option should be Some."));
 }
 
-public static class OptionAssertionsExtensions
+public sealed class OptionIsNoneAssertion<T>(AssertionContext<Option<T>> context) : Assertion<Option<T>>(context)
 {
-    extension<T>(Option<T> subject)
+    protected override async Task<AssertionResult> CheckAsync(EvaluationMetadata<Option<T>> metadata)
     {
-        public OptionAssertions<T> Should() =>
-            new(subject, AssertionChain.GetOrCreate());
+        await ValueTask.CompletedTask;
+
+        var value = metadata.Value;
+        var exception = metadata.Exception;
+
+        if (exception is not null)
+        {
+            return AssertionResult.Failed($"threw {exception.GetType().Name} with message {exception.Message}.");
+        }
+        else if (value is null)
+        {
+            return AssertionResult.Failed("value was null");
+        }
+        else if (value.IsNone)
+        {
+            return AssertionResult.Passed;
+        }
+        else
+        {
+            var t = value.Match<T?>(t => t, () => default);
+            return AssertionResult.Failed($"option is Some with value {t}");
+        }
+    }
+
+    protected override string GetExpectation() => "to be None";
+}
+
+public static class OptionAssertionExtensions
+{
+    extension<T>(IAssertionSource<Option<T>> source)
+    {
+        public OptionIsSomeAssertion<T> IsSome()
+        {
+            source.Context.ExpressionBuilder.Append($".IsSome()");
+            return new(source.Context);
+        }
+
+        public OptionIsNoneAssertion<T> IsNone()
+        {
+            source.Context.ExpressionBuilder.Append($".IsNone()");
+            return new(source.Context);
+        }
     }
 }
