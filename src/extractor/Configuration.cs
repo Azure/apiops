@@ -77,33 +77,42 @@ internal static class ConfigurationModule
         {
             var configurationJson = await configurationJsonCache.WithCancellation(cancellationToken);
 
-            // Two-level caching strategy:
-            // 1. Check if we already have the JSON object for this complete parent chain.
-            return parentsJsonCache.GetOrAdd(parents, _ =>
-                // 2. If not cached, traverse the parent chain incrementally, caching each step.
-                // This builds up the cache progressively so partial parent paths can be reused.
-                parents.Aggregate((Parents: ParentChain.Empty, Json: Option.Some(configurationJson)),
-                                  (accumulate, item) =>
-                                  {
-                                      var (currentParents, option) = accumulate;
-                                      var (resource, name) = item switch
-                                      {
-                                          (ApiResource apiResource, var apiName) => (apiResource, ApiRevisionModule.GetRootName(apiName)), // For APIs, use root name when traversing
-                                          (WorkspaceApiResource workspaceApiResource, var apiName) => (workspaceApiResource, ApiRevisionModule.GetRootName(apiName)), // Workspace APIs use root name when traversing
-                                          _ => item
-                                      };
+            // Normalize the parent chain such that API and workspace APIs use the root API name.
+            // We want `my-api`, `my-api;rev=1`, and `my-api;rev=2` to all use the name `my-api`.
+            var normalizedParents = ParentChain.From(from parent in parents
+                                                     let normalizedName =
+                                                        parent.Resource is ApiResource or WorkspaceApiResource
+                                                        ? ApiRevisionModule.GetRootName(parent.Name)
+                                                        : parent.Name
+                                                     select (parent.Resource, normalizedName));
 
-                                      // Build the parent path incrementally (e.g., A -> A/B -> A/B/C)
-                                      var itemAsParent = currentParents.Append(resource, name);
+            // Get the parent chain JSON from the cache
+            return parentsJsonCache.GetOrAdd(normalizedParents, _ =>
+                // Parent chain was not in cache, compute it.
+                normalizedParents.Aggregate((Parents: ParentChain.Empty, Json: Option.Some(configurationJson)),
+                                            (accumulate, item) =>
+                                            {
+                                                var (currentParents, currentJson) = accumulate;
+                                                var (resource, name) = item;
 
-                                      // Second-level cache: store intermediate parent paths to avoid redundant traversal
-                                      // If A/B was previously computed, we can reuse it when computing A/B/C
-                                      var itemJson = parentsJsonCache.GetOrAdd(itemAsParent,
-                                                                               _ => from sectionJson in option
-                                                                                    from parentJson in getParentJsonObject(resource, name, sectionJson)
-                                                                                    select parentJson);
-                                      return (itemAsParent, itemJson);
-                                  }).Json);
+                                                // Add the next parent to the chain
+                                                var nextParents = currentParents.Append(resource, name);
+
+                                                // Compute the JSON object next parent chain
+                                                var computed = from sectionJson in currentJson
+                                                               from parentJson in getParentJsonObject(resource, name, sectionJson)
+                                                               select parentJson;
+
+                                                // Cache intermediate parent JSON objects to speed up future lookups.
+                                                // If A/B was previously computed, we can reuse it when computing A/B/C.
+                                                // Note that on the last iteration (when nextParents == normalizedParents),
+                                                // we don't cache again; the outer GetOrAdd call handles this.
+                                                var nextJson = nextParents == normalizedParents
+                                                                ? computed
+                                                                : parentsJsonCache.GetOrAdd(nextParents, _ => computed);
+
+                                                return (nextParents, nextJson);
+                                            }).Json);
         }
 
         // Navigates to a specific resource's configuration within the JSON hierarchy
