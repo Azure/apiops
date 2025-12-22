@@ -30,7 +30,7 @@ internal static class PublisherModule
         builder.TryAddSingleton(ResolveRunPublisher);
     }
 
-    private static RunPublisher ResolveRunPublisher(IServiceProvider provider)
+    internal static RunPublisher ResolveRunPublisher(IServiceProvider provider)
     {
         var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
         var getCurrentCommitFileOperations = provider.GetRequiredService<GetCurrentCommitFileOperations>();
