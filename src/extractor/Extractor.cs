@@ -30,7 +30,7 @@ internal static class ExtractorModule
         builder.TryAddSingleton(ResolveRunExtractor);
     }
 
-    private static RunExtractor ResolveRunExtractor(IServiceProvider provider)
+    internal static RunExtractor ResolveRunExtractor(IServiceProvider provider)
     {
         var graph = provider.GetRequiredService<ResourceGraph>();
         var isSkuSupported = provider.GetRequiredService<IsResourceSupportedInApim>();
@@ -75,8 +75,9 @@ internal static class ExtractorModule
                 IResourceWithDto resourceWithDto =>
                     from x in listResourceDtos(resourceWithDto, parents, cancellationToken)
                     select (x.Name, Option.Some(x.Dto)),
-                _ => from name in listResourceNames(resource, parents, cancellationToken)
-                     select (name, Option<JsonObject>.None())
+                _ =>
+                    from name in listResourceNames(resource, parents, cancellationToken)
+                    select (name, Option<JsonObject>.None())
             };
 
         async ValueTask extractResource(IResource resource, ResourceName name, Option<JsonObject> dtoOption, ParentChain parents, CancellationToken cancellationToken)
@@ -123,7 +124,7 @@ internal static class ExtractorModule
         builder.TryAddSingleton(ResolveShouldExtract);
     }
 
-    private static ShouldExtract ResolveShouldExtract(IServiceProvider provider)
+    internal static ShouldExtract ResolveShouldExtract(IServiceProvider provider)
     {
         var resourceIsInConfiguration = provider.GetRequiredService<ResourceIsInConfiguration>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
@@ -195,7 +196,7 @@ internal static class ExtractorModule
         builder.TryAddSingleton(ResolveWriteResource);
     }
 
-    private static WriteResource ResolveWriteResource(IServiceProvider provider)
+    internal static WriteResource ResolveWriteResource(IServiceProvider provider)
     {
         var writeInformationFile = provider.GetRequiredService<WriteInformationFile>();
         var writePolicyFile = provider.GetRequiredService<WritePolicyFile>();

@@ -17,11 +17,8 @@ internal static class PublisherModule
 {
     public static void ConfigureRunPublisher(IHostApplicationBuilder builder)
     {
-        GitModule.ConfigureCommitIdWasPassed(builder);
-        GitModule.ConfigureGetCurrentCommitFileOperations(builder);
-        GitModule.ConfigureGetPreviousCommitFileOperations(builder);
-        FileSystemModule.ConfigureGetLocalFileOperations(builder);
-        RelationshipsModule.ConfigureGetRelationships(builder);
+        RelationshipsModule.ConfigureGetCurrentRelationships(builder);
+        RelationshipsModule.ConfigureGetPreviousRelationships(builder);
         ResourceModule.ConfigureListResourcesToProcess(builder);
         ResourceModule.ConfigureIsResourceInFileSystem(builder);
         ResourceModule.ConfigurePutResource(builder);
@@ -30,13 +27,10 @@ internal static class PublisherModule
         builder.TryAddSingleton(ResolveRunPublisher);
     }
 
-    private static RunPublisher ResolveRunPublisher(IServiceProvider provider)
+    internal static RunPublisher ResolveRunPublisher(IServiceProvider provider)
     {
-        var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
-        var getCurrentCommitFileOperations = provider.GetRequiredService<GetCurrentCommitFileOperations>();
-        var getPreviousCommitFileOperations = provider.GetRequiredService<GetPreviousCommitFileOperations>();
-        var getLocalFileOperations = provider.GetRequiredService<GetLocalFileOperations>();
-        var getRelationships = provider.GetRequiredService<GetRelationships>();
+        var getCurrentRelationships = provider.GetRequiredService<GetCurrentRelationships>();
+        var getPreviousRelationships = provider.GetRequiredService<GetPreviousRelationships>();
         var listResourcesToProcess = provider.GetRequiredService<ListResourcesToProcess>();
         var isInFileSystem = provider.GetRequiredService<IsResourceInFileSystem>();
         var putResource = provider.GetRequiredService<PutResource>();
@@ -60,33 +54,6 @@ internal static class PublisherModule
 
             logger.LogInformation("Publisher completed successfully.");
         };
-
-        async ValueTask<Relationships> getCurrentRelationships(CancellationToken cancellationToken)
-        {
-            var fileOperations = commitIdWasPassed()
-                                    ? getCurrentCommitFileOperations()
-                                        .IfNone(() => throw new InvalidOperationException("Cannot get file operations for current commit."))
-                                    : getLocalFileOperations();
-
-            return await getRelationships(fileOperations, cancellationToken);
-        }
-
-        async ValueTask<Relationships> getPreviousRelationships(CancellationToken cancellationToken)
-        {
-            // No commit ID was passed, so we can't access history
-            if (commitIdWasPassed() is false)
-            {
-                return Relationships.Empty;
-            }
-
-            // If we can get the previous commit ID, map previous relationships
-            var fileOperationsOption = getPreviousCommitFileOperations();
-
-            var relationshipsOption = await fileOperationsOption.MapTask(async operations => await getRelationships(operations, cancellationToken));
-
-            // Otherwise, return an empty set of relationships
-            return relationshipsOption.IfNone(() => Relationships.Empty);
-        }
 
         async ValueTask processResources(ImmutableHashSet<ResourceKey> resources, Relationships currentRelationships, Relationships previousRelationships, CancellationToken cancellationToken) =>
             await resources.IterTaskParallel(async resource => await processResource(resource, resources, currentRelationships, previousRelationships, cancellationToken),

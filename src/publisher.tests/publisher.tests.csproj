@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<AnalysisLevel>latest-all</AnalysisLevel>
+		<Nullable>enable</Nullable>
+		<OutputType>Exe</OutputType>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="TUnit" Version="1.6.20" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\common.tests\common.tests.csproj" />
+		<ProjectReference Include="..\publisher\publisher.csproj" />
+	</ItemGroup>
+
+</Project>
