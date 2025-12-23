@@ -14,6 +14,9 @@ namespace extractor.tests;
 
 internal sealed class ResourceIsInConfigurationTests
 {
+    private static System.Threading.CancellationToken CancellationToken =>
+        TestContext.Current?.Execution.CancellationToken ?? System.Threading.CancellationToken.None;
+
     [Test]
     public async Task Key_with_missing_resource_returns_none()
     {
@@ -35,10 +38,9 @@ internal sealed class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
-            var result = await resourceIsInConfiguration(key, cancellationToken);
+            var result = await resourceIsInConfiguration(key, CancellationToken);
 
             // Assert
             await Assert.That(result).IsNone();
@@ -82,10 +84,9 @@ internal sealed class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
-            var result = await resourceIsInConfiguration(key, cancellationToken);
+            var result = await resourceIsInConfiguration(key, CancellationToken);
 
             // Assert
             await Assert.That(result).IsNone();
@@ -122,10 +123,9 @@ internal sealed class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
-            var result = await resourceIsInConfiguration(key, cancellationToken);
+            var result = await resourceIsInConfiguration(key, CancellationToken);
 
             // Assert
             await Assert.That(result)
@@ -167,10 +167,9 @@ internal sealed class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
-            var result = await resourceIsInConfiguration(key, cancellationToken);
+            var result = await resourceIsInConfiguration(key, CancellationToken);
 
             // Assert
             await Assert.That(result)
@@ -222,10 +221,9 @@ internal sealed class ResourceIsInConfigurationTests
             // Arrange
             var (key, fixture) = tuple;
             var resourceIsInConfiguration = fixture.Resolve();
-            var cancellationToken = TestContext.Current!.Execution.CancellationToken;
 
             // Act
-            var result = await resourceIsInConfiguration(key, cancellationToken);
+            var result = await resourceIsInConfiguration(key, CancellationToken);
 
             // Assert
             await Assert.That(result)

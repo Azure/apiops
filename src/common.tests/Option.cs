@@ -1,12 +1,12 @@
+using System;
+using System.Threading.Tasks;
 using TUnit.Assertions.Core;
 
 namespace common.tests;
 
 public sealed class OptionIsSomeAssertion<T>(AssertionContext<Option<T>> context) : Assertion<T>(context.Map(Map))
-{
-    private static readonly string expectation = "Option to be Some.";
-
-    protected override string GetExpectation() => expectation;
+{    
+    protected override string GetExpectation() => "Option to be Some.";
 
     protected override async Task<AssertionResult> CheckAsync(EvaluationMetadata<T> metadata)
     {

@@ -4,7 +4,11 @@ using common;
 using CsCheck;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.IO;
+using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace common.tests;
@@ -131,6 +135,10 @@ public static class Generator
         Generator.Traverse(source,
                            item => from t3 in f(item.Item1)
                                    select (t3, item.Item2));
+
+    public static Gen<Func<T, bool>> GeneratePredicate<T>() =>
+        from x in Gen.Int[2, 100]
+        select (Func<T, bool>)(t => (t?.GetHashCode() ?? 0) % x == 0);
 
     private static Gen<ImmutableDictionary<ResourceKey, Option<JsonObject>>> GenerateResourceDtos()
     {
