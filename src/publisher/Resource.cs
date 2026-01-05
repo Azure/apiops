@@ -35,7 +35,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolveListResourcesToProcess);
     }
 
-    private static ListResourcesToProcess ResolveListResourcesToProcess(IServiceProvider provider)
+    internal static ListResourcesToProcess ResolveListResourcesToProcess(IServiceProvider provider)
     {
         var parseFile = provider.GetRequiredService<ParseResourceFile>();
         var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
@@ -102,7 +102,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolveIsResourceInFileSystem);
     }
 
-    private static IsResourceInFileSystem ResolveIsResourceInFileSystem(IServiceProvider provider)
+    internal static IsResourceInFileSystem ResolveIsResourceInFileSystem(IServiceProvider provider)
     {
         var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
         var getCurrentCommitFileOperations = provider.GetRequiredService<GetCurrentCommitFileOperations>();
@@ -176,7 +176,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolvePutResource);
     }
 
-    private static PutResource ResolvePutResource(IServiceProvider provider)
+    internal static PutResource ResolvePutResource(IServiceProvider provider)
     {
         var getDto = provider.GetRequiredService<GetDto>();
         var putApi = provider.GetRequiredService<PutApi>();
@@ -239,12 +239,11 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolveGetDto);
     }
 
-    private static GetDto ResolveGetDto(IServiceProvider provider)
+    internal static GetDto ResolveGetDto(IServiceProvider provider)
     {
         var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
         var getCurrentCommitFileOperations = provider.GetRequiredService<GetCurrentCommitFileOperations>();
         var getLocalFileOperations = provider.GetRequiredService<GetLocalFileOperations>();
-
         var getInformationFileDto = provider.GetRequiredService<GetInformationFileDto>();
         var getPolicyFileContents = provider.GetRequiredService<GetPolicyFileContents>();
         var getPolicyFragmentDto = provider.GetRequiredService<GetPolicyFragmentDto>();
@@ -370,7 +369,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolveDeleteResource);
     }
 
-    private static DeleteResource ResolveDeleteResource(IServiceProvider provider)
+    internal static DeleteResource ResolveDeleteResource(IServiceProvider provider)
     {
         var deleteResourceFromApim = provider.GetRequiredService<DeleteResourceFromApim>();
         var deleteApi = provider.GetRequiredService<DeleteApi>();

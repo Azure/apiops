@@ -1,11 +1,12 @@
 using common;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Diagnostics;
 using System.Linq;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -17,202 +18,108 @@ namespace publisher;
 internal delegate ValueTask<Relationships> GetCurrentRelationships(CancellationToken cancellationToken);
 internal delegate ValueTask<Relationships> GetPreviousRelationships(CancellationToken cancellationToken);
 internal delegate ValueTask<Relationships> GetRelationships(FileOperations fileOperations, CancellationToken cancellationToken);
+internal delegate bool IsValidationStrict();
+
+internal abstract record ValidationError
+{
+    internal sealed record Cycle : ValidationError
+    {
+        public required ImmutableArray<ResourceKey> Path { get; init; }
+    }
+
+    internal sealed record MissingPredecessor : ValidationError
+    {
+        public required ResourceKey Predecessor { get; init; }
+        public required ResourceKey Successor { get; init; }
+    }
+}
 
 internal sealed record Relationships
 {
+    public ImmutableDictionary<ResourceKey, ImmutableHashSet<ResourceKey>> Predecessors { get; }
+    public ImmutableDictionary<ResourceKey, ImmutableHashSet<ResourceKey>> Successors { get; }
+
     private Relationships(IEnumerable<KeyValuePair<ResourceKey, ImmutableHashSet<ResourceKey>>> predecessors,
                           IEnumerable<KeyValuePair<ResourceKey, ImmutableHashSet<ResourceKey>>> successors) =>
         (Predecessors, Successors) = (predecessors.ToImmutableDictionary(),
                                       successors.ToImmutableDictionary());
 
-    public ImmutableDictionary<ResourceKey, ImmutableHashSet<ResourceKey>> Predecessors { get; }
-    public ImmutableDictionary<ResourceKey, ImmutableHashSet<ResourceKey>> Successors { get; }
-
     public static Relationships Empty { get; } = new([], []);
 
-    public static Relationships From(IEnumerable<(ResourceKey Predecessor, Option<ResourceKey> Successor)> pairs, CancellationToken cancellationToken)
+    public static Relationships From(IEnumerable<(ResourceKey Predecessor, ResourceKey Successor)> pairs, CancellationToken cancellationToken)
     {
-        var predecessorsBuilder = new Dictionary<ResourceKey, List<ResourceKey>>();
-        var successorsBuilder = new Dictionary<ResourceKey, List<ResourceKey>>();
+        var predecessors = new Dictionary<ResourceKey, ImmutableHashSet<ResourceKey>>();
+        var successors = new Dictionary<ResourceKey, ImmutableHashSet<ResourceKey>>();
 
         pairs.Iter(pair =>
         {
-            var (predecessor, successorOption) = pair;
+            var (predecessor, successor) = pair;
 
-            successorOption.Match(successor =>
-                                  {
-                                      if (predecessorsBuilder.TryGetValue(successor, out var predecessors))
-                                      {
-                                          predecessors.Add(predecessor);
-                                      }
-                                      else
-                                      {
-                                          predecessorsBuilder[successor] = [predecessor];
-                                      }
-                                  },
-                                  () =>
-                                  {
-                                      // Ensure the predecessor is in the predecessors dictionary even if it has no predecessors
-                                      if (predecessorsBuilder.ContainsKey(predecessor) is false)
-                                      {
-                                          predecessorsBuilder[predecessor] = [];
-                                      }
-                                  });
-
-            if (successorsBuilder.TryGetValue(predecessor, out var successors))
+            if (predecessors.TryGetValue(successor, out var predecessorSet))
             {
-                successorOption.Iter(successors.Add);
+                predecessors[successor] = predecessorSet.Add(predecessor);
             }
             else
             {
-                successorsBuilder[predecessor] = successorOption.Map(successor => new List<ResourceKey>([successor]))
-                                                                .IfNone(() => []);
+                predecessors[successor] = [predecessor];
+            }
+
+            if (successors.TryGetValue(predecessor, out var successorSet))
+            {
+                successors[predecessor] = successorSet.Add(successor);
+            }
+            else
+            {
+                successors[predecessor] = [successor];
             }
         }, cancellationToken);
-
-        var predecessors = predecessorsBuilder.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToImmutableHashSet());
-        var successors = successorsBuilder.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToImmutableHashSet());
-
-        Validate(predecessors, successors, cancellationToken);
 
         return new(predecessors, successors);
     }
 
-    private static void Validate(IDictionary<ResourceKey, ImmutableHashSet<ResourceKey>> predecessors, IDictionary<ResourceKey, ImmutableHashSet<ResourceKey>> successors, CancellationToken cancellationToken)
+    public ImmutableArray<ValidationError> Validate(Func<ResourceKey, bool> resourceInSnapshot, CancellationToken cancellationToken) =>
+        [ .. GetMissingPredecessors(resourceInSnapshot),
+          .. GetCycles(cancellationToken) ];
+
+    private IEnumerable<ValidationError.MissingPredecessor> GetMissingPredecessors(Func<ResourceKey, bool> resourceInSnapshot) =>
+        Predecessors.SelectMany(kvp => from predecessor in kvp.Value
+                                       let successor = kvp.Key
+                                       where resourceInSnapshot(successor) && resourceInSnapshot(predecessor) is false
+                                       select new ValidationError.MissingPredecessor
+                                       {
+                                           Predecessor = predecessor,
+                                           Successor = successor
+                                       });
+
+    private IEnumerable<ValidationError.Cycle> GetCycles(CancellationToken cancellationToken)
     {
-        var errors = new HashSet<string>();
+        var nodes = ImmutableHashSet.CreateRange([.. Predecessors.Keys,
+                                                  .. Predecessors.SelectMany(kvp => kvp.Value),
+                                                  .. Successors.Keys,
+                                                  .. Successors.SelectMany(kvp => kvp.Value)]);
 
-        ImmutableHashSet<ResourceKey> resources = [.. predecessors.Keys,
-                                                   .. predecessors.SelectMany(kvp => kvp.Value),
-                                                   .. successors.Keys,
-                                                   .. successors.SelectMany(kvp => kvp.Value)];
+        IEnumerable<ResourceKey> getSuccessors(ResourceKey resource) =>
+            Successors.Find(resource)
+                      .IfNone(() => []);
 
-        validateResourcesAreInBothDictionaries();
-        validateAllReferencesAreMutual();
-        validateNoCycles();
-
-        if (errors.Count > 0)
-        {
-            throw new InvalidOperationException($"Found at least one validation error:{Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
-        }
-
-        void validateResourcesAreInBothDictionaries()
-        {
-            resources.Iter(resource =>
-            {
-                if (predecessors.ContainsKey(resource) is false)
-                {
-                    errors.Add($"Resource '{resource}' has no predecessor registration.");
-                }
-
-                if (successors.ContainsKey(resource) is false)
-                {
-                    errors.Add($"Resource '{resource}' has no successor registration.");
-                }
-            }, cancellationToken);
-        }
-
-        void validateAllReferencesAreMutual()
-        {
-            resources.Iter(resource =>
-            {
-                predecessors.Find(resource)
-                            .Iter(resourcePredecessors => resourcePredecessors.Iter(predecessor =>
-                            {
-                                if (successors.TryGetValue(predecessor, out var predecessorSuccessors) is false)
-                                {
-                                    errors.Add($"Predecessor '{predecessor}' of resource '{resource}' has no successor registration.");
-                                }
-                                else if (predecessorSuccessors.Contains(resource) is false)
-                                {
-                                    errors.Add($"Predecessor '{predecessor}' of resource '{resource}' does not list it as a successor.");
-                                }
-                            }));
-
-                successors.Find(resource)
-                          .Iter(resourceSuccessors => resourceSuccessors.Iter(successor =>
-                          {
-                              if (predecessors.TryGetValue(successor, out var successorPredecessors) is false)
-                              {
-                                  errors.Add($"Successor '{successor}' of resource '{resource}' has no predecessor registration.");
-                              }
-                              else if (successorPredecessors.Contains(resource) is false)
-                              {
-                                  errors.Add($"Successor '{successor}' of resource '{resource}' does not list it as a predecessor.");
-                              }
-                          }));
-            }, cancellationToken);
-        }
-
-        void validateNoCycles()
-        {
-            // Skip validation if we already have errors
-            if (errors.Count > 0)
-            {
-                return;
-            }
-
-            // Use a depth-first search to find cycles            
-            var states = new Dictionary<ResourceKey, byte>();  //1 = visiting (in current stack), 2 = done
-            var path = new Stack<ResourceKey>();
-
-            foreach (var resource in resources)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                // Skip the resource if already visited
-                if (states.ContainsKey(resource))
-                {
-                    continue;
-                }
-
-                if (doesCycleExist(resource))
-                {
-                    return;
-                }
-            }
-
-            bool doesCycleExist(ResourceKey resource)
-            {
-                if (states.TryGetValue(resource, out var state))
-                {
-                    if (state == 1)
-                    {
-                        // Found a cycle
-                        var cyclePath = path.Reverse()
-                                            .SkipWhile(pathResource => pathResource != resource)
-                                            .Append(resource);
-
-                        errors.Add($"Found a cycle: {string.Join(" -> ", cyclePath)}");
-
-                        return true;
-                    }
-                    else
-                    {
-                        return false; // Already fully processed
-                    }
-                }
-
-                states[resource] = 1; // Mark as visiting
-                path.Push(resource);
-
-                var currentSuccessors = successors.Find(resource).IfNone(() => []);
-                foreach (var successor in currentSuccessors)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    if (doesCycleExist(successor))
-                    {
-                        return true;
-                    }
-                }
-
-                states[resource] = 2; // Mark as done
-                path.Pop();
-
-                return false;
-            }
-        }
+        return from component in ResourceGraph.GetStronglyConnectedComponents(nodes, getSuccessors, cancellationToken)
+                   // Keep components that indicate a cycle
+               where component.ToImmutableArray() switch
+               {
+                   [] => false,
+                   [var key] => getSuccessors(key).Contains(key),
+                   _ => true
+               }
+               let cycleOption = ResourceGraph.FindCycle(component,
+                                                         // Only traverse resources within the strongly connected component
+                                                         resource => getSuccessors(resource).Where(component.Contains),
+                                                         cancellationToken)
+               select cycleOption
+                        .Select(cycle => new ValidationError.Cycle
+                        {
+                            Path = [.. cycle]
+                        })
+                        .IfNoneThrow(() => new InvalidOperationException("Expected to find a cycle in strongly connected component."));
     }
 }
 
@@ -228,7 +135,7 @@ internal static class RelationshipsModule
         builder.TryAddSingleton(ResolveGetCurrentRelationships);
     }
 
-    private static GetCurrentRelationships ResolveGetCurrentRelationships(IServiceProvider provider)
+    internal static GetCurrentRelationships ResolveGetCurrentRelationships(IServiceProvider provider)
     {
         var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
         var getCurrentCommitFileOperations = provider.GetRequiredService<GetCurrentCommitFileOperations>();
@@ -255,7 +162,7 @@ internal static class RelationshipsModule
         builder.TryAddSingleton(ResolveGetPreviousRelationships);
     }
 
-    private static GetPreviousRelationships ResolveGetPreviousRelationships(IServiceProvider provider)
+    internal static GetPreviousRelationships ResolveGetPreviousRelationships(IServiceProvider provider)
     {
         var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
         var getPreviousCommitFileOperations = provider.GetRequiredService<GetPreviousCommitFileOperations>();
@@ -284,19 +191,22 @@ internal static class RelationshipsModule
         common.ResourceModule.ConfigureParseResourceFile(builder);
         common.ResourceModule.ConfigureGetInformationFileDto(builder);
         common.ResourceModule.ConfigureGetPolicyFileContents(builder);
+        ConfigureIsValidationStrict(builder);
 
         builder.TryAddSingleton(ResolveGetRelationships);
     }
 
-    private static GetRelationships ResolveGetRelationships(IServiceProvider provider)
+    internal static GetRelationships ResolveGetRelationships(IServiceProvider provider)
     {
         var parseFile = provider.GetRequiredService<ParseResourceFile>();
         var getDto = provider.GetRequiredService<GetInformationFileDto>();
         var getPolicyFileContents = provider.GetRequiredService<GetPolicyFileContents>();
+        var isValidationStrict = provider.GetRequiredService<IsValidationStrict>();
+        var logger = provider.GetRequiredService<ILogger>();
 
         return async (operations, cancellationToken) =>
         {
-            var pairs = new ConcurrentBag<(ResourceKey Predecessor, Option<ResourceKey> SuccessorOption)>();
+            var pairs = new ConcurrentBag<(ResourceKey Predecessor, ResourceKey Successor)>();
 
             // Build resource dictionary
             var resources = await operations.EnumerateServiceDirectoryFiles()
@@ -406,24 +316,49 @@ internal static class RelationshipsModule
                                                         pairs.Add((currentRevision, key));
                                                     });
                                }
-
-                               // Add the resource with no successor. Previous registrations will still be preserved.
-                               pairs.Add((key, Option.None));
                            }, maxDegreeOfParallelism: Option.None, cancellationToken);
 
-            // Some resources are not required to have artifacts.
-            // For example, it's valid to have '/products/productA/groups/administrators/productGroupInformation.json'
-            // without '/groups/administrators/groupInformation.json' since the extractor skips the administrators group
-            var predecessorsWithOptionalArtifacts = pairs.Where(pair => pair.SuccessorOption.IsSome)
-                                                         .Select(pair => pair.Predecessor)
-                                                         .Where(isPredecessorWithOptionalArtifacts)
-                                                         .ToImmutableHashSet();
+            var relationships = Relationships.From(pairs, cancellationToken);
 
-            predecessorsWithOptionalArtifacts.Iter(key => pairs.Add((key, Option.None)), cancellationToken);
+            var fileSystemResourceKeys = ImmutableHashSet.CreateRange(from resourceKeys in resources.Values
+                                                                      from resourceKey in resourceKeys
+                                                                      select resourceKey);
 
-            // Build relationships
-            return Relationships.From(pairs, cancellationToken);
+            validateRelationships(relationships, fileSystemResourceKeys.Contains, cancellationToken);
+
+            return relationships;
         };
+
+        void validateRelationships(Relationships relationships, Func<ResourceKey, bool> resourceInSnapshot, CancellationToken cancellationToken)
+        {
+            var exceptions = new List<string>();
+
+            relationships.Validate(resourceInSnapshot, cancellationToken)
+                         .Iter(error =>
+                         {
+                             switch (error)
+                             {
+                                 case ValidationError.Cycle cycle:
+                                     exceptions.Add($"Found cycle in resource relationships: {string.Join(" -> ", cycle.Path)}.");
+                                     break;
+                                 case ValidationError.MissingPredecessor missingPredecessor:
+                                     if (isValidationStrict())
+                                     {
+                                         exceptions.Add($"Resource '{missingPredecessor.Successor}' is missing its predecessor '{missingPredecessor.Predecessor}'.");
+                                     }
+                                     else
+                                     {
+                                         logger.LogWarning("Resource '{Resource}' is missing its predecessor '{Resource}'.", missingPredecessor.Successor, missingPredecessor.Predecessor);
+                                     }
+                                     break;
+                             }
+                         }, cancellationToken);
+
+            if (exceptions.Count > 0)
+            {
+                throw new InvalidOperationException($"Found at least one validation error:{Environment.NewLine}{string.Join(Environment.NewLine, exceptions)}");
+            }
+        }
 
         static ResourceKey getParent(IChildResource resource, ResourceName name, ParentChain parents) =>
             parents.LastOrDefault() switch
@@ -624,22 +559,21 @@ internal static class RelationshipsModule
                                          Parents = parents
                                      })];
         }
+    }
 
-        static bool isPredecessorWithOptionalArtifacts(ResourceKey key) =>
-            key.Resource switch
-            {
-                ApiOperationResource => true,
-                WorkspaceResource => true,
-                WorkspaceApiOperationResource => true,
-                GroupResource
-                    when key.Name == GroupResource.Administrators
-                         || key.Name == GroupResource.Developers
-                         || key.Name == GroupResource.Guests => true,
-                WorkspaceGroupResource
-                    when key.Name == WorkspaceGroupResource.Administrators
-                         || key.Name == WorkspaceGroupResource.Developers
-                         || key.Name == WorkspaceGroupResource.Guests => true,
-                _ => false
-            };
+    public static void ConfigureIsValidationStrict(IHostApplicationBuilder builder)
+    {
+        builder.TryAddSingleton(ResolveIsValidationStrict);
+    }
+
+    internal static IsValidationStrict ResolveIsValidationStrict(IServiceProvider provider)
+    {
+        var configuration = provider.GetRequiredService<IConfiguration>();
+
+        return () => configuration.GetValue("STRICT_VALIDATION")
+                                  .Map(flag => bool.TryParse(flag, out var result)
+                                                ? result
+                                                : throw new InvalidOperationException($"'STRICT_VALIDATION' must be 'true' or 'false'."))
+                                  .IfNone(() => false);
     }
 }

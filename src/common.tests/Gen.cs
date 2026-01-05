@@ -48,6 +48,23 @@ public static class Generator
         select common.ResourceName.From(name)
                                   .IfErrorThrow();
 
+    public static Gen<FileInfo> FileInfo { get; } =
+        from fileNameChars in Gen.Char['a', 'z'].Array[3, 15]
+        let fileName = new string(fileNameChars)
+        from extensionChars in Gen.Char['a', 'z'].Array[2, 4]
+        let extension = new string(extensionChars)
+        let path = Path.Combine(Path.GetTempPath(), $"{fileName}.{extension}")
+        select new FileInfo(path);
+
+    public static Gen<JsonObject> JsonObject { get; } =
+        Gen.Const(new JsonObject());
+
+    public static Gen<BinaryData> BinaryData { get; } =
+        Gen.OneOf(from text in Gen.String
+                  select System.BinaryData.FromString(text),
+                  from jsonObject in JsonObject
+                  select System.BinaryData.FromObjectAsJson(jsonObject));
+
     private static Lazy<ResourceGraph> LazyFullGraph { get; } = new(() =>
     {
         var builder = Host.CreateEmptyApplicationBuilder(default);
@@ -60,6 +77,20 @@ public static class Generator
         GenerateResourceDtos();
 
     public static Gen<ResourceKey> ResourceKey { get; } = GenerateResourceKey();
+
+    public static Gen<ApiSpecification> ApiSpecification { get; } =
+        Gen.OneOf<ApiSpecification>([
+            Gen.Const(common.ApiSpecification.GraphQl.Instance),
+            Gen.Const(common.ApiSpecification.Wadl.Instance),
+            Gen.Const(common.ApiSpecification.Wsdl.Instance),
+            from format in Gen.OneOfConst<OpenApiFormat>([OpenApiFormat.Yaml.Instance, OpenApiFormat.Json.Instance])
+            from version in Gen.OneOfConst<OpenApiVersion>([OpenApiVersion.V2.Instance, OpenApiVersion.V3.Instance])
+            select new common.ApiSpecification.OpenApi
+            {
+                Format = format,
+                Version = version
+            }
+            ]);
 
     public static Gen<ServiceDirectory> ServiceDirectory { get; } =
         from characters in Gen.OneOf([Gen.Char['a', 'z'], Gen.Char['0', '9']]).Array[8]

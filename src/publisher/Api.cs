@@ -31,7 +31,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolvePutApi);
     }
 
-    private static PutApi ResolvePutApi(IServiceProvider provider)
+    internal static PutApi ResolvePutApi(IServiceProvider provider)
     {
         var getCurrentFileOperations = provider.GetRequiredService<GetCurrentFileOperations>();
         var doesResourceExistInApim = provider.GetRequiredService<DoesResourceExistInApim>();
@@ -174,7 +174,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolveDeleteApi);
     }
 
-    private static DeleteApi ResolveDeleteApi(IServiceProvider provider)
+    internal static DeleteApi ResolveDeleteApi(IServiceProvider provider)
     {
         var doesResourceExistInApim = provider.GetRequiredService<DoesResourceExistInApim>();
         var deleteResourceFromApim = provider.GetRequiredService<DeleteResourceFromApim>();
