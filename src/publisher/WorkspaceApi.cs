@@ -65,7 +65,7 @@ internal static partial class ResourceModule
         async ValueTask setCurrentRevision(ResourceKey resourceKey, JsonObject dto, CancellationToken cancellationToken)
         {
             // If the API already exists...
-            if (await doesResourceExistInApim(resourceKey, cancellationToken) is false)
+            if (await doesResourceExistInApim(resourceKey, cancellationToken))
             {
                 var apimRevision = await getApimRevision(resourceKey, cancellationToken);
                 var newRevision = GetWorkspaceApiRevisionFromDto(dto);
