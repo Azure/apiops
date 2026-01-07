@@ -41,13 +41,23 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
+          $releaseTag = '${{ github.event.inputs.Release_Version }}'
+          $releaseTag = $releaseTag.Trim()
+
+          if ($releaseTag -notmatch '(?<maj>\d+)\.(?<min>\d+)\.(?<patch>\d+)')
+          {
+            throw "Release_Version must contain <major>.<minor>.<patch> (for example, v7.0.0-alpha.2.0.0). Actual: ''"
+          }
+
+          $formattedVersion = "$($Matches.maj).$($Matches.min).$($Matches.patch)"
+
           Write-Information "Creating output directory..."
           $outputFolderPath = Join-Path "${{ runner.temp }}" "extractor-output"
           New-Item -Path "$outputFolderPath" -ItemType "Directory"
 
           Write-Information "Publishing application..."
           $sourcePath = Join-Path "${{ github.workspace }}" "src" "extractor" "extractor.csproj"
-          & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
+          & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true -p:Version="$formattedVersion" --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating extractor failed."}
 
           Write-Information "Zipping application..."
@@ -97,13 +107,23 @@ jobs:
           $VerbosePreference = "Continue"
           $InformationPreference = "Continue"
 
+          $releaseTag = '${{ github.event.inputs.Release_Version }}'
+          $releaseTag = $releaseTag.Trim()
+
+          if ($releaseTag -notmatch '(?<maj>\d+)\.(?<min>\d+)\.(?<patch>\d+)')
+          {
+            throw "Release_Version must contain <major>.<minor>.<patch> (for example, v7.0.0-alpha.2.0.0). Actual: '${{ github.event.inputs.Release_Version }}'"
+          }
+
+          $formattedVersion = "$($Matches.maj).$($Matches.min).$($Matches.patch)"
+
           Write-Information "Creating output directory..."
           $outputFolderPath = Join-Path "${{ runner.temp }}" "publisher-output"
           New-Item -Path "$outputFolderPath" -ItemType "Directory"
 
           Write-Information "Publishing application..."
           $sourcePath = Join-Path "${{ github.workspace }}" "src" "publisher" "publisher.csproj"
-          & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true --output "$outputFolderPath"
+          & dotnet publish "$sourcePath" --self-contained --runtime "${{ matrix.dotnet-runtime }}" -p:PublishSingleFile=true -p:Version="$formattedVersion" --output "$outputFolderPath"
           if ($LASTEXITCODE -ne 0) { throw "Generating publisher failed."}
 
           Write-Information "Zipping application..."

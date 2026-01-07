@@ -376,7 +376,7 @@ public class TelemetryPolicy(Version version) : HttpPipelinePolicy
 
     public override async ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
     {
-        var header = new ProductHeaderValue("apimanagement-apiops", version.ToString());
+        var header = new ProductHeaderValue("apimanagement-apiops", version.ToString(3));
         message.Request.Headers.Add(HttpHeader.Names.UserAgent, header.ToString());
 
         await ProcessNextAsync(message, pipeline);
