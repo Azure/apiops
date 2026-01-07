@@ -18,7 +18,7 @@ internal static class CommonModule
         builder.TryAddSingleton(ResolveGetCurrentFileOperations);
     }
 
-    private static GetCurrentFileOperations ResolveGetCurrentFileOperations(IServiceProvider provider)
+    internal static GetCurrentFileOperations ResolveGetCurrentFileOperations(IServiceProvider provider)
     {
         var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
         var getCurrentCommitFileOperations = provider.GetRequiredService<GetCurrentCommitFileOperations>();

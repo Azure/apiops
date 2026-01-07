@@ -23,7 +23,7 @@ internal static class ConfigurationModule
         builder.TryAddSingleton(ResolveGetConfigurationOverride);
     }
 
-    private static GetConfigurationOverride ResolveGetConfigurationOverride(IServiceProvider provider)
+    internal static GetConfigurationOverride ResolveGetConfigurationOverride(IServiceProvider provider)
     {
         var configuration = provider.GetRequiredService<IConfiguration>();
         var activitySource = provider.GetRequiredService<ActivitySource>();

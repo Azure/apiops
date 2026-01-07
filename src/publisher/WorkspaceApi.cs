@@ -30,7 +30,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolvePutWorkspaceApi);
     }
 
-    private static PutWorkspaceApi ResolvePutWorkspaceApi(IServiceProvider provider)
+    internal static PutWorkspaceApi ResolvePutWorkspaceApi(IServiceProvider provider)
     {
         var getCurrentFileOperations = provider.GetRequiredService<GetCurrentFileOperations>();
         var doesResourceExistInApim = provider.GetRequiredService<DoesResourceExistInApim>();
@@ -65,7 +65,7 @@ internal static partial class ResourceModule
         async ValueTask setCurrentRevision(ResourceKey resourceKey, JsonObject dto, CancellationToken cancellationToken)
         {
             // If the API already exists...
-            if (await doesResourceExistInApim(resourceKey, cancellationToken) is false)
+            if (await doesResourceExistInApim(resourceKey, cancellationToken))
             {
                 var apimRevision = await getApimRevision(resourceKey, cancellationToken);
                 var newRevision = GetWorkspaceApiRevisionFromDto(dto);
@@ -164,7 +164,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolveDeleteWorkspaceApi);
     }
 
-    private static DeleteWorkspaceApi ResolveDeleteWorkspaceApi(IServiceProvider provider)
+    internal static DeleteWorkspaceApi ResolveDeleteWorkspaceApi(IServiceProvider provider)
     {
         var doesResourceExistInApim = provider.GetRequiredService<DoesResourceExistInApim>();
         var deleteResourceFromApim = provider.GetRequiredService<DeleteResourceFromApim>();
