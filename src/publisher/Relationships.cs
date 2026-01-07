@@ -7,7 +7,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Diagnostics;
 using System.Linq;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -164,69 +163,6 @@ internal static class RelationshipsModule
     }
 
     internal static GetPreviousRelationships ResolveGetPreviousRelationships(IServiceProvider provider)
-    {
-        var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
-        var getPreviousCommitFileOperations = provider.GetRequiredService<GetPreviousCommitFileOperations>();
-        var getRelationships = provider.GetRequiredService<GetRelationships>();
-
-        return async cancellationToken =>
-        {
-            // No commit ID was passed, so we can't access history
-            if (commitIdWasPassed() is false)
-            {
-                return Relationships.Empty;
-            }
-
-            // If we can get the previous commit ID, map previous relationships
-            var fileOperationsOption = getPreviousCommitFileOperations();
-
-            var relationshipsOption = await fileOperationsOption.MapTask(async operations => await getRelationships(operations, cancellationToken));
-
-            // Otherwise, return an empty set of relationships
-            return relationshipsOption.IfNone(() => Relationships.Empty);
-        };
-    }
-
-internal static class RelationshipsModule
-{
-    public static void ConfigureGetCurrentRelationships(IHostApplicationBuilder builder)
-    {
-        GitModule.ConfigureCommitIdWasPassed(builder);
-        GitModule.ConfigureGetCurrentCommitFileOperations(builder);
-        FileSystemModule.ConfigureGetLocalFileOperations(builder);
-        ConfigureGetRelationships(builder);
-
-        builder.TryAddSingleton(ResolveGetCurrentRelationships);
-    }
-
-    private static GetCurrentRelationships ResolveGetCurrentRelationships(IServiceProvider provider)
-    {
-        var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
-        var getCurrentCommitFileOperations = provider.GetRequiredService<GetCurrentCommitFileOperations>();
-        var getLocalFileOperations = provider.GetRequiredService<GetLocalFileOperations>();
-        var getRelationships = provider.GetRequiredService<GetRelationships>();
-
-        return async cancellationToken =>
-        {
-            var fileOperations = commitIdWasPassed()
-                                    ? getCurrentCommitFileOperations()
-                                        .IfNone(() => throw new InvalidOperationException("Cannot get file operations for current commit."))
-                                    : getLocalFileOperations();
-
-            return await getRelationships(fileOperations, cancellationToken);
-        };
-    }
-
-    public static void ConfigureGetPreviousRelationships(IHostApplicationBuilder builder)
-    {
-        GitModule.ConfigureCommitIdWasPassed(builder);
-        GitModule.ConfigureGetPreviousCommitFileOperations(builder);
-        ConfigureGetRelationships(builder);
-
-        builder.TryAddSingleton(ResolveGetPreviousRelationships);
-    }
-
-    private static GetPreviousRelationships ResolveGetPreviousRelationships(IServiceProvider provider)
     {
         var commitIdWasPassed = provider.GetRequiredService<CommitIdWasPassed>();
         var getPreviousCommitFileOperations = provider.GetRequiredService<GetPreviousCommitFileOperations>();
