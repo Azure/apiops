@@ -46,7 +46,7 @@ jobs:
 
           if ($releaseTag -notmatch '(?<maj>\d+)\.(?<min>\d+)\.(?<patch>\d+)')
           {
-            throw "Release_Version must contain <major>.<minor>.<patch> (for example, v7.0.0-alpha.2.0.0). Actual: ''"
+            throw "Release_Version must contain <major>.<minor>.<patch> (for example, v7.0.0-alpha.2.0.0). Actual: '${{ github.event.inputs.Release_Version }}'"
           }
 
           $formattedVersion = "$($Matches.maj).$($Matches.min).$($Matches.patch)"
