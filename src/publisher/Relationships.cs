@@ -342,6 +342,12 @@ internal static class RelationshipsModule
                                      exceptions.Add($"Found cycle in resource relationships: {string.Join(" -> ", cycle.Path)}.");
                                      break;
                                  case ValidationError.MissingPredecessor missingPredecessor:
+                                     // Skip predecessors that shouldn't be validated
+                                     if (shouldValidate(missingPredecessor.Predecessor) is false)
+                                     {
+                                         break;
+                                     }
+
                                      if (isValidationStrict())
                                      {
                                          exceptions.Add($"Resource '{missingPredecessor.Successor}' is missing its predecessor '{missingPredecessor.Predecessor}'.");
@@ -359,6 +365,23 @@ internal static class RelationshipsModule
                 throw new InvalidOperationException($"Found at least one validation error:{Environment.NewLine}{string.Join(Environment.NewLine, exceptions)}");
             }
         }
+
+        // Some resources don't need validation because they're never extracted
+        bool shouldValidate(ResourceKey resourceKey) =>
+            resourceKey.Resource switch
+            {
+                SubscriptionResource => resourceKey.Name != SubscriptionResource.Master,
+                GroupResource => resourceKey.Name != GroupResource.Administrators
+                                 && resourceKey.Name != GroupResource.Developers
+                                 && resourceKey.Name != GroupResource.Guests,
+                ApiOperationResource => false,
+                WorkspaceResource => false,
+                WorkspaceGroupResource => resourceKey.Name != WorkspaceGroupResource.Administrators
+                                          && resourceKey.Name != WorkspaceGroupResource.Developers
+                                          && resourceKey.Name != WorkspaceGroupResource.Guests,
+                WorkspaceApiOperationResource => false,
+                _ => true
+            };
 
         static ResourceKey getParent(IChildResource resource, ResourceName name, ParentChain parents) =>
             parents.LastOrDefault() switch

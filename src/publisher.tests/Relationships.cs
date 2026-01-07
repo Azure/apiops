@@ -679,6 +679,9 @@ internal sealed class GetRelationshipsTests
                                                                                 and not IResourceWithReference
                                                                                 and not ICompositeResource
                                                                                 and not IPolicyResource)
+                  // Skip parents that should not be validated
+                  let parentResource = childKey.Parents.Last().Resource
+                  where parentResource is not (GroupResource or ApiOperationResource or WorkspaceResource or WorkspaceGroupResource or WorkspaceApiOperationResource)
                   from fixture in Fixture.Generate()
                   let childFile = new FileInfo("child.json")
                   let fileOperations = Common.NoOpFileOperations with
