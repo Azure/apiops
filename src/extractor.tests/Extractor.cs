@@ -22,33 +22,38 @@ internal sealed class RunExtractorTests
     [Test]
     public async Task Unsupported_resources_are_not_extracted()
     {
-        var gen = from fixture in Fixture.Generate()
-                  from isResourceSupported in Generator.GeneratePredicate<IResource>()
-                  let writtenResources = new List<IResource>()
-                  select (writtenResources, isResourceSupported, fixture with
+        var gen = from isResourceSupported in Generator.GeneratePredicate<IResource>()
+                  from fixture in Fixture.Generate()
+                  select (isResourceSupported, fixture with
                   {
                       IsResourceSupportedInApim = async (resource, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
                           return isResourceSupported(resource);
-                      },
-                      WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenResources.Add(resourceKey.Resource);
                       }
                   });
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (writtenResources, isResourceSupported, fixture) = tuple;
+            var (isResourceSupported, fixture) = tuple;
+            var writtenResources = ImmutableArray<IResource>.Empty;
+
+            fixture = fixture with
+            {
+                WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    ImmutableInterlocked.Update(ref writtenResources, array => array.Add(resourceKey.Resource));
+                }
+            };
+
             var runExtractor = fixture.Resolve();
 
             // Act
             await runExtractor(CancellationToken);
 
-            // Assert that all written resources are supported
+            // Assert
             await Assert.That(writtenResources)
                         .All(isResourceSupported);
         });
@@ -57,33 +62,38 @@ internal sealed class RunExtractorTests
     [Test]
     public async Task Descendants_of_unsupported_resources_are_not_extracted()
     {
-        var gen = from fixture in Fixture.Generate()
-                  from isResourceSupported in Generator.GeneratePredicate<IResource>()
-                  let writtenResources = new List<IResource>()
-                  select (writtenResources, isResourceSupported, fixture with
+        var gen = from isResourceSupported in Generator.GeneratePredicate<IResource>()
+                  from fixture in Fixture.Generate()
+                  select (isResourceSupported, fixture with
                   {
                       IsResourceSupportedInApim = async (resource, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
                           return isResourceSupported(resource);
-                      },
-                      WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenResources.Add(resourceKey.Resource);
                       }
                   });
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (writtenResources, isResourceSupported, fixture) = tuple;
+            var (isResourceSupported, fixture) = tuple;
+            var writtenResources = ImmutableArray<IResource>.Empty;
+
+            fixture = fixture with
+            {
+                WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    ImmutableInterlocked.Update(ref writtenResources, array => array.Add(resourceKey.Resource));
+                }
+            };
+
             var runExtractor = fixture.Resolve();
 
             // Act
             await runExtractor(CancellationToken);
 
-            // Assert that all ancestors of written resources are supported
+            // Assert
             var ancestorsOfWrittenResources = writtenResources.SelectMany(resource => resource.GetTraversalPredecessorHierarchy());
 
             await Assert.That(ancestorsOfWrittenResources)
@@ -94,34 +104,39 @@ internal sealed class RunExtractorTests
     [Test]
     public async Task Filtered_out_resources_are_not_extracted()
     {
-        var gen = from fixture in Fixture.Generate()
-                  from shouldExtract in Generator.GeneratePredicate<ResourceKey>()
-                  let writtenResourceKeys = new List<ResourceKey>()
-                  select (writtenResourceKeys, shouldExtract, fixture with
+        var gen = from shouldExtract in Generator.GeneratePredicate<ResourceKey>()
+                  from fixture in Fixture.Generate()
+                  select (shouldExtract, fixture with
                   {
                       ShouldExtract = async (key, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
                           return shouldExtract(key);
-                      },
-                      WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenResourceKeys.Add(resourceKey);
                       }
                   });
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (writtenResourceKeys, shouldExtract, fixture) = tuple;
+            var (shouldExtract, fixture) = tuple;
+            var writtenResources = ImmutableArray<ResourceKey>.Empty;
+
+            fixture = fixture with
+            {
+                WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    ImmutableInterlocked.Update(ref writtenResources, array => array.Add(resourceKey));
+                }
+            };
+
             var runExtractor = fixture.Resolve();
 
             // Act
             await runExtractor(CancellationToken);
 
-            // Assert that all written resources pass the filter
-            await Assert.That(writtenResourceKeys)
+            // Assert
+            await Assert.That(writtenResources)
                         .All(shouldExtract);
         });
     }
@@ -129,10 +144,9 @@ internal sealed class RunExtractorTests
     [Test]
     public async Task Written_dtos_match_apim_dtos()
     {
-        var gen = from fixture in Fixture.Generate()
-                  from apimDtos in Generator.ResourceDtos
-                  let writtenResources = new Dictionary<ResourceKey, JsonObject>()
-                  select (apimDtos, writtenResources, fixture with
+        var gen = from apimDtos in Generator.ResourceDtos
+                  from fixture in Fixture.Generate()
+                  select (apimDtos, fixture with
                   {
                       ListResourceDtosFromApim = (resource, parents, cancellationToken) =>
                       {
@@ -140,51 +154,55 @@ internal sealed class RunExtractorTests
                                          .Choose(kvp => from dto in kvp.Value
                                                         select (kvp.Key.Name, dto))
                                          .ToAsyncEnumerable();
-                      },
-                      WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          dtoOption.Iter(dto => writtenResources.Add(resourceKey, dto));
                       }
                   });
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (apimDtos, writtenResources, fixture) = tuple;
+            var (apimDtos, fixture) = tuple;
+            var writtenDtos = ImmutableDictionary<ResourceKey, JsonObject>.Empty;
+
+            fixture = fixture with
+            {
+                WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    dtoOption.Iter(dto => ImmutableInterlocked.AddOrUpdate(ref writtenDtos, resourceKey, dto, (_, _) => dto));
+                }
+            };
+
             var runExtractor = fixture.Resolve();
 
             // Act
             await runExtractor(CancellationToken);
 
-            // Assert that all written dtos match apim dtos
+            // Assert
             var apimJsonObjects = apimDtos.Choose(kvp => from json in kvp.Value
                                                          select KeyValuePair.Create(kvp.Key, json))
                                           .ToImmutableHashSet();
 
-            await Assert.That(writtenResources)
-                        .All(apimJsonObjects.Contains);
+            await Assert.That(writtenDtos).All(apimJsonObjects.Contains);
         });
     }
 
     [Test]
     public async Task Only_api_releases_of_current_apis_get_extracted()
     {
-        var gen = from fixture in Fixture.Generate()
-                  from apimDtos in Generator.ResourceDtos
+        var gen = from apimDtos in Generator.ResourceDtos
                       // Ensure we have at least one API release whose parent API is not the current revision
                   where apimDtos.Keys.Any(key => key.Resource is ApiReleaseResource or WorkspaceApiReleaseResource
                                                  && key.Parents.Any(parent => (parent.Resource is ApiResource or WorkspaceApiResource)
                                                                                && ApiRevisionModule.IsRootName(parent.Name) is false))
-                  let writtenResourceKeys = new List<ResourceKey>()
-                  select (writtenResourceKeys, fixture with
+                  from fixture in Fixture.Generate()
+                  select fixture with
                   {
                       ListResourceDtosFromApim = (resource, parents, cancellationToken) =>
                       {
                           return apimDtos.Where(kvp => kvp.Key.Resource == resource && kvp.Key.Parents == parents)
-                                         .Choose(kvp => from dto in kvp.Value
-                                                        select (kvp.Key.Name, dto))
-                                         .ToAsyncEnumerable();
+                                           .Choose(kvp => from dto in kvp.Value
+                                                          select (kvp.Key.Name, dto))
+                                           .ToAsyncEnumerable();
                       },
                       IsResourceSupportedInApim = async (resource, cancellationToken) =>
                       {
@@ -195,24 +213,29 @@ internal sealed class RunExtractorTests
                       {
                           await ValueTask.CompletedTask;
                           return true;
-                      },
-                      WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenResourceKeys.Add(resourceKey);
                       }
-                  });
+                  };
 
-        await gen.SampleAsync(async tuple =>
+        await gen.SampleAsync(async fixture =>
         {
             // Arrange
-            var (writtenResourceKeys, fixture) = tuple;
+            var writtenResourceKeys = ImmutableArray<ResourceKey>.Empty;
+
+            fixture = fixture with
+            {
+                WriteResource = async (resourceKey, dtoOption, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    ImmutableInterlocked.Update(ref writtenResourceKeys, array => array.Add(resourceKey));
+                }
+            };
+
             var runExtractor = fixture.Resolve();
 
             // Act
             await runExtractor(CancellationToken);
 
-            // Assert that the parent APIs of all written releases are the current revision
+            // Assert
             var writtenReleases = writtenResourceKeys.Where(key => key.Resource is ApiReleaseResource or WorkspaceApiReleaseResource);
 
             await Assert.That(writtenReleases)
@@ -310,11 +333,10 @@ internal sealed class ShouldExtractTests
             var shouldExtract = fixture.Resolve();
 
             // Act
-            var extract = await shouldExtract(resourceKey, CancellationToken);
+            var result = await shouldExtract(resourceKey, CancellationToken);
 
-            // Assert that the resource should be extracted
-            await Assert.That(extract)
-                        .IsTrue();
+            // Assert
+            await Assert.That(result).IsTrue();
         });
     }
 
@@ -339,10 +361,10 @@ internal sealed class ShouldExtractTests
             var shouldExtract = fixture.Resolve();
 
             // Act
-            var extract = await shouldExtract(resourceKey, CancellationToken);
+            var result = await shouldExtract(resourceKey, CancellationToken);
 
-            // Assert that the resource should not be extracted
-            await Assert.That(extract).IsFalse();
+            // Assert
+            await Assert.That(result).IsFalse();
         });
     }
 
@@ -367,10 +389,10 @@ internal sealed class ShouldExtractTests
             var shouldExtract = fixture.Resolve();
 
             // Act
-            var extract = await shouldExtract(resourceKey, CancellationToken);
+            var result = await shouldExtract(resourceKey, CancellationToken);
 
-            // Assert that the resource should be extracted
-            await Assert.That(extract).IsTrue();
+            // Assert
+            await Assert.That(result).IsTrue();
         });
     }
 
@@ -412,10 +434,10 @@ internal sealed class ShouldExtractTests
             var shouldExtract = fixture.Resolve();
 
             // Act
-            var extract = await shouldExtract(resourceKey, CancellationToken);
+            var result = await shouldExtract(resourceKey, CancellationToken);
 
-            // Assert that the resource should not be extracted
-            await Assert.That(extract).IsFalse();
+            // Assert
+            await Assert.That(result).IsFalse();
         });
     }
 
@@ -462,36 +484,33 @@ internal sealed class WriteResourceTests
     public async Task Information_file_with_dto_is_written()
     {
         var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is IResourceWithInformationFile)
-                  from fixture in Fixture.Generate()
-                  let writtenDtos = new List<JsonObject>()
                   let dto = new JsonObject
                   {
                       ["id"] = resourceKey.ToString()
                   }
-                  select (resourceKey, dto, writtenDtos, fixture with
-                  {
-                      WriteInformationFile = async (resource, name, dto, parents, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenDtos.Add(dto);
-                      }
-                  });
+                  from fixture in Fixture.Generate()
+                  select (resourceKey, dto, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, dto, writtenDtos, fixture) = tuple;
+            var (resourceKey, dto, fixture) = tuple;
+            var writtenDto = new JsonObject();
+            fixture = fixture with
+            {
+                WriteInformationFile = async (resource, name, dto, parents, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    writtenDto = dto;
+                }
+            };
             var writeResource = fixture.Resolve();
 
             // Act
             await writeResource(resourceKey, dto, CancellationToken);
 
-            // Assert that the DTO was written
-            var writtenDto = await Assert.That(writtenDtos)
-                                         .HasSingleItem();
-
-            await Assert.That(writtenDto)
-                        .IsEqualTo(dto);
+            // Assert
+            await Assert.That(writtenDto).IsEqualTo(dto);
         });
     }
 
@@ -501,31 +520,30 @@ internal sealed class WriteResourceTests
         var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is IResourceWithInformationFile)
                   let dtoOption = Option<JsonObject>.None()
                   from fixture in Fixture.Generate()
-                  let writtenDtos = new List<JsonObject>()
-                  select (resourceKey, dtoOption, writtenDtos, fixture with
-                  {
-                      WriteInformationFile = async (resource, name, dto, parents, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenDtos.Add(dto);
-                      }
-                  });
+                  select (resourceKey, dtoOption, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, dtoOption, writtenDtos, fixture) = tuple;
+            var (resourceKey, dtoOption, fixture) = tuple;
+            var wasWritten = false;
+            fixture = fixture with
+            {
+                WriteInformationFile = async (resource, name, dto, parents, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    wasWritten = true;
+                }
+            };
             var writeResource = fixture.Resolve();
 
             // Act
             await writeResource(resourceKey, dtoOption, CancellationToken);
 
-            // Assert that nothing was written
-            await Assert.That(writtenDtos)
-                        .IsEmpty();
+            // Assert
+            await Assert.That(wasWritten).IsFalse();
         });
     }
-
     [Test]
     public async Task Policy_file_with_dto_is_written()
     {
@@ -534,32 +552,29 @@ internal sealed class WriteResourceTests
                   {
                       ["id"] = resourceKey.ToString()
                   }
-                  let writtenDtos = new List<JsonObject>()
                   from fixture in Fixture.Generate()
-                  select (resourceKey, dto, writtenDtos, fixture with
-                  {
-                      WritePolicyFile = async (resource, name, dto, parents, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenDtos.Add(dto);
-                      }
-                  });
+                  select (resourceKey, dto, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, dto, writtenDtos, fixture) = tuple;
+            var (resourceKey, dto, fixture) = tuple;
+            var writtenDto = new JsonObject();
+            fixture = fixture with
+            {
+                WritePolicyFile = async (resource, name, dto, parents, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    writtenDto = dto;
+                }
+            };
             var writeResource = fixture.Resolve();
 
             // Act
             await writeResource(resourceKey, dto, CancellationToken);
 
-            // Assert that the DTO was written
-            var writtenDto = await Assert.That(writtenDtos)
-                                         .HasSingleItem();
-
-            await Assert.That(writtenDto)
-                        .IsEqualTo(dto);
+            // Assert
+            await Assert.That(writtenDto).IsEqualTo(dto);
         });
     }
 
@@ -568,29 +583,29 @@ internal sealed class WriteResourceTests
     {
         var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is IPolicyResource)
                   let dtoOption = Option<JsonObject>.None()
-                  let writtenDtos = new List<JsonObject>()
                   from fixture in Fixture.Generate()
-                  select (resourceKey, dtoOption, writtenDtos, fixture with
-                  {
-                      WritePolicyFile = async (resource, name, dto, parents, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenDtos.Add(dto);
-                      }
-                  });
+                  select (resourceKey, dtoOption, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, dtoOption, writtenDtos, fixture) = tuple;
+            var (resourceKey, dtoOption, fixture) = tuple;
+            var wasWritten = false;
+            fixture = fixture with
+            {
+                WritePolicyFile = async (resource, name, dto, parents, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    wasWritten = true;
+                }
+            };
             var writeResource = fixture.Resolve();
 
             // Act
             await writeResource(resourceKey, dtoOption, CancellationToken);
 
-            // Assert that nothing was written
-            await Assert.That(writtenDtos)
-                        .IsEmpty();
+            // Assert
+            await Assert.That(wasWritten).IsFalse();
         });
     }
 
@@ -603,38 +618,34 @@ internal sealed class WriteResourceTests
                       ["id"] = resourceKey.ToString()
                   }
                   let specificationContents = BinaryData.FromObjectAsJson(dto)
-                  let writtenSpecifications = new List<string>()
                   from fixture in Fixture.Generate()
-                  select (resourceKey, dto, specificationContents, writtenSpecifications, fixture with
-                  {
-                      GetApiSpecificationFromApim = async (resourceKey, dto, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          var specification = ApiSpecification.OpenApi.GraphQl.Instance as ApiSpecification;
-                          return Option.Some((specification, specificationContents));
-                      },
-                      WriteApiSpecificationFile = async (resourceKey, specification, contents, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenSpecifications.Add(contents.ToString());
-                      }
-                  });
+                  select (resourceKey, dto, specificationContents, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, dto, specificationContents, writtenSpecifications, fixture) = tuple;
+            var (resourceKey, dto, specificationContents, fixture) = tuple;
+            var writtenSpecification = string.Empty;
+            fixture = fixture with
+            {
+                GetApiSpecificationFromApim = async (resourceKey, dto, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    return Option.Some((ApiSpecification.OpenApi.GraphQl.Instance as ApiSpecification, specificationContents));
+                },
+                WriteApiSpecificationFile = async (resourceKey, specification, contents, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    writtenSpecification = contents.ToString();
+                }
+            };
             var writeResource = fixture.Resolve();
 
             // Act
             await writeResource(resourceKey, dto, CancellationToken);
 
-            // Assert that the specification was written
-            var writtenSpecification = await Assert.That(writtenSpecifications)
-                                                   .HasSingleItem();
-
-            await Assert.That(writtenSpecification)
-                        .IsEqualTo(specificationContents.ToString());
+            // Assert
+            await Assert.That(writtenSpecification).IsEquivalentTo(specificationContents.ToString());
         });
     }
 
@@ -643,34 +654,34 @@ internal sealed class WriteResourceTests
     {
         var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is ApiResource or WorkspaceApiResource)
                   let dtoOption = Option.Some(new JsonObject())
-                  let writtenSpecifications = new List<string>()
                   from fixture in Fixture.Generate()
-                  select (resourceKey, dtoOption, writtenSpecifications, fixture with
-                  {
-                      GetApiSpecificationFromApim = async (resourceKey, dto, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          return Option.None;
-                      },
-                      WriteApiSpecificationFile = async (resourceKey, specification, contents, cancellationToken) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          writtenSpecifications.Add(contents.ToString());
-                      }
-                  });
+                  select (resourceKey, dtoOption, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, dtoOption, writtenSpecifications, fixture) = tuple;
+            var (resourceKey, dtoOption, fixture) = tuple;
+            var wasSpecificationWritten = false;
+            fixture = fixture with
+            {
+                GetApiSpecificationFromApim = async (resourceKey, dto, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    return Option.None;
+                },
+                WriteApiSpecificationFile = async (resourceKey, specification, contents, cancellationToken) =>
+                {
+                    await ValueTask.CompletedTask;
+                    wasSpecificationWritten = true;
+                }
+            };
             var writeResource = fixture.Resolve();
 
             // Act
             await writeResource(resourceKey, dtoOption, CancellationToken);
 
-            // Assert that nothing was written
-            await Assert.That(writtenSpecifications)
-                        .IsEmpty();
+            // Assert
+            await Assert.That(wasSpecificationWritten).IsFalse();
         });
     }
 

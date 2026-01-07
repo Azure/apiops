@@ -5,7 +5,7 @@ using TUnit.Assertions.Core;
 namespace common.tests;
 
 public sealed class OptionIsSomeAssertion<T>(AssertionContext<Option<T>> context) : Assertion<T>(context.Map(Map))
-{
+{    
     protected override string GetExpectation() => "Option to be Some.";
 
     protected override async Task<AssertionResult> CheckAsync(EvaluationMetadata<T> metadata)
@@ -27,7 +27,7 @@ public sealed class OptionIsSomeAssertion<T>(AssertionContext<Option<T>> context
     private static T Map(Option<T>? option) =>
         option is null
             ? throw new InvalidOperationException("Option cannot be null.")
-            : option.IfNone(() => throw new InvalidOperationException("Option was None."));
+            : option.IfNone(() => throw new InvalidOperationException("Option should be Some."));
 }
 
 public sealed class OptionIsNoneAssertion<T>(AssertionContext<Option<T>> context) : Assertion<Option<T>>(context)

@@ -22,7 +22,7 @@ internal sealed class ResourceIsInConfigurationTests
     {
         var gen = // Generate configuration keys
                   from fixture in Fixture.Generate()
-                  from keys in Generator.ResourceKeys
+                  from keys in GenerateResourceKeys()
                   let configuration = ResourceKeysToConfiguration(keys)
                   // Generate a key whose resource is not in configuration
                   from key in Generator.ResourceKey
@@ -53,7 +53,7 @@ internal sealed class ResourceIsInConfigurationTests
         var gen =
             // Generate configuration keys
             from fixture in Fixture.Generate()
-            from keys in Generator.ResourceKeys
+            from keys in GenerateResourceKeys()
             let configuration = ResourceKeysToConfiguration(keys)
             // Pick a key with a parent
             let keysWithParents = keys.Where(key => key.Parents.Count > 0).ToImmutableArray()
@@ -93,13 +93,17 @@ internal sealed class ResourceIsInConfigurationTests
         });
     }
 
+    private static Gen<ImmutableHashSet<ResourceKey>> GenerateResourceKeys() =>
+        from resourceKeys in Generator.ResourceDtos
+        select resourceKeys.Keys.ToImmutableHashSet();
+
     [Test]
     public async Task Key_with_existing_resource_and_missing_name_returns_false()
     {
         var gen =
             // Generate configuration keys
             from fixture in Fixture.Generate()
-            from keys in Generator.ResourceKeys
+            from keys in GenerateResourceKeys()
             let configuration = ResourceKeysToConfiguration(keys)
             // Pick a key and change its name to one that doesn't exist in configuration
             where keys.Count > 0
@@ -146,7 +150,7 @@ internal sealed class ResourceIsInConfigurationTests
         var gen =
             // Generate configuration keys
             from fixture in Fixture.Generate()
-            from keys in Generator.ResourceKeys
+            from keys in GenerateResourceKeys()
             let configuration = ResourceKeysToConfiguration(keys)
             // Pick an existing key
             where keys.Count > 0
@@ -182,7 +186,7 @@ internal sealed class ResourceIsInConfigurationTests
             // Generate configuration keys, ensuring that there are no API revisions
             from fixture in Fixture.Generate()
             from keys in
-                from keys in Generator.ResourceKeys
+                from keys in GenerateResourceKeys()
                 select keys.Where(HasNoRevisionsInPath)
                            .ToImmutableHashSet()
             let configuration = ResourceKeysToConfiguration(keys)

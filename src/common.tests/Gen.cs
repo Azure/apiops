@@ -2,7 +2,6 @@ using Bogus;
 using Bogus.DataSets;
 using common;
 using CsCheck;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
@@ -49,34 +48,6 @@ public static class Generator
         select common.ResourceName.From(name)
                                   .IfErrorThrow();
 
-    public static Gen<DirectoryInfo> DirectoryInfo { get; } =
-        from directoryNameCharacters in Gen.Char['a', 'z'].Array[3, 15]
-        let directoryName = new string(directoryNameCharacters)
-        let path = Path.Combine(Path.GetTempPath(), directoryName)
-        select new DirectoryInfo(path);
-
-    public static Gen<string> FileName { get; } =
-        from fileNameChars in Gen.Char['a', 'z'].Array[3, 15]
-        let fileName = new string(fileNameChars)
-        from extensionChars in Gen.Char['a', 'z'].Array[2, 4]
-        let extension = new string(extensionChars)
-        select $"{fileName}.{extension}";
-
-    public static Gen<FileInfo> FileInfo { get; } =
-        from directory in DirectoryInfo
-        from fileName in FileName
-        let path = Path.Combine(directory.FullName, fileName)
-        select new FileInfo(path);
-
-    public static Gen<JsonObject> JsonObject { get; } =
-        Gen.Const(new JsonObject());
-
-    public static Gen<BinaryData> BinaryData { get; } =
-        Gen.OneOf(from text in Gen.String
-                  select System.BinaryData.FromString(text),
-                  from jsonObject in JsonObject
-                  select System.BinaryData.FromObjectAsJson(jsonObject));
-
     private static Lazy<ResourceGraph> LazyFullGraph { get; } = new(() =>
     {
         var builder = Host.CreateEmptyApplicationBuilder(default);
@@ -85,34 +56,10 @@ public static class Generator
         return provider.GetRequiredService<ResourceGraph>();
     });
 
-    public static Gen<ImmutableHashSet<ResourceKey>> ResourceKeys { get; } =
-        GenerateResourceKeys();
+    public static Gen<ImmutableDictionary<ResourceKey, Option<JsonObject>>> ResourceDtos { get; } =
+        GenerateResourceDtos();
 
     public static Gen<ResourceKey> ResourceKey { get; } = GenerateResourceKey();
-
-    public static Gen<ImmutableDictionary<ResourceKey, Option<JsonObject>>> ResourceDtos { get; } =
-        from resourceKeys in ResourceKeys
-        select resourceKeys.ToImmutableDictionary(key => key,
-                                                         key => key.Resource is IResourceWithDto
-                                                                ? new JsonObject
-                                                                {
-                                                                    ["id"] = key.ToString()
-                                                                }
-                                                                : Option<JsonObject>.None());
-
-    public static Gen<ApiSpecification> ApiSpecification { get; } =
-        Gen.OneOf<ApiSpecification>([
-            Gen.Const(common.ApiSpecification.GraphQl.Instance),
-            Gen.Const(common.ApiSpecification.Wadl.Instance),
-            Gen.Const(common.ApiSpecification.Wsdl.Instance),
-            from format in Gen.OneOfConst<OpenApiFormat>([OpenApiFormat.Yaml.Instance, OpenApiFormat.Json.Instance])
-            from version in Gen.OneOfConst<OpenApiVersion>([OpenApiVersion.V2.Instance, OpenApiVersion.V3.Instance])
-            select new common.ApiSpecification.OpenApi
-            {
-                Format = format,
-                Version = version
-            }
-            ]);
 
     public static Gen<ServiceDirectory> ServiceDirectory { get; } =
         from characters in Gen.OneOf([Gen.Char['a', 'z'], Gen.Char['0', '9']]).Array[8]
@@ -127,13 +74,6 @@ public static class Generator
 
     public static Gen<T> OrConst<T>(this Gen<T> gen, T t) =>
         Gen.OneOf([gen, Gen.Const(t)]);
-
-    public static Gen<IConfiguration> Configuration { get; } =
-        Gen.Select(Gen.String, Gen.String)
-           .Select(pair => KeyValuePair.Create<string, string?>(pair.Item1, pair.Item2))
-           .Array
-           .Select(pairs => pairs.DistinctBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
-           .Select(pairs => (IConfiguration)new ConfigurationBuilder().AddInMemoryCollection(pairs).Build());
 
     /// <remarks>
     /// If <paramref name="option"/> is Some, the generator should return a Some value from <paramref name="gen"/>.
@@ -185,30 +125,6 @@ public static class Generator
                select set;
     }
 
-    public static Gen<ImmutableDictionary<TKey, TValue>> DictionaryOf<TKey, TValue>(Gen<TKey> keyGen, Gen<TValue> valueGen, IEqualityComparer<TKey>? comparer = default) where TKey : notnull =>
-        DictionaryOf(keyGen, valueGen, minimumLength: 0, maximumLength: 10, comparer);
-
-    public static Gen<ImmutableDictionary<TKey, TValue>> DictionaryOf<TKey, TValue>(Gen<TKey> keyGen, Gen<TValue> valueGen, int length, IEqualityComparer<TKey>? comparer = default) where TKey : notnull
-    {
-        ArgumentOutOfRangeException.ThrowIfNegative(length);
-
-        return DictionaryOf(keyGen, valueGen, minimumLength: length, maximumLength: length, comparer);
-    }
-
-    public static Gen<ImmutableDictionary<TKey, TValue>> DictionaryOf<TKey, TValue>(Gen<TKey> keyGen, Gen<TValue> valueGen, int minimumLength, int maximumLength, IEqualityComparer<TKey>? comparer = default) where TKey : notnull
-    {
-        ArgumentOutOfRangeException.ThrowIfNegative(minimumLength);
-        ArgumentOutOfRangeException.ThrowIfLessThan(maximumLength, minimumLength);
-
-        return from items in Gen.Select(keyGen, valueGen).Array[minimumLength, maximumLength]
-               select items.DistinctBy(pair => pair.Item1, comparer)
-                           .ToImmutableDictionary(pair => pair.Item1, pair => pair.Item2, comparer);
-    }
-
-    public static Gen<KeyValuePair<TKey, TValue>> KeyValuePairOf<TKey, TValue>(Gen<TKey> keyGen, Gen<TValue> valueGen) =>
-        from pair in Gen.Select(keyGen, valueGen)
-        select KeyValuePair.Create(pair.Item1, pair.Item2);
-
     public static Gen<ImmutableArray<T2>> Traverse<T1, T2>(IEnumerable<T1> source, Func<T1, Gen<T2>> f) =>
         source.Aggregate(Gen.Const(ImmutableArray.Create<T2>()),
                          (arrayGen, t1) => from array in arrayGen
@@ -224,7 +140,7 @@ public static class Generator
         from x in Gen.Int[2, 100]
         select (Func<T, bool>)(t => (t?.GetHashCode() ?? 0) % x == 0);
 
-    private static Gen<ImmutableHashSet<ResourceKey>> GenerateResourceKeys()
+    private static Gen<ImmutableDictionary<ResourceKey, Option<JsonObject>>> GenerateResourceDtos()
     {
         var graph = LazyFullGraph.Value;
 
@@ -233,33 +149,15 @@ public static class Generator
         return from resources in Generator.SubSetOf(rootResources)
                from resourceKeys in Generator.Traverse(resources,
                                                        resource => GenerateResources(resource, ParentChain.Empty, graph))
-               select resourceKeys.SelectMany(x => x)
-                                  .ToImmutableHashSet();
+                                             .Select(resources => resources.SelectMany(x => x).ToImmutableHashSet())
+               select resourceKeys.ToImmutableDictionary(key => key,
+                                                         key => key.Resource is IResourceWithDto
+                                                                ? new JsonObject
+                                                                {
+                                                                    ["id"] = key.ToString()
+                                                                }
+                                                                : Option<JsonObject>.None());
     }
-
-    private static Gen<ResourceKey> GenerateResourceKey() =>
-        from resource in Gen.OneOfConst([.. LazyFullGraph.Value.TopologicallySortedResources])
-        from resourceKey in GenerateResourceKey(resource)
-        select resourceKey;
-
-    public static Gen<ResourceKey> GenerateResourceKey(Func<IResource, bool> resourcePredicate) =>
-        from resource in Gen.OneOfConst([.. LazyFullGraph.Value.TopologicallySortedResources
-                                                         .Where(resourcePredicate)])
-        from resourceKey in GenerateResourceKey(resource)
-        select resourceKey;
-
-    public static Gen<ResourceKey> GenerateResourceKey(IResource resource) =>
-        from name in Generator.ResourceName
-        from parents in Generator.Traverse(resource.GetTraversalPredecessorHierarchy(),
-                                           parentResource => from parentName in Generator.ResourceName
-                                                             select (parentResource, parentName))
-        let parentChain = ParentChain.From(parents)
-        select new ResourceKey
-        {
-            Name = name,
-            Parents = parentChain,
-            Resource = resource
-        };
 
     private static Gen<ImmutableHashSet<ResourceKey>> GenerateResources(IResource resource, ParentChain ancestors, ResourceGraph graph) =>
         from resources in GenerateResources(resource, ancestors)
@@ -305,4 +203,28 @@ public static class Generator
                                                    name => from revision in Gen.Int[1, 100]
                                                            select ApiRevisionModule.Combine(name, revision))
         select currentNames.Concat(revisionedNames).ToImmutableHashSet();
+
+    private static Gen<ResourceKey> GenerateResourceKey() =>
+        from resource in Gen.OneOfConst([.. LazyFullGraph.Value.TopologicallySortedResources])
+        from resourceKey in GenerateResourceKey(resource)
+        select resourceKey;
+
+    public static Gen<ResourceKey> GenerateResourceKey(Func<IResource, bool> resourcePredicate) =>
+        from resource in Gen.OneOfConst([.. LazyFullGraph.Value.TopologicallySortedResources
+                                                         .Where(resourcePredicate)])
+        from resourceKey in GenerateResourceKey(resource)
+        select resourceKey;
+
+    public static Gen<ResourceKey> GenerateResourceKey(IResource resource) =>
+        from name in Generator.ResourceName
+        from parents in Generator.Traverse(resource.GetTraversalPredecessorHierarchy(),
+                                           parentResource => from parentName in Generator.ResourceName
+                                                             select (parentResource, parentName))
+        let parentChain = ParentChain.From(parents)
+        select new ResourceKey
+        {
+            Name = name,
+            Parents = parentChain,
+            Resource = resource
+        };
 }
