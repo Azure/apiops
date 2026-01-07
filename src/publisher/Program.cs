@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -33,24 +35,53 @@ public static class Program
     private static IHost CreateHost(string[] arguments)
     {
         var builder = Host.CreateApplicationBuilder(arguments);
-        ConfigureBuilder(builder);
+        ConfigureBuilder(builder, arguments);
 
         return builder.Build();
     }
 
-    private static void ConfigureBuilder(IHostApplicationBuilder builder)
+    private static void ConfigureBuilder(IHostApplicationBuilder builder, string[] arguments)
     {
-        ConfigureConfiguration(builder);
+        ConfigureConfiguration(builder, arguments);
         ConfigureLogging(builder);
         ActivitySourceModule.ConfigureBuilder(builder, nameof(publisher));
         OpenTelemetryModule.ConfigureBuilder(builder);
         PublisherModule.ConfigureRunPublisher(builder);
     }
 
-    private static void ConfigureConfiguration(IHostApplicationBuilder builder)
+    private static void ConfigureConfiguration(IHostApplicationBuilder builder, string[] arguments)
     {
+        var configuration = builder.Configuration;
+
         // Add user secrets with lowest priority to allow overriding configuration in tests
-        builder.Configuration.AddWithLowestPriority(builder => builder.AddUserSecrets(typeof(Program).Assembly));
+        configuration.AddWithLowestPriority(builder => builder.AddUserSecrets(typeof(Program).Assembly));
+
+        // Add dry-run flag if necessary
+        if (configuration.GetValue("DRY_RUN").IsNone)
+        {
+            var dryRunValue = Option<string>.None();
+
+            // If 'DRY-RUN' is set, use its value
+            configuration.GetValue("DRY-RUN")
+                         .Iter(value => dryRunValue = value);
+
+            // Otherwise, check the arguments for a `--dry-run` flag
+            if (dryRunValue.IsNone)
+            {
+                if (arguments.Any(value => value.Equals("--dry-run", StringComparison.OrdinalIgnoreCase)))
+                {
+                    dryRunValue = "true";
+                }
+            }
+
+            // If we found a dry-run value, add it to the configuration
+            dryRunValue.Iter(value =>
+            {
+                var keyValuePair = KeyValuePair.Create<string, string?>("DRY_RUN", value);
+
+                configuration.AddInMemoryCollection([keyValuePair]);
+            });
+        }
     }
 
     private static void ConfigureLogging(IHostApplicationBuilder builder)

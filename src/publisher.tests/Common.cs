@@ -174,3 +174,100 @@ internal sealed class GetCurrentFileOperationsTests
             };
     }
 }
+
+internal sealed class IsDryRunTests
+{
+    [Test]
+    public async Task Returns_false_when_the_setting_is_missing()
+    {
+        var gen = from fixture in Fixture.Generate()
+                  select fixture;
+
+        await gen.SampleAsync(async fixture =>
+        {
+            // Arrange
+            var isDryRun = fixture.Resolve();
+
+            // Act
+            var enabled = isDryRun();
+
+            // Assert
+            await Assert.That(enabled)
+                        .IsFalse();
+        });
+    }
+
+    [Test]
+    public async Task Returns_true_when_the_setting_is_true()
+    {
+        var gen = from fixture in Fixture.Generate()
+                  from value in Generator.RandomizeCapitalization("true")
+                  let configuration = Common.ToConfiguration([("DRY_RUN", value)])
+                  select fixture with
+                  {
+                      Configuration = configuration
+                  };
+
+        await gen.SampleAsync(async fixture =>
+        {
+            // Arrange
+            var isDryRun = fixture.Resolve();
+
+            // Act
+            var enabled = isDryRun();
+
+            // Assert
+            await Assert.That(enabled)
+                        .IsTrue();
+        });
+    }
+
+    [Test]
+    public async Task Returns_false_when_the_setting_is_false()
+    {
+        var gen = from fixture in Fixture.Generate()
+                  from value in Generator.RandomizeCapitalization("false")
+                  let configuration = Common.ToConfiguration([("DRY_RUN", value)])
+                  select fixture with
+                  {
+                      Configuration = configuration
+                  };
+
+        await gen.SampleAsync(async fixture =>
+        {
+            // Arrange
+            var isDryRun = fixture.Resolve();
+
+            // Act
+            var enabled = isDryRun();
+
+            // Assert
+            await Assert.That(enabled)
+                        .IsFalse();
+        });
+    }
+
+    private sealed record Fixture
+    {
+        public required IConfiguration Configuration { get; init; }
+
+        public IsDryRun Resolve()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton(Configuration)
+                    .AddNullLogger();
+
+            using var provider = services.BuildServiceProvider();
+
+            return CommonModule.ResolveIsDryRun(provider);
+        }
+
+        public static Gen<Fixture> Generate() =>
+            from configuration in Generator.Configuration
+            select new Fixture
+            {
+                Configuration = configuration
+            };
+    }
+}
