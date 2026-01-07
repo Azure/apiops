@@ -11,22 +11,16 @@ using System.Threading.Tasks;
 
 namespace publisher.tests;
 
-internal sealed class PutApiTests
+internal sealed class PutWorkspaceApiTests
 {
     public static CancellationToken CancellationToken => TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None;
 
     [Test]
     public async Task Putting_a_root_api_without_changing_the_revision_number_creates_no_release()
     {
-        var gen = from name in Generator.ResourceName
-                  where ApiRevisionModule.IsRootName(name)
+        var gen = from resourceKey in Generator.GenerateResourceKey(WorkspaceApiResource.Instance)
+                  where ApiRevisionModule.IsRootName(resourceKey.Name)
                   from revision in Gen.Int[1, 100]
-                  let resourceKey = new ResourceKey
-                  {
-                      Name = name,
-                      Parents = ParentChain.Empty,
-                      Resource = ApiResource.Instance
-                  }
                   from currentDto in from currentDisplayName in Gen.String
                                      select new JsonObject
                                      {
@@ -47,73 +41,66 @@ internal sealed class PutApiTests
                                      }
                                  }
                   from fixture in Fixture.Generate()
-                  select (name, newDto, putResources, fixture with
+                  select (resourceKey, newDto, putResources, fixture with
                   {
-                      DoesResourceExistInApim = async (resourceKey, _) =>
+                      DoesResourceExistInApim = async (key, _) =>
                       {
                           await ValueTask.CompletedTask;
-                          return putResources.Any(tuple => tuple.Key == resourceKey);
+                          return putResources.Any(tuple => tuple.Key == key);
                       },
                       GetResourceDtoFromApim = async (resource, name, parentChain, _) =>
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
+                          var key = new ResourceKey
                           {
                               Name = name,
                               Parents = parentChain,
                               Resource = resource
                           };
 
-                          return putResources.First(tuple => tuple.Key == resourceKey)
+                          return putResources.First(tuple => tuple.Key == key)
                                              .Dto;
                       },
                       PutResourceInApim = async (resource, name, dto, parentChain, _) =>
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
+                          var key = new ResourceKey
                           {
                               Name = name,
                               Parents = parentChain,
                               Resource = resource
                           };
 
-                          putResources.Enqueue((resourceKey, dto));
+                          putResources.Enqueue((key, dto));
                       }
                   });
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (name, newDto, putResources, fixture) = tuple;
-            var putApi = fixture.Resolve();
+            var (resourceKey, newDto, putResources, fixture) = tuple;
+            var putWorkspaceApi = fixture.Resolve();
 
             // Act
-            await putApi(name, newDto, CancellationToken);
+            await putWorkspaceApi(resourceKey.Name, resourceKey.Parents, newDto, CancellationToken);
 
             // Assert that we put the API with its root name.
-            var resourceKey = new ResourceKey
-            {
-                Name = name,
-                Parents = ParentChain.Empty,
-                Resource = ApiResource.Instance
-            };
-
             await Assert.That(putResources)
                         .Contains((resourceKey, newDto));
 
             // Assert that we did not create an API release.
             await Assert.That(putResources)
-                        .DoesNotContain(tuple => tuple.Key.Resource is ApiReleaseResource);
+                        .DoesNotContain(tuple => tuple.Key.Resource is WorkspaceApiReleaseResource);
         });
     }
 
     [Test]
     public async Task Changing_the_current_revision_number_clones_the_current_revision_and_creates_a_release()
     {
-        var gen = from name in Generator.ResourceName
-                  where ApiRevisionModule.IsRootName(name)
+        var gen = from resourceKey in Generator.GenerateResourceKey(WorkspaceApiResource.Instance)
+                  where ApiRevisionModule.IsRootName(resourceKey.Name)
                   from newRevision in Gen.Int[1, 100]
                   let newDto = new JsonObject
                   {
@@ -122,12 +109,6 @@ internal sealed class PutApiTests
                           ["apiRevision"] = $"{newRevision}",
                           ["isCurrent"] = true
                       }
-                  }
-                  let resourceKey = new ResourceKey
-                  {
-                      Name = name,
-                      Parents = ParentChain.Empty,
-                      Resource = ApiResource.Instance
                   }
                   from currentDto in from currentRevision in Gen.Int[1, 100]
                                      where currentRevision != newRevision
@@ -142,25 +123,25 @@ internal sealed class PutApiTests
                   let putResources = new ConcurrentQueue<(ResourceKey Key, JsonObject Dto)>([(resourceKey, currentDto)])
                   let deletedResources = new ConcurrentQueue<ResourceKey>()
                   from fixture in Fixture.Generate()
-                  select (name, newRevision, newDto, putResources, deletedResources, fixture with
+                  select (resourceKey, newRevision, newDto, putResources, deletedResources, fixture with
                   {
-                      DoesResourceExistInApim = async (resourceKey, _) =>
+                      DoesResourceExistInApim = async (key, _) =>
                       {
                           await ValueTask.CompletedTask;
-                          return putResources.Any(tuple => tuple.Key == resourceKey);
+                          return putResources.Any(tuple => tuple.Key == key);
                       },
                       GetResourceDtoFromApim = async (resource, name, parentChain, _) =>
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
+                          var key = new ResourceKey
                           {
                               Name = name,
                               Parents = parentChain,
                               Resource = resource
                           };
 
-                          return putResources.First(tuple => tuple.Key == resourceKey
+                          return putResources.First(tuple => tuple.Key == key
                                                              && deletedResources.Contains(tuple.Key) is false)
                                              .Dto;
                       },
@@ -168,36 +149,37 @@ internal sealed class PutApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
+                          var key = new ResourceKey
                           {
                               Name = name,
                               Parents = parentChain,
                               Resource = resource
                           };
 
-                          putResources.Enqueue((resourceKey, dto));
+                          putResources.Enqueue((key, dto));
                       },
-                      DeleteResourceFromApim = async (resourceKey, _, _, _) =>
+                      DeleteResourceFromApim = async (key, _, _, _) =>
                       {
                           await ValueTask.CompletedTask;
-
-                          deletedResources.Enqueue(resourceKey);
+                          deletedResources.Enqueue(key);
                       }
                   });
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (name, newRevision, newDto, putResources, deletedResources, fixture) = tuple;
-            var putApi = fixture.Resolve();
+            var (resourceKey, newRevision, newDto, putResources, deletedResources, fixture) = tuple;
+            var putWorkspaceApi = fixture.Resolve();
 
             // Act
-            await putApi(name, newDto, CancellationToken);
+            await putWorkspaceApi(resourceKey.Name, resourceKey.Parents, newDto, CancellationToken);
 
             // Assert that we put the API with its revisioned name
-            var newRevisionedName = ApiRevisionModule.Combine(name, newRevision);
+            var newRevisionedName = ApiRevisionModule.Combine(resourceKey.Name, newRevision);
             var (_, cloneDto) = await Assert.That(putResources)
-                                            .Contains(tuple => tuple.Key.Name == newRevisionedName);
+                                            .Contains(tuple => tuple.Key.Name == newRevisionedName
+                                                               && tuple.Key.Resource is WorkspaceApiResource
+                                                               && tuple.Key.Parents == resourceKey.Parents);
 
             // Assert that the revisioned name PUT passed the correct revision and source API ID
             var clonePropertiesResult = from propertiesJson in cloneDto.GetJsonObjectProperty("properties")
@@ -211,23 +193,18 @@ internal sealed class PutApiTests
             await Assert.That(clonedRevision)
                         .IsEqualTo($"{newRevision}");
 
+            var expectedApiId = resourceKey.Parents.Append(WorkspaceApiResource.Instance, resourceKey.Name).ToResourceId();
+
             await Assert.That(clonedApiId)
-                        .IsEqualTo($"/apis/{name}");
+                        .IsEqualTo(expectedApiId);
 
             // Assert that we put the API again with its root name.
-            var resourceKey = new ResourceKey
-            {
-                Name = name,
-                Parents = ParentChain.Empty,
-                Resource = ApiResource.Instance
-            };
-
             await Assert.That(putResources)
                         .Contains((resourceKey, newDto));
 
             // Assert that we created an API release
             var (releaseKey, _) = await Assert.That(putResources)
-                                              .Contains(tuple => tuple.Key.Resource is ApiReleaseResource);
+                                              .Contains(tuple => tuple.Key.Resource is WorkspaceApiReleaseResource);
 
             // Assert that we cleaned up the API release
             await Assert.That(deletedResources)
@@ -245,7 +222,7 @@ internal sealed class PutApiTests
         public required GetApiSpecificationFromFile GetApiSpecificationFromFile { get; init; }
         public required PutApiSpecificationInApim PutApiSpecificationInApim { get; init; }
 
-        public PutApi Resolve()
+        public PutWorkspaceApi Resolve()
         {
             var services = new ServiceCollection();
 
@@ -260,7 +237,7 @@ internal sealed class PutApiTests
 
             using var provider = services.BuildServiceProvider();
 
-            return ResourceModule.ResolvePutApi(provider);
+            return ResourceModule.ResolvePutWorkspaceApi(provider);
         }
 
         public static Gen<Fixture> Generate() =>
@@ -302,16 +279,17 @@ internal sealed class PutApiTests
     }
 }
 
-internal sealed class DeleteApiTests
+internal sealed class DeleteWorkspaceApiTests
 {
     public static CancellationToken CancellationToken => TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None;
 
     [Test]
     public async Task Skip_if_name_is_revisioned_and_the_revision_is_current()
     {
-        var gen = from revision in Gen.Int[1, 100]
-                  from name in from rootName in Generator.ResourceName
-                               select ApiRevisionModule.Combine(rootName, revision)
+        var gen = from baseKey in Generator.GenerateResourceKey(WorkspaceApiResource.Instance)
+                  where ApiRevisionModule.IsRootName(baseKey.Name)
+                  from revision in Gen.Int[1, 100]
+                  let name = ApiRevisionModule.Combine(baseKey.Name, revision)
                   let dto = new JsonObject
                   {
                       ["properties"] = new JsonObject
@@ -321,18 +299,13 @@ internal sealed class DeleteApiTests
                       }
                   }
                   from fixture in Fixture.Generate()
-                  let deletedResources = new ConcurrentBag<ResourceName>()
-                  select (name, deletedResources, fixture with
+                  let deletedResources = new ConcurrentBag<ResourceKey>()
+                  select (name, baseKey.Parents, deletedResources, fixture with
                   {
-                      DoesResourceExistInApim = async (resourceKey, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-                          return true;
-                      },
                       DeleteResourceFromApim = async (resourceKey, _, _, _) =>
                       {
                           await ValueTask.CompletedTask;
-                          deletedResources.Add(resourceKey.Name);
+                          deletedResources.Add(resourceKey);
                       },
                       GetDto = async (_, _, _, _) =>
                       {
@@ -344,24 +317,25 @@ internal sealed class DeleteApiTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (name, deletedResources, fixture) = tuple;
-            var deleteApi = fixture.Resolve();
+            var (name, parents, deletedResources, fixture) = tuple;
+            var deleteWorkspaceApi = fixture.Resolve();
 
             // Act
-            await deleteApi(name, CancellationToken);
+            await deleteWorkspaceApi(name, parents, CancellationToken);
 
             // Assert that API was not deleted
             await Assert.That(deletedResources)
-                        .DoesNotContain(name);
+                        .DoesNotContain(resourceKey => resourceKey.Name == name && resourceKey.Parents == parents);
         });
     }
 
     [Test]
     public async Task Delete_if_name_is_revisioned_and_the_revision_is_not_current()
     {
-        var gen = from revision in Gen.Int[1, 100]
-                  from name in from rootName in Generator.ResourceName
-                               select ApiRevisionModule.Combine(rootName, revision)
+        var gen = from baseKey in Generator.GenerateResourceKey(WorkspaceApiResource.Instance)
+                  where ApiRevisionModule.IsRootName(baseKey.Name)
+                  from revision in Gen.Int[1, 100]
+                  let name = ApiRevisionModule.Combine(baseKey.Name, revision)
                   from currentRevision in Gen.Int[1, 100]
                   where currentRevision != revision
                   let dto = new JsonObject
@@ -373,13 +347,13 @@ internal sealed class DeleteApiTests
                       }
                   }
                   from fixture in Fixture.Generate()
-                  let deletedResources = new ConcurrentBag<ResourceName>()
-                  select (name, deletedResources, fixture with
+                  let deletedResources = new ConcurrentBag<ResourceKey>()
+                  select (name, baseKey.Parents, deletedResources, fixture with
                   {
                       DeleteResourceFromApim = async (resourceKey, _, _, _) =>
                       {
                           await ValueTask.CompletedTask;
-                          deletedResources.Add(resourceKey.Name);
+                          deletedResources.Add(resourceKey);
                       },
                       GetDto = async (_, _, _, _) =>
                       {
@@ -391,46 +365,46 @@ internal sealed class DeleteApiTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (name, deletedResources, fixture) = tuple;
-            var deleteApi = fixture.Resolve();
+            var (name, parents, deletedResources, fixture) = tuple;
+            var deleteWorkspaceApi = fixture.Resolve();
 
             // Act
-            await deleteApi(name, CancellationToken);
+            await deleteWorkspaceApi(name, parents, CancellationToken);
 
             // Assert that API was deleted
             await Assert.That(deletedResources)
-                        .Contains(name);
+                        .Contains(resourceKey => resourceKey.Name == name && resourceKey.Parents == parents);
         });
     }
 
     [Test]
     public async Task Delete_if_name_is_not_revisioned()
     {
-        var gen = from name in Generator.ResourceName
-                  where ApiRevisionModule.IsRootName(name)
+        var gen = from resourceKey in Generator.GenerateResourceKey(WorkspaceApiResource.Instance)
+                  where ApiRevisionModule.IsRootName(resourceKey.Name)
                   from fixture in Fixture.Generate()
-                  let deletedResources = new ConcurrentBag<ResourceName>()
-                  select (name, deletedResources, fixture with
+                  let deletedResources = new ConcurrentBag<ResourceKey>()
+                  select (resourceKey, deletedResources, fixture with
                   {
-                      DeleteResourceFromApim = async (resourceKey, _, _, _) =>
+                      DeleteResourceFromApim = async (key, _, _, _) =>
                       {
                           await ValueTask.CompletedTask;
-                          deletedResources.Add(resourceKey.Name);
+                          deletedResources.Add(key);
                       }
                   });
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (name, deletedResources, fixture) = tuple;
-            var deleteApi = fixture.Resolve();
+            var (resourceKey, deletedResources, fixture) = tuple;
+            var deleteWorkspaceApi = fixture.Resolve();
 
             // Act
-            await deleteApi(name, CancellationToken);
+            await deleteWorkspaceApi(resourceKey.Name, resourceKey.Parents, CancellationToken);
 
             // Assert that API was deleted
             await Assert.That(deletedResources)
-                        .Contains(name);
+                        .Contains(key => key.Name == resourceKey.Name && key.Parents == resourceKey.Parents);
         });
     }
 
@@ -440,7 +414,7 @@ internal sealed class DeleteApiTests
         public required DeleteResourceFromApim DeleteResourceFromApim { get; init; }
         public required GetDto GetDto { get; init; }
 
-        public DeleteApi Resolve()
+        public DeleteWorkspaceApi Resolve()
         {
             var services = new ServiceCollection();
 
@@ -451,7 +425,7 @@ internal sealed class DeleteApiTests
 
             using var provider = services.BuildServiceProvider();
 
-            return ResourceModule.ResolveDeleteApi(provider);
+            return ResourceModule.ResolveDeleteWorkspaceApi(provider);
         }
 
         public static Gen<Fixture> Generate() =>

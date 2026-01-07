@@ -30,7 +30,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolvePutWorkspaceApi);
     }
 
-    private static PutWorkspaceApi ResolvePutWorkspaceApi(IServiceProvider provider)
+    internal static PutWorkspaceApi ResolvePutWorkspaceApi(IServiceProvider provider)
     {
         var getCurrentFileOperations = provider.GetRequiredService<GetCurrentFileOperations>();
         var doesResourceExistInApim = provider.GetRequiredService<DoesResourceExistInApim>();
@@ -164,7 +164,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolveDeleteWorkspaceApi);
     }
 
-    private static DeleteWorkspaceApi ResolveDeleteWorkspaceApi(IServiceProvider provider)
+    internal static DeleteWorkspaceApi ResolveDeleteWorkspaceApi(IServiceProvider provider)
     {
         var doesResourceExistInApim = provider.GetRequiredService<DoesResourceExistInApim>();
         var deleteResourceFromApim = provider.GetRequiredService<DeleteResourceFromApim>();

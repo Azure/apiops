@@ -182,7 +182,7 @@ internal sealed class RunPublisherTests
     [Test]
     public async Task Predecessors_are_put_before_successors()
     {
-        var gen = from relationships in Fixture.GenerateRelationships()
+        var gen = from relationships in Common.GenerateRelationships()
                   let putResources = new ConcurrentQueue<ResourceKey>()
                   from fixture in Fixture.Generate()
                   select (relationships, putResources, fixture with
@@ -238,7 +238,7 @@ internal sealed class RunPublisherTests
     [Test]
     public async Task Successors_are_deleted_before_predecessors()
     {
-        var gen = from relationships in Fixture.GenerateRelationships()
+        var gen = from relationships in Common.GenerateRelationships()
                   from fixture in Fixture.Generate()
                   let deletedResources = new ConcurrentQueue<ResourceKey>()
                   select (relationships, deletedResources, fixture with
@@ -318,8 +318,8 @@ internal sealed class RunPublisherTests
         }
 
         public static Gen<Fixture> Generate() =>
-            from currentRelationships in GenerateRelationships()
-            from previousRelationships in GenerateRelationships()
+            from currentRelationships in Common.GenerateRelationships()
+            from previousRelationships in Common.GenerateRelationships()
             from resourcesToProcess in Generator.ResourceKey.HashSetOf()
             from resourceKeyPredicate in GenerateResourceKeyPredicate()
             select new Fixture
@@ -353,30 +353,6 @@ internal sealed class RunPublisherTests
                     await ValueTask.CompletedTask;
                 }
             };
-
-        public static Gen<Relationships> GenerateRelationships() =>
-            from dtos in Generator.ResourceDtos
-            select Relationships.From(dtos.Keys.Aggregate(new List<(ResourceKey, ResourceKey)>(),
-                                                          (list, key) =>
-                                                          {
-                                                              // Register the parent -> child edge when applicable.
-                                                              switch (key.Parents.ToImmutableArray())
-                                                              {
-                                                                  case []:
-                                                                      break;
-                                                                  case [.. var parentParents, var parent]:
-                                                                      list.Add((new ResourceKey
-                                                                      {
-                                                                          Name = parent.Name,
-                                                                          Resource = parent.Resource,
-                                                                          Parents = ParentChain.From(parentParents)
-                                                                      }, key));
-                                                                      break;
-                                                              }
-
-                                                              return list;
-                                                          }),
-                                  cancellationToken: CancellationToken.None);
     }
 
     public static Gen<Func<ResourceKey, bool>> GenerateResourceKeyPredicate() =>

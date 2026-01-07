@@ -21,7 +21,7 @@ internal static partial class ResourceModule
         builder.TryAddSingleton(ResolveGetPolicyFragmentDto);
     }
 
-    private static GetPolicyFragmentDto ResolveGetPolicyFragmentDto(IServiceProvider provider)
+    internal static GetPolicyFragmentDto ResolveGetPolicyFragmentDto(IServiceProvider provider)
     {
         var getCurrentFileOperations = provider.GetRequiredService<GetCurrentFileOperations>();
         var getInformationFileDto = provider.GetRequiredService<GetInformationFileDto>();

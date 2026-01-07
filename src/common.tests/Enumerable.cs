@@ -14,17 +14,13 @@ public class SetEqualsAssertion<TCollection, TItem> : CollectionComparerBasedAss
     where TCollection : IEnumerable<TItem>
 {
     private readonly IEnumerable<TItem> other;
-    private readonly Func<TItem?, TItem?, bool>? equalityPredicate;
 
     [RequiresUnreferencedCode("Collection equivalency uses structural comparison for complex objects, which requires reflection and is not compatible with AOT")]
     public SetEqualsAssertion(
         AssertionContext<TCollection> context,
         IEnumerable<TItem> other,
         Func<TItem?, TItem?, bool>? equalityPredicate = default)
-        : this(context, other, StructuralEqualityComparer<TItem>.Instance)
-    {
-        this.equalityPredicate = equalityPredicate;
-    }
+        : this(context, other, equalityPredicate is not null ? EqualityComparer<TItem>.Create(equalityPredicate, _ => 0) : EqualityComparer<TItem>.Default) { }
 
     public SetEqualsAssertion(
         AssertionContext<TCollection> context,
@@ -65,14 +61,8 @@ public class SetEqualsAssertion<TCollection, TItem> : CollectionComparerBasedAss
             return AssertionResult.Failed("value was null");
         }
 
-        var valueSet = ImmutableHashSet.CreateRange(value);
-        var otherSet = ImmutableHashSet.CreateRange(other);
-        if (equalityPredicate is not null)
-        {
-            var comparer = EqualityComparer<TItem>.Create(equalityPredicate, _ => 0);
-            valueSet = valueSet.WithComparer(comparer);
-            otherSet = otherSet.WithComparer(comparer);
-        }
+        var valueSet = ImmutableHashSet.CreateRange(Comparer, value);
+        var otherSet = ImmutableHashSet.CreateRange(Comparer, other);
 
         if (valueSet.SetEquals(otherSet))
         {
@@ -306,6 +296,12 @@ public static class CollectionAssertionExtensions
         {
             source.Context.ExpressionBuilder.Append($".SetEquals({string.Join(", ", other)})");
             return new(source.Context, other);
+        }
+
+        public SetEqualsAssertion<TCollection, TItem> SetEquals(IEnumerable<TItem> other, IEqualityComparer<TItem> comparer)
+        {
+            source.Context.ExpressionBuilder.Append($".SetEquals({string.Join(", ", other)})");
+            return new(source.Context, other, comparer);
         }
 
         public IntersectsWithAssertion<TCollection, TItem> IntersectsWith(IEnumerable<TItem> other)

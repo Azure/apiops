@@ -182,9 +182,9 @@ internal sealed class RunExtractorTests
                       ListResourceDtosFromApim = (resource, parents, cancellationToken) =>
                       {
                           return apimDtos.Where(kvp => kvp.Key.Resource == resource && kvp.Key.Parents == parents)
-                                           .Choose(kvp => from dto in kvp.Value
-                                                          select (kvp.Key.Name, dto))
-                                           .ToAsyncEnumerable();
+                                         .Choose(kvp => from dto in kvp.Value
+                                                        select (kvp.Key.Name, dto))
+                                         .ToAsyncEnumerable();
                       },
                       IsResourceSupportedInApim = async (resource, cancellationToken) =>
                       {
