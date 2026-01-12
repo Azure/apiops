@@ -204,6 +204,8 @@ internal static class RelationshipsModule
         var isValidationStrict = provider.GetRequiredService<IsValidationStrict>();
         var logger = provider.GetRequiredService<ILogger>();
 
+        var namedValueTokenRegex = new Regex("{{\\s*(.*?)\\s*}}", RegexOptions.CultureInvariant);
+
         return async (operations, cancellationToken) =>
         {
             var pairs = new ConcurrentBag<(ResourceKey Predecessor, ResourceKey Successor)>();
@@ -264,6 +266,14 @@ internal static class RelationshipsModule
                                    var namedValues = await getPolicyNamedValues(policyResource, key.Name, key.Parents, operations.ReadFile, resources, cancellationToken);
                                    namedValues.Iter(namedValue => pairs.Add((namedValue, key)), cancellationToken);
                                }
+
+                               // Process DTO named value references
+                               dtoJsonOption.Iter(dtoJson =>
+                               {
+                                   var content = dtoJson.ToJsonString();
+                                   var namedValues = getNamedValuesFromContent(content, key.Parents, resources);
+                                   namedValues.Iter(namedValue => pairs.Add((namedValue, key)), cancellationToken);
+                               });
 
                                // Process backend pools for individual backend references
                                if (key.Resource is BackendResource backendResource)
@@ -502,30 +512,29 @@ internal static class RelationshipsModule
 
         async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyNamedValues(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
         {
-            var workspaceOption = parents.Head(tuple => tuple.Resource is WorkspaceResource);
-
-            var namedValueNames = await getPolicyNamedValueNames(resource, name, parents, readFile, resources, cancellationToken);
-
-            return [.. namedValueNames.Choose(name => findNamedValue(name, workspaceOption, resources))];
-        }
-
-        async ValueTask<ImmutableHashSet<ResourceName>> getPolicyNamedValueNames(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
-        {
             var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
                                  select binaryData.ToString();
 
             var contents = contentsOption.IfNoneNull() ?? string.Empty;
 
-            if (string.IsNullOrWhiteSpace(contents))
+            return getNamedValuesFromContent(contents, parents, resources);
+        }
+
+        ImmutableHashSet<ResourceKey> getNamedValuesFromContent(string content, ParentChain parents, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources)
+        {
+            if (string.IsNullOrWhiteSpace(content))
             {
                 return [];
             }
 
-            var regex = new Regex("{{\\s*(.*?)\\s*}}", RegexOptions.CultureInvariant);
+            var workspaceOption = parents.Head(tuple => tuple.Resource is WorkspaceResource);
 
-            return [.. regex.Matches(contents)
-                            .Choose(match => ResourceName.From(match.Groups[1].Value.Trim())
-                                                         .ToOption())];
+            var referencedNamedValues = namedValueTokenRegex.Matches(content)
+                                                            .Select(match => match.Groups[1].Value.Trim())
+                                                            .Choose(nameString => ResourceName.From(nameString).ToOption())
+                                                            .Choose(name => findNamedValue(name, workspaceOption, resources));
+
+            return [.. referencedNamedValues];
         }
 
         Option<ResourceKey> findNamedValue(ResourceName name, Option<(IResource, ResourceName)> workspaceOption, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources) =>

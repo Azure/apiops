@@ -673,6 +673,85 @@ internal sealed class GetRelationshipsTests
     }
 
     [Test]
+    public async Task Returns_named_value_relationships_for_named_value_references()
+    {
+        var gen = from fixture in Fixture.Generate()
+                  from resourceKey in Generator.GenerateResourceKey(resource => resource is IResourceWithInformationFile
+                                                                                and not IResourceWithReference
+                                                                                and not ICompositeResource
+                                                                                and not IPolicyResource)
+                  from namedValueName in Generator.ResourceName
+                  let namedValueKey = new ResourceKey
+                  {
+                      Resource = NamedValueResource.Instance,
+                      Name = namedValueName,
+                      Parents = ParentChain.Empty
+                  }
+                  let resourceFile = new FileInfo("resource.json")
+                  let namedValueFile = new FileInfo("namedValue.json")
+                  let fileOperations = Common.NoOpFileOperations with
+                  {
+                      EnumerateServiceDirectoryFiles = () => [resourceFile, namedValueFile]
+                  }
+                  let dto = new JsonObject
+                  {
+                      ["properties"] = new JsonObject
+                      {
+                          ["description"] = $"uses {{{{{namedValueName}}}}}"
+                      }
+                  }
+                  select (namedValueKey, resourceKey, fileOperations, dto, fixture with
+                  {
+                      IsValidationStrict = () => false,
+                      ParseResourceFile = async (file, _, _) =>
+                      {
+                          await ValueTask.CompletedTask;
+
+                          if (file.FullName == resourceFile.FullName)
+                          {
+                              return resourceKey;
+                          }
+
+                          if (file.FullName == namedValueFile.FullName)
+                          {
+                              return namedValueKey;
+                          }
+
+                          return Option.None;
+                      },
+                      GetInformationFileDto = async (resource, name, parents, readFile, getSubDirectories, cancellationToken) =>
+                      {
+                          await ValueTask.CompletedTask;
+
+                          var key = new ResourceKey
+                          {
+                              Resource = resource,
+                              Name = name,
+                              Parents = parents
+                          };
+
+                          return key == resourceKey
+                                    ? dto
+                                    : Option.None;
+                      }
+                  });
+
+        await gen.SampleAsync(async tuple =>
+        {
+            // Arrange
+            var (namedValueKey, resourceKey, fileOperations, dto, fixture) = tuple;
+            var getRelationships = fixture.Resolve();
+
+            // Act
+            var relationships = await getRelationships(fileOperations, CancellationToken);
+
+            // Assert
+            await Assert.That(relationships.Predecessors[resourceKey])
+                        .Contains(namedValueKey);
+        });
+    }
+
+    [Test]
     public async Task Throws_when_a_predecessor_is_missing_and_validation_is_strict()
     {
         var gen = from childKey in Generator.GenerateResourceKey(resource => resource is IChildResource
