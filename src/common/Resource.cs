@@ -38,6 +38,14 @@ public interface IResource
 {
     string SingularName { get; }
     string PluralName { get; }
+
+    public string ConfigurationKey =>
+    // By default, use the plural name in snake_case as the configuration key.
+        new([.. from character in PluralName
+                select char.IsWhiteSpace(character)
+                        ? '_'
+                        : char.ToLowerInvariant(character)]);
+
 #pragma warning disable CA1056 // URI-like properties should not be strings. This is not a URI, but a path to a collection of resources.
     public string CollectionUriPath { get; }
 #pragma warning restore CA1056 // URI-like properties should not be strings

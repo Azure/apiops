@@ -51,8 +51,8 @@ internal sealed class GetConfigurationOverrideTests
                   from fixture in Fixture.Generate()
                   let resource = resourceKey.Resource
                   let configuration = Common.ToConfiguration([
-                      ($"{resource.PluralName}:0:name", resourceKey.Name.ToString()),
-                      ($"{resource.PluralName}:0:properties:displayName", overriddenDisplayName)])
+                      ($"{resource.ConfigurationKey}:0:name", resourceKey.Name.ToString()),
+                      ($"{resource.ConfigurationKey}:0:properties:displayName", overriddenDisplayName)])
                   select (resourceKey, overriddenDisplayName, fixture with
                   {
                       Configuration = configuration
@@ -113,8 +113,8 @@ internal sealed class GetConfigurationOverrideTests
                   let basePath = calculateJsonPath([.. resourceKey.Parents.Select(pair => pair.Resource)])
                   let configuration = Common.ToConfiguration([
                       .. parentPairs,
-                      ($"{basePath}:{resourceKey.Resource.PluralName}:0:name", resourceKey.Name.ToString()),
-                      ($"{basePath}:{resourceKey.Resource.PluralName}:0:properties:displayName", overriddenDisplayName)
+                      ($"{basePath}:{resourceKey.Resource.ConfigurationKey}:0:name", resourceKey.Name.ToString()),
+                      ($"{basePath}:{resourceKey.Resource.ConfigurationKey}:0:properties:displayName", overriddenDisplayName)
                       ])
                   select (resourceKey, overriddenDisplayName, fixture with
                   {
@@ -162,7 +162,7 @@ internal sealed class GetConfigurationOverrideTests
                                       ? string.Empty
                                       : $"{path}:";
 
-                                  return $"{prefix}{parent.PluralName}:0";
+                                  return $"{prefix}{parent.ConfigurationKey}:0";
                               });
     }
 
@@ -171,10 +171,11 @@ internal sealed class GetConfigurationOverrideTests
     {
         var gen = from resourceKey in Generator.GenerateResourceKey(ApiResource.Instance)
                   from fixture in Fixture.Generate()
+                  let apiResource = (IResource)ApiResource.Instance
                   let configuration = Common.ToConfiguration([
-                        ($"{ApiResource.Instance.PluralName}:0:name", resourceKey.Name.ToString()),
-                        ($"{ApiResource.Instance.PluralName}:0:properties:apiRevision", "2"),
-                        ($"{ApiResource.Instance.PluralName}:0:properties:isCurrent", "false")
+                        ($"{apiResource.ConfigurationKey}:0:name", resourceKey.Name.ToString()),
+                        ($"{apiResource.ConfigurationKey}:0:properties:apiRevision", "2"),
+                        ($"{apiResource.ConfigurationKey}:0:properties:isCurrent", "false")
                       ])
                   select (resourceKey, fixture with
                   {

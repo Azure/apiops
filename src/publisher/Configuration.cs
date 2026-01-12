@@ -78,7 +78,7 @@ internal static class ConfigurationModule
         }
 
         static Option<JsonObject> getResourceJsonObject(IResource resource, ResourceName resourceName, JsonObject sectionJson) =>
-            from array in sectionJson.GetJsonArrayProperty(resource.PluralName).ToOption()
+            from array in sectionJson.GetJsonArrayProperty(resource.ConfigurationKey).ToOption()
             let resourceJsonObjects = array.Choose(resourceNode => from resourceJsonObject in resourceNode.AsJsonObject().ToOption()
                                                                    from nameString in resourceJsonObject.GetStringProperty("name").ToOption()
                                                                    where nameString == resourceName.ToString()

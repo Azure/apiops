@@ -258,7 +258,7 @@ internal sealed class ResourceIsInConfigurationTests
         JsonObject getResourceKeysJson(IEnumerable<ResourceKey> resourceKeys) =>
             resourceKeys.GroupBy(key => key.Resource)
                         .Aggregate(new JsonObject(),
-                                   (jsonObject, group) => jsonObject.SetProperty(group.Key.PluralName,
+                                   (jsonObject, group) => jsonObject.SetProperty(group.Key.ConfigurationKey,
                                                                                  new JsonArray([.. group.Select(getResourceKeyJson)])));
     }
 
