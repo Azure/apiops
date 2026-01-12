@@ -67,7 +67,7 @@ internal static class ExtractorModule
                             {
                                 var nodes = getModelNodeSet(resource, models);
 
-                                return json.SetProperty(resource.PluralName,
+                                return json.SetProperty(resource.ConfigurationKey,
                                                         modelNodeSetToJson(nodes, models),
                                                         mutateOriginal: true);
                             });
@@ -104,7 +104,7 @@ internal static class ExtractorModule
                     [name] = successors.Aggregate(new JsonObject(),
                                                   (current, successor) => current.MergeWith(new JsonObject
                                                   {
-                                                      [successor.Resource.PluralName] = successor.Hierarchy
+                                                      [successor.Resource.ConfigurationKey] = successor.Hierarchy
                                                                                                  .Select(successor => modelNodeToJson(successor, models))
                                                                                                  .ToJsonArray()
                                                   }, mutateOriginal: true))

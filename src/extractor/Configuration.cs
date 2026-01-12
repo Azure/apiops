@@ -125,7 +125,7 @@ internal static class ConfigurationModule
         //         - api2
         static Option<JsonObject> getParentJsonObject(IResource resource, ResourceName resourceName, JsonObject jsonObject) =>
             // Using our configuration example, for workspaces, we'd get Some[JsonArray]. For products, we'd get None.
-            from resourceJson in jsonObject.GetJsonArrayProperty(resource.PluralName).ToOption()
+            from resourceJson in jsonObject.GetJsonArrayProperty(resource.ConfigurationKey).ToOption()
             let parents = resourceJson.Choose(node => // For workspace1, we'd get None (it's not a JSON object). For workspace2, we'd get Some[JsonObject].
                                                       from parentJsonObject in node.AsJsonObject().ToOption()
                                                           // Find the specific parent configuration by name

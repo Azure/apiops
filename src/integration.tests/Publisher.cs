@@ -384,7 +384,7 @@ internal static class PublisherModule
                    .Bind(json => getResourceJson(resource, name, json));
 
         static Option<JsonObject> getResourceJson(IResource resource, ResourceName name, JsonObject json) =>
-            from resources in json.GetJsonArrayProperty(resource.PluralName).ToOption()
+            from resources in json.GetJsonArrayProperty(resource.ConfigurationKey).ToOption()
             from resourceJson in resources.Pick(node => from jsonObject in node.AsJsonObject().ToOption()
                                                         from resourceName in jsonObject.GetStringProperty("name").ToOption()
                                                         where resourceName == name.ToString()

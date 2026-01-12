@@ -287,7 +287,7 @@ internal static class Generator
                                 {
                                     var nodes = getModelNodeSet(resource, models);
 
-                                    return json.SetProperty(resource.PluralName,
+                                    return json.SetProperty(resource.ConfigurationKey,
                                                             modelNodeSetToJson(nodes, models),
                                                             mutateOriginal: true);
                                 });
@@ -323,9 +323,9 @@ internal static class Generator
                 [] => json,
                 var array => array.Select(successor => new JsonObject
                 {
-                    [successor.Resource.PluralName] = successor.Set
-                                                               .Select(successor => modelNodeToJson(successor, models))
-                                                               .ToJsonArray()
+                    [successor.Resource.ConfigurationKey] = successor.Set
+                                                                     .Select(successor => modelNodeToJson(successor, models))
+                                                                     .ToJsonArray()
                 }).Aggregate(json, (current, successorJson) => current.MergeWith(successorJson))
             };
         }
