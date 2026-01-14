@@ -14,12 +14,12 @@
 		<PackageReference Include="Azure.Identity" Version="1.17.1" />
 		<PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.4.0" />
 		<PackageReference Include="Azure.ResourceManager" Version="1.14.0-beta.1" />
-		<PackageReference Include="DotNext.Threading" Version="5.26.1" />
+		<PackageReference Include="DotNext.Threading" Version="5.26.2" />
 		<PackageReference Include="Flurl" Version="4.0.0" />
 		<PackageReference Include="LibGit2Sharp" Version="0.31.0" />
-		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.1" />
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
 		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
-		<PackageReference Include="Microsoft.OpenApi.YamlReader" Version="3.1.1" />
+		<PackageReference Include="Microsoft.OpenApi.YamlReader" Version="3.1.2" />
 		<PackageReference Include="NetEscapades.Configuration.Yaml" Version="3.1.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
 		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
