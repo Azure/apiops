@@ -309,7 +309,6 @@ internal static class RelationshipsModule
                                                     });
                                }
 
-                               // Process non-root workspace API revisions
                                if (key.Resource is WorkspaceApiResource)
                                {
                                    ApiRevisionModule.Parse(key.Name)
@@ -326,6 +325,34 @@ internal static class RelationshipsModule
                                                         pairs.Add((currentRevision, key));
                                                     });
                                }
+
+                               // Add relationship between API operation policies and their parent APIs.
+                               // We don't directly parse API operations; they get created when their parent API specification is put.
+                               // This relationship enforces the order API operation => API operation policy.
+                               if (key.Resource is ApiOperationPolicyResource or WorkspaceApiOperationPolicyResource)
+                               {
+                                   var (grandParentResource, grandParentName) = (key.Resource, key.Parents.SkipLast(1).LastOrDefault()) switch
+                                   {
+                                       (ApiOperationPolicyResource, (ApiResource apiResource, var apiName)) =>
+                                           (apiResource as IResource, apiName),
+                                       (WorkspaceApiOperationPolicyResource, (WorkspaceApiResource workspaceApiResource, var apiName)) =>
+                                           (workspaceApiResource, apiName),
+                                       (_, (null, _)) =>
+                                           throw new InvalidOperationException($"Resource '{key}' is missing its grandparent."),
+                                       (_, (var resource, _)) =>
+                                           throw new InvalidOperationException($"Resource '{key}' has grandparent resource '{resource.GetType().Name}' instead of the expected API resource.")
+                                   };
+
+                                   var grandParent = new ResourceKey
+                                   {
+                                       Resource = grandParentResource,
+                                       Name = grandParentName,
+                                       Parents = ParentChain.From(key.Parents.SkipLast(2))
+                                   };
+
+                                   pairs.Add((grandParent, key));
+                               }
+
                            }, maxDegreeOfParallelism: Option.None, cancellationToken);
 
             var relationships = Relationships.From(pairs, cancellationToken);
