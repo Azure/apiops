@@ -526,10 +526,10 @@ public static partial class ResourceModule
                 {
                     ["format"] = (specification.Format, specification.Version) switch
                     {
-                        (OpenApiFormat.Json, OpenApiVersion.V2) => "swagger+json",
-                        (OpenApiFormat.Yaml, OpenApiVersion.V2) => "swagger+yaml",
+                        (OpenApiFormat.Json, OpenApiVersion.V2) => "swagger-json",
+                        (OpenApiFormat.Yaml, OpenApiVersion.V2) => "openapi",
                         (OpenApiFormat.Json, OpenApiVersion.V3) => "openapi+json",
-                        (OpenApiFormat.Yaml, OpenApiVersion.V3) => "openapi+yaml",
+                        (OpenApiFormat.Yaml, OpenApiVersion.V3) => "openapi",
                         _ => throw new InvalidOperationException($"Specification {specification} is not supported.")
                     },
                     ["value"] = contents.ToString()
