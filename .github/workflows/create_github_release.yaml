@@ -7,22 +7,18 @@ on:
         description: "Provide a release version. e.g. v3.1.0"
         required: true
         type: string
+      Include_MacOS:
+        description: "Also build macOS (osx-arm64/osx-x64) artifacts. It can sometimes take a while (1hr+) to find a runner."
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   generate_extractor_artifacts:
     name: Generate extractor artifacts
     strategy:
       matrix:
-        dotnet-runtime:
-          [
-            linux-x64,
-            linux-arm64,
-            linux-musl-x64,
-            linux-musl-arm64,
-            win-x64,
-            osx-arm64,
-            osx-x64,
-          ]
+        dotnet-runtime: ${{ fromJSON(inputs.Include_MacOS && '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64","osx-arm64","osx-x64"]' || '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64"]') }}
     # Dynamically set the runner OS based on the .NET runtime
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
@@ -79,16 +75,7 @@ jobs:
     name: Generate publisher artifacts
     strategy:
       matrix:
-        dotnet-runtime:
-          [
-            linux-x64,
-            linux-arm64,
-            linux-musl-x64,
-            linux-musl-arm64,
-            win-x64,
-            osx-arm64,
-            osx-x64,
-          ]
+        dotnet-runtime: ${{ fromJSON(inputs.Include_MacOS && '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64","osx-arm64","osx-x64"]' || '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64"]') }}
     # Dynamically set the runner OS based on the .NET runtime
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
@@ -305,23 +292,38 @@ jobs:
             --draft \
             --target "$COMMIT_ID"
 
-          # Upload assets
+          # Upload assets (non-macOS)
           gh release upload "$RELEASE_TAG" \
             "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-arm64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-musl-arm64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-musl-x64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/extractor-linux-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-osx-arm64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/extractor-osx-x64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/extractor-win-x64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-arm64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-musl-arm64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-musl-x64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/publisher-linux-x64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-osx-arm64.zip" \
-            "$ARTIFACT_DOWNLOAD_PATH/publisher-osx-x64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/publisher-win-x64.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/Github.zip" \
             "$ARTIFACT_DOWNLOAD_PATH/Azure_DevOps.zip" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Upload macOS assets
+        if: ${{ inputs.Include_MacOS }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.inputs.Release_Version }}
+        run: |
+          set -euo pipefail
+
+          ARTIFACT_DOWNLOAD_PATH="${{ runner.temp }}/release-artifacts"
+
+          gh release upload "$RELEASE_TAG" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-osx-arm64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/extractor-osx-x64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-osx-arm64.zip" \
+            "$ARTIFACT_DOWNLOAD_PATH/publisher-osx-x64.zip" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
