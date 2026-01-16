@@ -49,12 +49,14 @@ public static class Program
 
     private static void ConfigureConfiguration(IHostApplicationBuilder builder)
     {
-        builder.Configuration
-               .GetValue(common.ConfigurationModule.YamlPath)
-               .Iter(path => builder.Configuration.AddYamlFile(path, optional: true, reloadOnChange: true));
+        var configuration = builder.Configuration;
 
         // Add user secrets with lowest priority to allow overriding configuration in tests
-        builder.Configuration.AddWithLowestPriority(builder => builder.AddUserSecrets(typeof(Program).Assembly));
+        configuration.AddWithLowestPriority(builder => builder.AddUserSecrets(typeof(Program).Assembly));
+
+        // Add YAML configuration file if specified
+        configuration.GetValue(common.ConfigurationModule.YamlPath)
+                     .Iter(path => builder.Configuration.AddYamlFile(path, optional: true, reloadOnChange: true));
     }
 
     private static void ConfigureLogging(IHostApplicationBuilder builder)
@@ -71,11 +73,13 @@ public static class Program
         var provider = host.Services;
         var applicationLifetime = provider.GetRequiredService<IHostApplicationLifetime>();
         var cancellationToken = applicationLifetime.ApplicationStopping;
+        var configuration = provider.GetRequiredService<IConfiguration>();
         var runExtractor = provider.GetRequiredService<RunExtractor>();
         var logger = provider.GetRequiredService<ILogger>();
 
         try
         {
+            await common.ConfigurationModule.Log(configuration, Console.Out, cancellationToken);
             await host.StartAsync(cancellationToken);
             await runExtractor(cancellationToken);
         }

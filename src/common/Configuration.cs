@@ -92,7 +92,7 @@ public static class ConfigurationModule
                                                                 ? Option.Some((index, child))
                                                                 : Option.None,
                                                     cancellationToken)
-            // At least one child must exist
+        // At least one child must exist
         where childIndexes.Length > 0
 
         let pairs = childIndexes.Unzip()
@@ -123,6 +123,85 @@ public static class ConfigurationModule
                                                                          (JsonNode?)SerializeConfiguration(child, cancellationToken)));
 
         return new JsonObject(children, nodeOptions);
+    }
+
+    public static async Task Log(IConfiguration configuration, TextWriter writer, CancellationToken cancellationToken)
+    {
+        var keyRedactionDictionary = new Dictionary<string, bool>
+        {
+            ["API_MANAGEMENT_SERVICE_NAME"] = true,
+            ["API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH"] = false,
+            ["APPLICATION_INSIGHTS_CONNECTION_STRING"] = true,
+            ["ARM_API_VERSION"] = false,
+            ["AZURE_BEARER_TOKEN"] = true,
+            ["AZURE_CLOUD_ENVIRONMENT"] = false,
+            ["AZURE_RESOURCE_GROUP_NAME"] = true,
+            ["AZURE_SUBSCRIPTION_ID"] = true,
+            ["COMMIT_ID"] = false,
+            [ConfigurationModule.YamlPath] = false,
+            ["DRY-RUN"] = false,
+            ["DRY_RUN"] = false,
+            ["OTEL_EXPORTER_OTLP_ENDPOINT"] = true,
+            ["STRICT_VALIDATION"] = false,
+            ["apiSpecificationFormat"] = false,
+            ["apimServiceName"] = true,
+            ["API_SPECIFICATION_FORMAT"] = false,
+        }.ToImmutableDictionary(StringComparer.OrdinalIgnoreCase);
+
+        var maxKeyLength = keyRedactionDictionary.Keys.Max(key => key.Length);
+
+        await writer.WriteLineAsync("Configuration summary");
+
+        await keyRedactionDictionary
+                .OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(getValue)
+                .IterTask(writeKeyValuePair, cancellationToken);
+
+        KeyValuePair<string, string> getValue(KeyValuePair<string, bool> kvp)
+        {
+            var (key, redact) = kvp;
+
+            var redactedText = "****";
+
+            var value = configuration.GetValue(key)
+                                     .Map(value =>
+                                     {
+                                         if (string.IsNullOrWhiteSpace(value))
+                                         {
+                                             return "(set to whitespace)";
+                                         }
+                                         else if (redact)
+                                         {
+                                             var firstCharacters = string.Empty;
+
+                                             if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+                                             {
+                                                 firstCharacters = new string([.. uri.Scheme, .. "://", .. uri.Host.Take(3)]);
+                                             }
+                                             else
+                                             {
+                                                 firstCharacters = new string([.. value.Take(3)]);
+                                             }
+
+                                             return $"{firstCharacters}{redactedText}";
+                                         }
+                                         else
+                                         {
+                                             return value;
+                                         }
+                                     })
+                                     .IfNone(() => "(not set)");
+
+            return KeyValuePair.Create(key, value);
+        }
+
+        async ValueTask writeKeyValuePair(KeyValuePair<string, string> kvp)
+        {
+            var (key, value) = kvp;
+
+            var dots = new string('.', maxKeyLength - key.Length + 1);
+            await writer.WriteLineAsync($"  {key} {dots} {value}");
+        }
     }
 }
 
