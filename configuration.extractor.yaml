@@ -27,7 +27,7 @@ loggers:
   - loggerName1
   - loggerName2
 
-named_values:
+namedValues:
   - namedValueName1
   - namedValueName2
 
@@ -43,11 +43,11 @@ tags:
   - tagName1
   - tagName2
 
-policy_fragments:
+policyFragments:
   - policyFragment1
   - policyFragment2
 
-version_sets:
+versionSets:
   - versionSetName1
 
 workspaces:
@@ -65,14 +65,14 @@ workspaces:
       groups: []
       loggers:
         - workspaceLoggerName1
-      named_values:
+      namedValues:
         - workspaceNamedValueName1
-      policy_fragments:
+      policyFragments:
         - workspacePolicyFragmentName1
       products:
         - workspaceProductName1
       subscriptions: []
       tags:
         - workspaceTagName1
-      version_sets:
+      versionSets:
         - workspaceVersionSetName1

@@ -8,5 +8,7 @@ public sealed record ServicePolicyResource : IPolicyResource
 
     public string PluralName { get; } = "service policies";
 
+    public string ConfigurationKey { get; } = "policies";
+
     public static ServicePolicyResource Instance { get; } = new();
 }

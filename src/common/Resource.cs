@@ -40,11 +40,16 @@ public interface IResource
     string PluralName { get; }
 
     public string ConfigurationKey =>
-    // By default, use the plural name in snake_case as the configuration key.
-        new([.. from character in PluralName
-                select char.IsWhiteSpace(character)
-                        ? '_'
-                        : char.ToLowerInvariant(character)]);
+        // By default, use the plural name in camelCase as the configuration key.
+        new([.. PluralName.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                          .SelectMany<string, char>((word, index) => word switch
+                          {
+                              // Lowercase the first character of the first word
+                              [var first, .. var rest] when index == 0 => [char.ToLowerInvariant(first), .. rest],
+                              // Uppercase the first character of subsequent words
+                              [var first, .. var rest] => [char.ToUpperInvariant(first), .. rest],
+                              _ => []
+                          })]);
 
 #pragma warning disable CA1056 // URI-like properties should not be strings. This is not a URI, but a path to a collection of resources.
     public string CollectionUriPath { get; }

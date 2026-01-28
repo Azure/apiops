@@ -7,7 +7,7 @@ on:
         description: "Provide a release version. e.g. v3.1.0"
         required: true
         type: string
-      Include_OSX:
+      Build_OSX:
         description: "Build OSX artifacts. It can sometimes take a while (1hr+) to find a Mac runner."
         required: false
         default: true
@@ -18,7 +18,7 @@ jobs:
     name: Generate extractor artifacts
     strategy:
       matrix:
-        dotnet-runtime: ${{ fromJSON(inputs.Include_OSX && '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64","osx-arm64","osx-x64"]' || '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64"]') }}
+        dotnet-runtime: ${{ fromJSON(inputs.Build_OSX && '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64","osx-arm64","osx-x64"]' || '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64"]') }}
     # Dynamically set the runner OS based on the .NET runtime
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
@@ -75,7 +75,7 @@ jobs:
     name: Generate publisher artifacts
     strategy:
       matrix:
-        dotnet-runtime: ${{ fromJSON(inputs.Include_OSX && '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64","osx-arm64","osx-x64"]' || '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64"]') }}
+        dotnet-runtime: ${{ fromJSON(inputs.Build_OSX && '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64","osx-arm64","osx-x64"]' || '["linux-x64","linux-arm64","linux-musl-x64","linux-musl-arm64","win-x64"]') }}
     # Dynamically set the runner OS based on the .NET runtime
     runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-latest", "linux-arm64":"ubuntu-latest", "linux-musl-x64":"ubuntu-latest", "linux-musl-arm64":"ubuntu-latest", "win-x64":"windows-latest", "osx-arm64":"macos-latest", "osx-x64":"macos-latest"}')[matrix.dotnet-runtime] }}
     steps:
@@ -310,7 +310,7 @@ jobs:
             --clobber
 
       - name: Upload macOS assets
-        if: ${{ inputs.Include_OSX }}
+        if: ${{ inputs.Build_OSX }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

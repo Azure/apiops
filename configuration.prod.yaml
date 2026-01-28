@@ -1,6 +1,6 @@
 apimServiceName: [prod or any other target environment apim instance name goes here]
 
-named_values:
+namedValues:
   - name: environment
     properties:
       displayName: environment
@@ -24,7 +24,7 @@ named_values:
       displayName: helloworldfromlogicapp_manual-invoke_634e022983908257b35630b0
       value: "{#helloworldfromlogicapp#}"
 
-service_policies:
+policies:
   - name: policy
     properties:
       format: rawxml
@@ -67,7 +67,7 @@ backends:
       url: "https://prod-75.eastus.logic.azure.com/workflows/[guid goes here]/triggers"
       resourceId: "https://management.azure.com/subscriptions/[subscription Guid goes here]/resourceGroups/rg-apim-lab-prod/providers/Microsoft.Logic/workflows/helloworldfromprodlogicapp"
 
-version_sets:
+versionSets:
   - name: versionSetName1
     properties:
       displayName: "My Version Set"
@@ -118,7 +118,7 @@ tags:
       displayName: "Tag 1"
 
 
-policy_fragments:
+policyFragments:
   - name: policyFragment1
     properties:
       description: "Policy fragment description"
@@ -131,7 +131,7 @@ workspaces:
       - name: workspaceGroupName1
         properties:
           displayName: "Workspace Group"
-    named_values:
+    namedValues:
       - name: workspaceNamedValueName1
         properties:
           displayName: workspaceNamedValueName1
@@ -149,7 +149,7 @@ workspaces:
       - name: workspaceTagName1
         properties:
           displayName: "Workspace Tag"
-    version_sets:
+    versionSets:
       - name: workspaceVersionSetName1
         properties:
           displayName: "Workspace Version Set"
@@ -169,7 +169,7 @@ workspaces:
       - name: workspaceDiagnosticName1
         properties:
           verbosity: Error
-    policy_fragments:
+    policyFragments:
       - name: workspacePolicyFragmentName1
         properties:
           description: "Workspace policy fragment"
