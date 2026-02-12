@@ -7,7 +7,7 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/tools/code/code.sln",
+                "${workspaceFolder}/src/code.slnx",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary"
             ],
@@ -19,7 +19,7 @@
             "type": "process",
             "args": [
                 "publish",
-                "${workspaceFolder}/tools/code/code.sln",
+                "${workspaceFolder}/src/code.slnx",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary"
             ],
@@ -33,7 +33,7 @@
                 "watch",
                 "run",
                 "--project",
-                "${workspaceFolder}/tools/code/code.sln"
+                "${workspaceFolder}/src/code.slnx"
             ],
             "problemMatcher": "$msCompile"
         }
