@@ -205,6 +205,7 @@ internal static class RelationshipsModule
         var logger = provider.GetRequiredService<ILogger>();
 
         var namedValueTokenRegex = new Regex("{{\\s*(.*?)\\s*}}", RegexOptions.CultureInvariant);
+        var includeFragmentRegex = new Regex("<include-fragment\\s+fragment-id=\"([^\"]+)\"\\s*/>", RegexOptions.CultureInvariant);
 
         return async (operations, cancellationToken) =>
         {
@@ -265,6 +266,13 @@ internal static class RelationshipsModule
                                {
                                    var namedValues = await getPolicyNamedValues(policyResource, key.Name, key.Parents, operations.ReadFile, resources, cancellationToken);
                                    namedValues.Iter(namedValue => pairs.Add((namedValue, key)), cancellationToken);
+                               }
+
+                               // Process policies for policy fragment references
+                               if (key.Resource is IPolicyResource policyResourceForFragments)
+                               {
+                                   var policyFragments = await getPolicyFragments(policyResourceForFragments, key.Name, key.Parents, operations.ReadFile, resources, cancellationToken);
+                                   policyFragments.Iter(fragment => pairs.Add((fragment, key)), cancellationToken);
                                }
 
                                // Process DTO named value references
@@ -547,6 +555,16 @@ internal static class RelationshipsModule
             return getNamedValuesFromContent(contents, parents, resources);
         }
 
+        async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyFragments(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
+        {
+            var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
+                                 select binaryData.ToString();
+
+            var contents = contentsOption.IfNoneNull() ?? string.Empty;
+
+            return getPolicyFragmentsFromContent(contents, parents, resources);
+        }
+
         ImmutableHashSet<ResourceKey> getNamedValuesFromContent(string content, ParentChain parents, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources)
         {
             if (string.IsNullOrWhiteSpace(content))
@@ -574,6 +592,34 @@ internal static class RelationshipsModule
                            .IfNone(() => from namedValues in resources.Find(NamedValueResource.Instance)
                                          from namedValue in namedValues.Head(key => key.Name == name)
                                          select namedValue);
+
+        ImmutableHashSet<ResourceKey> getPolicyFragmentsFromContent(string content, ParentChain parents, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources)
+        {
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return [];
+            }
+
+            var workspaceOption = parents.Head(tuple => tuple.Resource is WorkspaceResource);
+
+            var referencedFragments = includeFragmentRegex.Matches(content)
+                                                          .Select(match => match.Groups[1].Value.Trim())
+                                                          .Choose(nameString => ResourceName.From(nameString).ToOption())
+                                                          .Choose(name => findPolicyFragment(name, workspaceOption, resources));
+
+            return [.. referencedFragments];
+        }
+
+        Option<ResourceKey> findPolicyFragment(ResourceName name, Option<(IResource, ResourceName)> workspaceOption, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources) =>
+            // Look for the policy fragment in the workspace
+            workspaceOption.Bind(workspace => from fragments in resources.Find(WorkspacePolicyFragmentResource.Instance)
+                                              from fragment in fragments.Head(key => key.Name == name
+                                                                                     && key.Parents.Any(parent => parent == workspace))
+                                              select fragment)
+                           // If not found, look for a service-level policy fragment
+                           .IfNone(() => from fragments in resources.Find(PolicyFragmentResource.Instance)
+                                         from fragment in fragments.Head(key => key.Name == name)
+                                         select fragment);
 
         static ImmutableHashSet<ResourceKey> getBackendPoolBackends(BackendResource resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
         {
