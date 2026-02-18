@@ -25,6 +25,9 @@ dotnet_diagnostic.CA1724.severity = suggestion
 # CA1848: Use the LoggerMessage delegates
 dotnet_diagnostic.CA1848.severity = suggestion
 
+# CA1873: Evaluation of this argument may be expensive and unnecessary if logging is disabled
+dotnet_diagnostic.CA1873.severity = suggestion
+
 # CA1859: Use concrete types when possible for improved performance
 dotnet_diagnostic.CA1859.severity = suggestion
 
