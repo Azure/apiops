@@ -356,6 +356,9 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
+# Aspire
+.aspire/settings.json
+
 # VSCode
 #.vscode/*
 appsettings.json
