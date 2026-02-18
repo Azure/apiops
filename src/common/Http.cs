@@ -227,6 +227,11 @@ public class CommonRetryPolicy : RetryPolicy
 
     private static bool ShouldRetryInner(HttpMessage message, Exception? exception)
     {
+        if (message.HasResponse is false)
+        {
+            return false;
+        }
+        
         var response = message.Response;
         var errorCode = GetErrorCode(response).IfNone(() => string.Empty);
         var errorMessage = GetErrorMessage(response).IfNone(() => string.Empty);
