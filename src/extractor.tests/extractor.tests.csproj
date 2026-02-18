@@ -9,6 +9,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<PackageReference Include="TUnit" Version="1.13.51" />
+	</ItemGroup>
+
+	<ItemGroup>
 	  <ProjectReference Include="..\common.tests\common.tests.csproj" />
 	  <ProjectReference Include="..\extractor\extractor.csproj" />
 	</ItemGroup>

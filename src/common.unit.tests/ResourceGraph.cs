@@ -1,3 +1,4 @@
+using common.tests;
 using CsCheck;
 using System;
 using System.Collections.Generic;
@@ -6,7 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace common.tests;
+namespace common.unit.tests;
 
 internal sealed class ResourceGraphTests
 {

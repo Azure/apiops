@@ -1,20 +1,20 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
+	
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<AnalysisLevel>latest-all</AnalysisLevel>
 		<Nullable>enable</Nullable>
 		<OutputType>Exe</OutputType>
+		<WarningsNotAsErrors>CA1515</WarningsNotAsErrors>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="TUnit" Version="1.13.51" />
+		<ProjectReference Include="..\common.tests\common.tests.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\common.tests\common.tests.csproj" />
-		<ProjectReference Include="..\publisher\publisher.csproj" />
+		<PackageReference Include="TUnit" Version="1.13.51" />
 	</ItemGroup>
 
 </Project>

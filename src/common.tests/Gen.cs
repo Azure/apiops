@@ -43,8 +43,12 @@ public static class Generator
         select word;
 
     public static Gen<ResourceName> ResourceName { get; } =
-        from chars in Gen.Char['a', 'z'].Array[3, 10]
-        let name = new string(chars)
+        from words in Gen.Char['a', 'z']
+                         // Limit word length
+                         .Array[3, 10]
+                         // Limit number of words
+                         .Array[1, 4]
+        let name = string.Join("-", words.Select(chars => new string(chars)))
         where name.Length <= 25
         select common.ResourceName.From(name)
                                   .IfErrorThrow();
