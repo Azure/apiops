@@ -1,0 +1,24 @@
+{
+    "id": "github",
+    "version": "1.0.0",
+    "name": "github",
+    "dependsOn": {
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "GitHub.vscode-github-actions",
+                "redhat.vscode-yaml"
+            ],
+            "mcp": {
+                "servers": {
+                    "github": {
+                        "type": "http",
+                        "url": "https://api.githubcopilot.com/mcp/"
+                    }
+                }
+            }
+        }
+    }
+}

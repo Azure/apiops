@@ -2,32 +2,9 @@
 	"name": "Dev container",
 	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
 	"features": {
-		"ghcr.io/devcontainers/features/dotnet:2": {
-			"version": "10.0"
-		},
-		"ghcr.io/devcontainers/features/github-cli:1": {},
-		"ghcr.io/devcontainers/features/azure-cli:1": {}
-	},
-	"postStartCommand": "dotnet tool install --global dotnet-outdated-tool",
-	"customizations": {
-		"vscode": {
-			"extensions": [
-				"ms-dotnettools.csdevkit",
-				"GitHub.vscode-github-actions",
-				"redhat.vscode-yaml"
-			],
-			"mcp": {
-				"servers": {
-					"microsoft.docs.mcp": {
-						"type": "http",
-						"url": "https://learn.microsoft.com/api/mcp"
-					},
-					"github": {
-						"type": "http",
-						"url": "https://api.githubcopilot.com/mcp/"
-					}
-				}
-			}
-		}
+		"./features/aspire": {},
+		"./features/azure": {},
+		"./features/dotnet": {},
+		"./features/github": {}
 	}
 }
