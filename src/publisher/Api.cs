@@ -62,12 +62,7 @@ internal static partial class ResourceModule
 
         async ValueTask setCurrentRevision(ResourceName name, JsonObject dto, ParentChain parents, CancellationToken cancellationToken)
         {
-            var resourceKey = new ResourceKey
-            {
-                Parents = parents,
-                Resource = resource,
-                Name = name
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             // If the API already exists...
             if (await doesResourceExistInApim(resourceKey, cancellationToken))
@@ -126,24 +121,14 @@ internal static partial class ResourceModule
             var releaseResource = ApiReleaseResource.Instance;
             await putResourceInApim(releaseResource, releaseName, releaseDto, releaseParents, cancellationToken);
 
-            var releaseResourceKey = new ResourceKey
-            {
-                Parents = releaseParents,
-                Resource = releaseResource,
-                Name = releaseName
-            };
+            var releaseResourceKey = ResourceKey.From(releaseResource, releaseName, releaseParents);
 
             await deleteResourceFromApim(releaseResourceKey, ignoreNotFound: true, waitForCompletion: true, cancellationToken);
         }
 
         async ValueTask putSpecification(ResourceName name, CancellationToken cancellationToken)
         {
-            var resourceKey = new ResourceKey
-            {
-                Resource = resource,
-                Name = name,
-                Parents = parents
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
             var fileOperations = getCurrentFileOperations();
 
             var specificationOption = await getSpecification(resourceKey, fileOperations.ReadFile, cancellationToken);
@@ -193,12 +178,7 @@ internal static partial class ResourceModule
                 return;
             }
 
-            var resourceKey = new ResourceKey
-            {
-                Parents = parents,
-                Resource = resource,
-                Name = name
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             await deleteResourceFromApim(resourceKey, ignoreNotFound: true, waitForCompletion: true, cancellationToken);
         };

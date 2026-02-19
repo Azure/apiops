@@ -527,12 +527,7 @@ internal sealed class PutResourceTests
                       PutResourceInApim = async (resource, name, dto, parents, _) =>
                       {
                           await ValueTask.CompletedTask;
-                          var key = new ResourceKey
-                          {
-                              Resource = resource,
-                              Name = name,
-                              Parents = parents
-                          };
+                          var key = ResourceKey.From(resource, name, parents);
                           putOthers.Add((key, dto));
                       }
                   });
@@ -688,12 +683,7 @@ internal sealed class DeleteResourceTests
                       DeleteWorkspaceApi = async (name, parentChain, _) =>
                       {
                           await ValueTask.CompletedTask;
-                          var resourceKey = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = WorkspaceApiResource.Instance
-                          };
+                          var resourceKey = ResourceKey.From(WorkspaceApiResource.Instance, name, parentChain);
                           deletedWorkspaceApis.Add(resourceKey);
                       },
                       DeleteResourceFromApim = async (resourceKey, _, _, _) =>

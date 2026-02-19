@@ -230,6 +230,17 @@ public sealed record ResourceKey
         Parents.Append(Resource, Name)
                .ToResourceId()
                .Trim('/');
+
+    public static ResourceKey From(IResource resource, ResourceName name) =>
+        From(resource, name, ParentChain.Empty);
+
+    public static ResourceKey From(IResource resource, ResourceName name, ParentChain parents) =>
+        new()
+        {
+            Resource = resource,
+            Name = name,
+            Parents = parents
+        };
 }
 
 public static partial class ResourceModule

@@ -11,7 +11,7 @@
         }
     },
     "onCreateCommand": "curl -sSL https://aspire.dev/install.sh | bash",
-    "postStartCommand": "dotnet dev-certs https --trust",
+    // "postStartCommand": "dotnet dev-certs https --trust",
     "customizations": {
         "vscode": {
             "extensions": [

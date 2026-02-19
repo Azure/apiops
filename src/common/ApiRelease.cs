@@ -61,12 +61,7 @@ public static partial class ResourceModule
                                                        CancellationToken cancellationToken)
     {
         var resource = ApiReleaseResource.Instance;
-        var resourceKey = new ResourceKey
-        {
-            Parents = ancestors,
-            Name = name,
-            Resource = resource
-        };
+        var resourceKey = ResourceKey.From(resource, name, ancestors);
 
         var uri = resource.GetUri(name, ancestors, serviceUri);
         var formattedDto = formatDto(dto);

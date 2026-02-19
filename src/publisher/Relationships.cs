@@ -306,12 +306,7 @@ internal static class RelationshipsModule
                                                     .Iter(x =>
                                                     {
                                                         var (rootName, _) = x;
-                                                        var currentRevision = new ResourceKey
-                                                        {
-                                                            Resource = key.Resource,
-                                                            Name = rootName,
-                                                            Parents = key.Parents
-                                                        };
+                                                        var currentRevision = ResourceKey.From(key.Resource, rootName, key.Parents);
 
                                                         pairs.Add((currentRevision, key));
                                                     });
@@ -323,12 +318,7 @@ internal static class RelationshipsModule
                                                     .Iter(x =>
                                                     {
                                                         var (rootName, _) = x;
-                                                        var currentRevision = new ResourceKey
-                                                        {
-                                                            Resource = key.Resource,
-                                                            Name = rootName,
-                                                            Parents = key.Parents
-                                                        };
+                                                        var currentRevision = ResourceKey.From(key.Resource, rootName, key.Parents);
 
                                                         pairs.Add((currentRevision, key));
                                                     });
@@ -464,12 +454,7 @@ internal static class RelationshipsModule
             if (resource is ILinkResource linkResource)
             {
                 // For link resources, the secondary name is in the DTO
-                var resourceKey = new ResourceKey
-                {
-                    Resource = resource,
-                    Name = name,
-                    Parents = parents
-                };
+                var resourceKey = ResourceKey.From(resource, name, parents);
 
                 var result = from properties in dto.GetJsonObjectProperty("properties")
                              from id in properties.GetStringProperty(linkResource.DtoPropertyNameForLinkedResource)
@@ -494,12 +479,7 @@ internal static class RelationshipsModule
 
         static ImmutableHashSet<ResourceKey> getReferences(IResourceWithReference resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
         {
-            var resourceKey = new ResourceKey
-            {
-                Resource = resource,
-                Name = name,
-                Parents = parents
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             var mandatoryReferences = resource.MandatoryReferencedResourceDtoProperties
                                               .Select(kvp => getReferencedResourceKey(kvp.Key, kvp.Value)
@@ -516,12 +496,7 @@ internal static class RelationshipsModule
                 from id in properties.GetStringProperty(dtoPropertyName)
                 from referencedResourceParents in getReferencedResourceParents(referencedResource)
                 from resourceName in getResourceName(id, referencedResource, referencedResourceParents)
-                select new ResourceKey
-                {
-                    Resource = referencedResource,
-                    Name = resourceName,
-                    Parents = referencedResourceParents
-                };
+                select ResourceKey.From(referencedResource, resourceName, referencedResourceParents);
 
             // We assume that the referenced resource's predecessors are a subset of the current resource's parent chain
             Result<ParentChain> getReferencedResourceParents(IResource referencedResource) =>
@@ -635,12 +610,7 @@ internal static class RelationshipsModule
                                          return ResourceName.From(nameString)
                                                             .ToOption();
                                      })
-                                     .Select(backendName => new ResourceKey
-                                     {
-                                         Resource = resource,
-                                         Name = backendName,
-                                         Parents = parents
-                                     })];
+                                     .Select(backendName => ResourceKey.From(resource, backendName, parents))];
         }
 
         static ImmutableHashSet<ResourceKey> getWorkspaceBackendPoolBackends(WorkspaceBackendResource resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
@@ -657,12 +627,7 @@ internal static class RelationshipsModule
                                          return ResourceName.From(nameString)
                                                             .ToOption();
                                      })
-                                     .Select(backendName => new ResourceKey
-                                     {
-                                         Resource = resource,
-                                         Name = backendName,
-                                         Parents = parents
-                                     })];
+                                     .Select(backendName => ResourceKey.From(resource, backendName, parents))];
         }
     }
 

@@ -8,6 +8,7 @@
   <Project Path="common.unit.tests/common.unit.tests.csproj"/>
   <Project Path="extractor.tests/extractor.tests.csproj" />
   <Project Path="extractor/extractor.csproj" />
+  <Project Path="integration.tests2/integration.tests.csproj" />
   <Project Path="publisher.tests/publisher.tests.csproj" />
   <Project Path="publisher/publisher.csproj" />
 </Solution>

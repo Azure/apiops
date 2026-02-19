@@ -21,12 +21,7 @@ internal sealed class PutApiTests
         var gen = from name in Generator.ResourceName
                   where ApiRevisionModule.IsRootName(name)
                   from revision in Gen.Int[1, 100]
-                  let resourceKey = new ResourceKey
-                  {
-                      Name = name,
-                      Parents = ParentChain.Empty,
-                      Resource = ApiResource.Instance
-                  }
+                  let resourceKey = ResourceKey.From(ApiResource.Instance, name)
                   from currentDto in from currentDisplayName in Gen.String
                                      select new JsonObject
                                      {
@@ -58,12 +53,7 @@ internal sealed class PutApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = resource
-                          };
+                          var resourceKey = ResourceKey.From(resource, name, parentChain);
 
                           return putResources.First(tuple => tuple.Key == resourceKey)
                                              .Dto;
@@ -72,12 +62,7 @@ internal sealed class PutApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = resource
-                          };
+                          var resourceKey = ResourceKey.From(resource, name, parentChain);
 
                           putResources.Enqueue((resourceKey, dto));
                       }
@@ -93,12 +78,7 @@ internal sealed class PutApiTests
             await putApi(name, newDto, CancellationToken);
 
             // Assert that we put the API with its root name.
-            var resourceKey = new ResourceKey
-            {
-                Name = name,
-                Parents = ParentChain.Empty,
-                Resource = ApiResource.Instance
-            };
+            var resourceKey = ResourceKey.From(ApiResource.Instance, name);
 
             await Assert.That(putResources)
                         .Contains((resourceKey, newDto));
@@ -123,12 +103,7 @@ internal sealed class PutApiTests
                           ["isCurrent"] = true
                       }
                   }
-                  let resourceKey = new ResourceKey
-                  {
-                      Name = name,
-                      Parents = ParentChain.Empty,
-                      Resource = ApiResource.Instance
-                  }
+                  let resourceKey = ResourceKey.From(ApiResource.Instance, name)
                   from currentDto in from currentRevision in Gen.Int[1, 100]
                                      where currentRevision != newRevision
                                      select new JsonObject
@@ -153,12 +128,7 @@ internal sealed class PutApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = resource
-                          };
+                          var resourceKey = ResourceKey.From(resource, name, parentChain);
 
                           return putResources.First(tuple => tuple.Key == resourceKey
                                                              && deletedResources.Contains(tuple.Key) is false)
@@ -168,12 +138,7 @@ internal sealed class PutApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = resource
-                          };
+                          var resourceKey = ResourceKey.From(resource, name, parentChain);
 
                           putResources.Enqueue((resourceKey, dto));
                       },
@@ -215,12 +180,7 @@ internal sealed class PutApiTests
                         .IsEqualTo($"/apis/{name}");
 
             // Assert that we put the API again with its root name.
-            var resourceKey = new ResourceKey
-            {
-                Name = name,
-                Parents = ParentChain.Empty,
-                Resource = ApiResource.Instance
-            };
+            var resourceKey = ResourceKey.From(ApiResource.Instance, name);
 
             await Assert.That(putResources)
                         .Contains((resourceKey, newDto));

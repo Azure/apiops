@@ -227,4 +227,13 @@ public static class Result
     /// <returns><c>Some(value)</c> if successful, otherwise <see cref="Option.None"/>.</returns>
     public static Option<T> ToOption<T>(this Result<T> result) =>
         result.Match(Option.Some, _ => Option.None);
+
+    /// <summary>
+    /// Projects two results into a new result using <paramref name="f"/>, accumulating errors if any.
+    /// </summary>
+    public static Result<T3> Apply<T1, T2, T3>(this Result<T1> first, Result<T2> second, Func<T1, T2, T3> f) =>
+        first.Match(value1 => second.Match(value2 => Success(f(value1, value2)),
+                                           error2 => Error<T3>(error2)),
+                    error1 => second.Match(_ => Error<T3>(error1),
+                                           error2 => Error<T3>(error1 + error2)));
 }

@@ -287,12 +287,7 @@ public static partial class ResourceModule
 
         return async (resource, name, dto, parents, cancellationToken) =>
         {
-            var resourceKey = new ResourceKey
-            {
-                Name = name,
-                Parents = parents,
-                Resource = resource
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             switch (resource)
             {

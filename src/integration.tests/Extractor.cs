@@ -167,7 +167,7 @@ internal static class ExtractorModule
                         {
                             var (resource, model, ancestors) = x;
                             var name = model.Name;
-                            var resourceKey = new ResourceKey { Name = name, Parents = ancestors, Resource = resource };
+                            var resourceKey = ResourceKey.From(resource, name, ancestors);
 
                             if (await shouldSkipResource(resourceKey, cancellationToken))
                             {

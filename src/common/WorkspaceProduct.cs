@@ -83,12 +83,7 @@ public static partial class ResourceModule
     {
         var resource = WorkspaceProductResource.Instance;
 
-        var resourceKey = new ResourceKey
-        {
-            Resource = resource,
-            Name = name,
-            Parents = parents
-        };
+        var resourceKey = ResourceKey.From(resource, name, parents);
 
         var alreadyExists = await doesResourceExist(resourceKey, cancellationToken);
 
@@ -133,12 +128,7 @@ public static partial class ResourceModule
                               return from x in result.ToOption()
                                      let scope = x.subscriptionDto.Properties.Scope ?? string.Empty
                                      where scope.Split('/').Last().Equals(productName.ToString(), StringComparison.OrdinalIgnoreCase)
-                                     select new ResourceKey
-                                     {
-                                         Resource = subscriptionResource,
-                                         Name = x.subscriptionName,
-                                         Parents = subscriptionAncestors
-                                     };
+                                     select ResourceKey.From(subscriptionResource, x.subscriptionName, subscriptionAncestors);
                           })
                           .IterTaskParallel(async subscriptionResourceKey => await deleteResource(subscriptionResourceKey,
                                                                                                   ignoreNotFound: true,
@@ -159,12 +149,7 @@ public static partial class ResourceModule
             var productGroupAncestors = productParents.Append(resource, productName);
 
             await listNames(productGroupResource, productGroupAncestors, cancellationToken)
-                    .Select(productGroupName => new ResourceKey
-                    {
-                        Resource = productGroupResource,
-                        Name = productGroupName,
-                        Parents = productGroupAncestors
-                    })
+                    .Select(productGroupName => ResourceKey.From(productGroupResource, productGroupName, productGroupAncestors))
                     .IterTaskParallel(async productGroupResourceKey => await deleteResource(productGroupResourceKey,
                                                                                             ignoreNotFound: true,
                                                                                             waitForCompletion: true,

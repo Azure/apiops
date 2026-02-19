@@ -114,12 +114,7 @@ internal static class ServiceModule
                         // Delete all non-current revisions first, then the current revision
                         var (currentRevisions, nonCurrentRevisions) =
                             await listNames(resource, parents, cancellationToken)
-                                    .Select(name => new ResourceKey
-                                    {
-                                        Parents = parents,
-                                        Name = name,
-                                        Resource = resource
-                                    })
+                                    .Select(name => ResourceKey.From(resource, name, parents))
                                     .Partition(resourceKey => ApiRevisionModule.IsRootName(resourceKey.Name), cancellationToken);
 
                         await bulkDelete(nonCurrentRevisions.ToAsyncEnumerable(), cancellationToken);
@@ -128,12 +123,7 @@ internal static class ServiceModule
                         break;
                     default:
                         var resources = listNames(resource, parents, cancellationToken)
-                                            .Select(name => new ResourceKey
-                                            {
-                                                Parents = parents,
-                                                Name = name,
-                                                Resource = resource
-                                            });
+                                            .Select(name => ResourceKey.From(resource, name, parents));
 
                         await bulkDelete(resources, cancellationToken);
 
@@ -264,12 +254,7 @@ internal static class ServiceModule
                             await putInApim(resource, name, dto, parents, cancellationToken);
 
                             // Put API specification
-                            var resourceKey = new ResourceKey
-                            {
-                                Resource = resource,
-                                Name = name,
-                                Parents = parents
-                            };
+                            var resourceKey = ResourceKey.From(resource, name, parents);
 
                             var option = from specification in apiModel.Type switch
                             {

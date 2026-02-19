@@ -743,12 +743,7 @@ internal sealed class GetRelationshipsTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var resourceKey = new ResourceKey
-                          {
-                              Resource = resource,
-                              Name = name,
-                              Parents = parents
-                          };
+                          var resourceKey = ResourceKey.From(resource, name, parents);
 
                           return resourceKey == compositeKey
                                     ? dto
@@ -783,12 +778,7 @@ internal sealed class GetRelationshipsTests
                                                                                 and not ICompositeResource
                                                                                 and not IPolicyResource)
                   from namedValueName in Generator.ResourceName
-                  let namedValueKey = new ResourceKey
-                  {
-                      Resource = NamedValueResource.Instance,
-                      Name = namedValueName,
-                      Parents = ParentChain.Empty
-                  }
+                  let namedValueKey = ResourceKey.From(NamedValueResource.Instance, namedValueName)
                   let resourceFile = new FileInfo("resource.json")
                   let namedValueFile = new FileInfo("namedValue.json")
                   let fileOperations = Common.NoOpFileOperations with
@@ -825,12 +815,7 @@ internal sealed class GetRelationshipsTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var key = new ResourceKey
-                          {
-                              Resource = resource,
-                              Name = name,
-                              Parents = parents
-                          };
+                          var key = ResourceKey.From(resource, name, parents);
 
                           return key == resourceKey
                                     ? dto
@@ -891,12 +876,7 @@ internal sealed class GetRelationshipsTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var key = new ResourceKey
-                          {
-                              Resource = resource,
-                              Name = name,
-                              Parents = parents
-                          };
+                          var key = ResourceKey.From(resource, name, parents);
 
                           return key == policyKey
                                     ? BinaryData.FromString(policyContent)
@@ -957,12 +937,7 @@ internal sealed class GetRelationshipsTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var key = new ResourceKey
-                          {
-                              Resource = resource,
-                              Name = name,
-                              Parents = parents
-                          };
+                          var key = ResourceKey.From(resource, name, parents);
 
                           return key == policyKey
                                     ? BinaryData.FromString(policyContent)

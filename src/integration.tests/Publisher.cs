@@ -114,12 +114,7 @@ internal static class PublisherModule
                             var parents = node.GetResourceParentChain();
                             var name = node.Model.Name;
 
-                            var resourceKey = new ResourceKey
-                            {
-                                Parents = parents,
-                                Name = name,
-                                Resource = resource
-                            };
+                            var resourceKey = ResourceKey.From(resource, name, parents);
 
                             if (await shouldSkipResource(resourceKey, cancellationToken))
                             {
@@ -150,12 +145,7 @@ internal static class PublisherModule
 
         async ValueTask validateResourceNameIsInModels(IResource resource, ResourceName name, ParentChain parents, ResourceModels models, CancellationToken cancellationToken)
         {
-            var resourceKey = new ResourceKey
-            {
-                Parents = parents,
-                Name = name,
-                Resource = resource
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             if (await shouldSkipResource(resourceKey, cancellationToken))
             {
@@ -168,12 +158,7 @@ internal static class PublisherModule
             }
 
             // Ensure the APIM resource is in the models
-            var exception = new InvalidOperationException($"Resource {new ResourceKey
-            {
-                Name = name,
-                Parents = parents,
-                Resource = resource
-            }} is not present in the models.");
+            var exception = new InvalidOperationException($"Resource {ResourceKey.From(resource, name, parents)} is not present in the models.");
 
             switch (resource)
             {
@@ -335,12 +320,7 @@ internal static class PublisherModule
         var name = model.Name;
         var resource = model.AssociatedResource;
         var parents = node.GetResourceParentChain();
-        var resourceKey = new ResourceKey
-        {
-            Parents = parents,
-            Name = name,
-            Resource = resource
-        };
+        var resourceKey = ResourceKey.From(resource, name, parents);
 
         if (resource is not IResourceWithDto resourceWithDto)
         {
@@ -368,12 +348,7 @@ internal static class PublisherModule
         var dtosMatch = dtoTestModel.MatchesDto(apimContents, overrideJson);
         if (dtosMatch is false)
         {
-            throw new InvalidOperationException($"DTO for {new ResourceKey
-            {
-                Name = name,
-                Parents = parents,
-                Resource = resource
-            }} does not match the expected DTO.");
+            throw new InvalidOperationException($"DTO for {ResourceKey.From(resource, name, parents)} does not match the expected DTO.");
         }
 
         Option<JsonObject> getOverride(ResourceKey resourceKey) =>

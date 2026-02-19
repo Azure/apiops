@@ -18,7 +18,7 @@
 		<PackageReference Include="Flurl" Version="4.0.0" />
 		<PackageReference Include="LibGit2Sharp" Version="0.31.0" />
 		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
-		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
+		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.16.0" />
 		<PackageReference Include="Microsoft.OpenApi.YamlReader" Version="3.3.1" />
 		<PackageReference Include="NetEscapades.Configuration.Yaml" Version="3.1.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />

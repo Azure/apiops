@@ -52,12 +52,7 @@ internal sealed class PutWorkspaceApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var key = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = resource
-                          };
+                          var key = ResourceKey.From(resource, name, parentChain);
 
                           return putResources.First(tuple => tuple.Key == key)
                                              .Dto;
@@ -66,12 +61,7 @@ internal sealed class PutWorkspaceApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var key = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = resource
-                          };
+                          var key = ResourceKey.From(resource, name, parentChain);
 
                           putResources.Enqueue((key, dto));
                       }
@@ -134,12 +124,7 @@ internal sealed class PutWorkspaceApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var key = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = resource
-                          };
+                          var key = ResourceKey.From(resource, name, parentChain);
 
                           return putResources.First(tuple => tuple.Key == key
                                                              && deletedResources.Contains(tuple.Key) is false)
@@ -149,12 +134,7 @@ internal sealed class PutWorkspaceApiTests
                       {
                           await ValueTask.CompletedTask;
 
-                          var key = new ResourceKey
-                          {
-                              Name = name,
-                              Parents = parentChain,
-                              Resource = resource
-                          };
+                          var key = ResourceKey.From(resource, name, parentChain);
 
                           putResources.Enqueue((key, dto));
                       },

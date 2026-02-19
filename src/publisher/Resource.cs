@@ -261,12 +261,7 @@ internal static partial class ResourceModule
 
         return async (resource, name, parents, cancellationToken) =>
         {
-            var resourceKey = new ResourceKey
-            {
-                Resource = resource,
-                Name = name,
-                Parents = parents
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             using var _ = activitySource.StartActivity("get.dto")
                                        ?.SetTag("resourceKey", resourceKey);

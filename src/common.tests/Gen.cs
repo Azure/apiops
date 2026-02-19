@@ -258,12 +258,7 @@ public static class Generator
                                            parentResource => from parentName in Generator.ResourceName
                                                              select (parentResource, parentName))
         let parentChain = ParentChain.From(parents)
-        select new ResourceKey
-        {
-            Name = name,
-            Parents = parentChain,
-            Resource = resource
-        };
+        select common.ResourceKey.From(resource, name, parentChain);
 
     private static Gen<ImmutableHashSet<ResourceKey>> GenerateResources(IResource resource, ParentChain ancestors, ResourceGraph graph) =>
         from resources in GenerateResources(resource, ancestors)
@@ -274,12 +269,7 @@ public static class Generator
 
     private static Gen<ImmutableHashSet<ResourceKey>> GenerateResources(IResource resource, ParentChain ancestors) =>
         from names in GenerateResourceNames(resource)
-        let resources = names.Select(name => new ResourceKey
-        {
-            Name = name,
-            Parents = ancestors,
-            Resource = resource
-        })
+        let resources = names.Select(name => common.ResourceKey.From(resource, name, ancestors))
         select resources.ToImmutableHashSet();
 
     private static Gen<ImmutableHashSet<ResourceKey>> GenerateDescendants(ResourceKey resourceKey, ResourceGraph graph)

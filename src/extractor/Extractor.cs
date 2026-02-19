@@ -82,12 +82,7 @@ internal static class ExtractorModule
 
         async ValueTask extractResource(IResource resource, ResourceName name, Option<JsonObject> dtoOption, ParentChain parents, CancellationToken cancellationToken)
         {
-            var resourceKey = new ResourceKey
-            {
-                Resource = resource,
-                Name = name,
-                Parents = parents
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             // Skip the resource if it should not be extracted.
             if (await shouldExtract(resourceKey, cancellationToken) is false)

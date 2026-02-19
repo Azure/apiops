@@ -57,12 +57,7 @@ public static partial class ResourceModule
                 {
                     [] => Option.None,
                     [var single] => single,
-                    var many => throw new InvalidOperationException($"Found multiple matches for '{new ResourceKey
-                    {
-                        Name = name,
-                        Resource = resource,
-                        Parents = parents
-                    }}.")
+                    var many => throw new InvalidOperationException($"Found multiple matches for '{ResourceKey.From(resource, name, parents)}'.")
                 };
 
             async ValueTask<Option<JsonObject>> parseDirectory(DirectoryInfo directory)
@@ -133,12 +128,7 @@ public static partial class ResourceModule
             case IChildResource { Parent: var parent } childResource:
                 if (parent is not IResourceWithDirectory parentResourceWithDirectory)
                 {
-                    throw new InvalidOperationException($"Expected policy '{new ResourceKey
-                    {
-                        Name = name,
-                        Resource = resource,
-                        Parents = parents
-                    }} to have a parent of type {nameof(IResourceWithDirectory)}.");
+                    throw new InvalidOperationException($"Expected policy '{ResourceKey.From(resource, name, parents)}' to have a parent of type {nameof(IResourceWithDirectory)}.");
                 }
 
                 var parentParents = ParentChain.From(parents.SkipLast(1));
@@ -346,12 +336,7 @@ public static partial class ResourceModule
         {
             var matches = await graph.TopologicallySortedResources
                                      .Choose(async resource => from x in await parseResource(resource, file, readFile, cancellationToken)
-                                                               select new ResourceKey
-                                                               {
-                                                                   Resource = resource,
-                                                                   Name = x.Name,
-                                                                   Parents = x.Parents
-                                                               })
+                                                               select ResourceKey.From(resource, x.Name, x.Parents))
                                      .ToArrayAsync(cancellationToken);
 
             return matches switch

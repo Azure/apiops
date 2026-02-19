@@ -45,12 +45,7 @@ internal static partial class ResourceModule
 
         return async (name, parents, dto, cancellationToken) =>
         {
-            var resourceKey = new ResourceKey
-            {
-                Resource = resource,
-                Name = name,
-                Parents = parents
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             if (ApiRevisionModule.IsRootName(name))
             {
@@ -131,12 +126,7 @@ internal static partial class ResourceModule
             var releaseResource = WorkspaceApiReleaseResource.Instance;
             await putResourceInApim(releaseResource, releaseName, releaseDto, releaseParents, cancellationToken);
 
-            var releaseResourceKey = new ResourceKey
-            {
-                Resource = releaseResource,
-                Name = releaseName,
-                Parents = releaseParents
-            };
+            var releaseResourceKey = ResourceKey.From(releaseResource, releaseName, releaseParents);
 
             await deleteResourceFromApim(releaseResourceKey, ignoreNotFound: true, waitForCompletion: true, cancellationToken);
         }
@@ -176,12 +166,7 @@ internal static partial class ResourceModule
 
         return async (name, parents, cancellationToken) =>
         {
-            var resourceKey = new ResourceKey
-            {
-                Resource = resource,
-                Name = name,
-                Parents = parents
-            };
+            var resourceKey = ResourceKey.From(resource, name, parents);
 
             if (await isCurrentApiRevision(resourceKey, cancellationToken))
             {
