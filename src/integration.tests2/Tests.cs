@@ -137,7 +137,8 @@ internal static class TestsModule
             [TagResource.Instance] = typeof(TagModel),
             [NamedValueResource.Instance] = typeof(NamedValueModel),
             [LoggerResource.Instance] = typeof(LoggerModel),
-            [DiagnosticResource.Instance] = typeof(DiagnosticModel)
+            [DiagnosticResource.Instance] = typeof(DiagnosticModel),
+            [ProductResource.Instance] = typeof(ProductModel)
         }.ToImmutableDictionary();
 
     public static ImmutableHashSet<IResource> Resources { get; } =
