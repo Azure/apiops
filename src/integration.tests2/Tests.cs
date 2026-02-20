@@ -130,7 +130,8 @@ internal static class TestsModule
     public static ImmutableDictionary<IResource, Type> ResourceModels { get; } =
         ImmutableArray.Create([
                         (TagResource.Instance as IResource, typeof(TagModel)),
-                        (NamedValueResource.Instance as IResource, typeof(NamedValueModel))
+                        (NamedValueResource.Instance, typeof(NamedValueModel)),
+                        (LoggerResource.Instance, typeof(LoggerModel))
                       ])
                       .ToImmutableDictionary(tuple => tuple.Item1, tuple => tuple.Item2);
 
