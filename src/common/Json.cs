@@ -200,6 +200,19 @@ public static class JsonValueModule
                                                 : Error.From(errorMessage))
                         .MapError(_ => errorMessage);
     }
+
+    /// <summary>
+    /// Safely converts a <see cref="JsonValue"/> to a boolean.
+    /// </summary>
+    /// <param name="jsonValue">The <see cref="JsonValue"/> to convert.</param>
+    /// <returns>Success with the <see cref="bool"/> value if <see cref="JsonValue"/> contains a boolean, otherwise error details.</returns>
+    public static Result<bool> AsBool(this JsonValue? jsonValue) =>
+        jsonValue?.GetValueKind() switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => Error.From("JSON value is not a boolean.")
+        };
 }
 
 /// <summary>
@@ -325,6 +338,17 @@ public static class JsonObjectModule
         jsonObject.GetProperty(propertyName,
                                jsonNode => jsonNode.AsJsonValue()
                                                    .Bind(jsonValue => jsonValue.AsString()));
+
+    /// <summary>
+    /// Safely retrieves a boolean property from a <see cref="JsonObject"/>.
+    /// </summary>
+    /// <param name="jsonObject">The <see cref="JsonObject"/> to query.</param>
+    /// <param name="propertyName">The property name.</param>
+    /// <returns>Success with the <see cref="bool"/> value if found and is a boolean, otherwise error details.</returns>
+    public static Result<bool> GetBoolProperty(this JsonObject? jsonObject, string propertyName) =>
+        jsonObject.GetProperty(propertyName,
+                               jsonNode => jsonNode.AsJsonValue()
+                                                   .Bind(jsonValue => jsonValue.AsBool()));
 
     /// <summary>
     /// Safely retrieves an absolute URI property from a <see cref="JsonObject"/>.

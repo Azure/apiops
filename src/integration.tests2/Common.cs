@@ -9,7 +9,7 @@ internal static class CommonModule
         Gen.Const($"{name}-display");
 
     public static Gen<string> GenerateDisplayName(ResourceName name, string currentDisplayName) =>
-        currentDisplayName.StartsWith($"name")
+        currentDisplayName.StartsWith($"{name}")
             ? Gen.Const(currentDisplayName.Split('-') switch
             {
                 [.. var head, "display"] => $"{string.Join('-', head)}-display-2",

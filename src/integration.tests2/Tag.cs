@@ -45,7 +45,7 @@ internal sealed record TagModel : ITestModel<TagModel>
             DisplayName = displayName
         };
 
-    public static Gen<ImmutableHashSet<TagModel>> SetGenerator { get; } =
+    public static Gen<ImmutableHashSet<TagModel>> GenerateSet() =>
         from models in Generator.HashSetOf(0, 5)
         select models;
 
@@ -75,6 +75,6 @@ internal sealed record TagModel : ITestModel<TagModel>
         from unchangedCount in Gen.Int[0, kept.Length]
         let unchanged = kept.Take(unchangedCount)
         from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
-        from added in SetGenerator
+        from added in GenerateSet()
         select ToSet([.. unchanged, .. changed, .. added]);
 }

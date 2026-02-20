@@ -85,6 +85,8 @@ internal static class TestsModule
                 await validatePublisher(testState, serviceDirectory, publisherOverride, cancellationToken);
 
                 // Test commit-based publish
+                await wipeApim(cancellationToken);
+                await populateApim(testState, cancellationToken);
                 var commitId = await setupGitCommit(serviceDirectory, testState, nextState, cancellationToken);
                 await runPublisher(serviceDirectory, overrideOption: Option.None, commitId, cancellationToken);
                 await validateStateTransition(testState, nextState, cancellationToken);
@@ -127,7 +129,8 @@ internal static class TestsModule
 
     public static ImmutableDictionary<IResource, Type> ResourceModels { get; } =
         ImmutableArray.Create([
-                        (TagResource.Instance as IResource, typeof(TagModel))
+                        (TagResource.Instance as IResource, typeof(TagModel)),
+                        (NamedValueResource.Instance as IResource, typeof(NamedValueModel))
                       ])
                       .ToImmutableDictionary(tuple => tuple.Item1, tuple => tuple.Item2);
 

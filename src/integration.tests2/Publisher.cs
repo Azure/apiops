@@ -185,13 +185,19 @@ internal static class PublisherModule
             result.IfErrorThrow();
         };
 
-        static ImmutableArray<ITestModel> getExpectedModels(TestState testState, Option<PublisherOverride> overrideOption) =>
-            overrideOption.Map(publisherOverride => publisherOverride.Updates)
-                          .Map(updates => testState.Models
-                                                   .Select(model => updates.Find(model.Key)
-                                                                           .IfNone(() => model))
-                                                   .ToImmutableArray())
-                          .IfNone(() => testState.Models);
+        static ImmutableArray<ITestModel> getExpectedModels(TestState testState, Option<PublisherOverride> overrideOption)
+        {
+            var overrides = overrideOption.Map(publisherOverride => publisherOverride.Updates)
+                                          .IfNone(() => []);
+
+            return [.. from model in testState.Models
+                       let overriddenModel  = overrides.Find(model.Key)
+                                                     .IfNone(() => model)
+                       // Only include secret named values if there is an override
+                       where overriddenModel is not NamedValueModel { Secret: true }
+                             || overrides.ContainsKey(overriddenModel .Key)
+                       select overriddenModel ];
+        }
 
         async ValueTask<Result<Unit>> validateModelsWerePublished(ImmutableArray<ITestModel> models, CancellationToken cancellationToken)
         {

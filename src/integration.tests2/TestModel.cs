@@ -32,28 +32,38 @@ internal interface ITestModel
 
 internal interface ITestModel<T> : ITestModel
 {
-    public abstract static Gen<ImmutableHashSet<T>> SetGenerator { get; }
+    public abstract static Gen<ImmutableHashSet<T>> GenerateSet();
     public abstract static Gen<ImmutableHashSet<T>> GenerateUpdates(IEnumerable<T> models);
     public abstract static Gen<ImmutableHashSet<T>> GenerateNextState(IEnumerable<T> models);
 }
 
-/// <summary>
-/// The complete test state: a coherent graph of all resource instances
-/// generated for a test run.
-/// </summary>
 internal sealed record TestState
 {
-    /// <summary>
-    /// All test models, in topological order (predecessors before successors).
-    /// </summary>
     public required ImmutableArray<ITestModel> Models { get; init; }
 
     public static Gen<TestState> Generator { get; } =
-        from tags in TagModel.SetGenerator
+        from sets in common.tests.Generator.Traverse(TestsModule.ResourceModels.Values, type =>
+        {
+            var method = typeof(TestState).GetMethod(nameof(GenerateSetOf),
+                                                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                          ?? throw new InvalidOperationException($"Failed to find method '{nameof(GenerateSetOf)}' on type '{typeof(TestState)}'.");
+
+            var genericMethod = method.MakeGenericMethod(type) ?? throw new InvalidOperationException($"Failed to construct generic method for type '{type}'.");
+
+            var subsetGen = genericMethod.Invoke(obj: default, parameters: [])
+                            ?? throw new InvalidOperationException($"Failed to invoke method '{method.Name}' for type '{type}'.");
+
+            return (Gen<ImmutableHashSet<ITestModel>>)subsetGen;
+        })
         select new TestState
         {
-            Models = [.. tags]
+            Models = [.. sets.SelectMany(set => set)]
         };
+
+    private static Gen<ImmutableHashSet<ITestModel>> GenerateSetOf<T>() where T : ITestModel<T> =>
+        from next in T.GenerateSet()
+        select next.Cast<ITestModel>()
+                   .ToImmutableHashSet();
 
     public static Gen<TestState> GenerateNextState(TestState current) =>
         from next in common.tests.Generator.Traverse(TestsModule.ResourceModels.Values, type =>
