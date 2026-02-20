@@ -23,8 +23,6 @@ internal sealed record ExtractorFilter
 {
     public required ImmutableDictionary<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>> Resources { get; init; }
 
-    public static ExtractorFilter Empty { get; } = new() { Resources = [] };
-
     public bool ShouldExtract(ResourceKey resourceKey) =>
         Resources.TryGetValue(resourceKey.Parents, out var resourceDictionary) is false
         || resourceDictionary.TryGetValue(resourceKey.Resource, out var resourceNames) is false
