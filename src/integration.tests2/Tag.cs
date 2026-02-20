@@ -45,9 +45,8 @@ internal sealed record TagModel : ITestModel<TagModel>
             DisplayName = displayName
         };
 
-    public static Gen<ImmutableHashSet<TagModel>> GenerateSet() =>
-        from models in Generator.HashSetOf(0, 5)
-        select models;
+    public static Gen<ImmutableHashSet<TagModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        Generator.HashSetOf(0, 5);
 
     public static Gen<ImmutableHashSet<TagModel>> GenerateUpdates(IEnumerable<TagModel> models) =>
         from updatedModels in
@@ -68,13 +67,17 @@ internal sealed record TagModel : ITestModel<TagModel>
             DisplayName = displayName
         };
 
-    public static Gen<ImmutableHashSet<TagModel>> GenerateNextState(IEnumerable<TagModel> currentModels) =>
-        from shuffled in Gen.Shuffle(currentModels.ToArray())
-        from keptCount in Gen.Int[0, shuffled.Length]
-        let kept = shuffled.Take(keptCount).ToImmutableArray()
-        from unchangedCount in Gen.Int[0, kept.Length]
-        let unchanged = kept.Take(unchangedCount)
-        from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
-        from added in GenerateSet()
-        select ToSet([.. unchanged, .. changed, .. added]);
+    public static Gen<ImmutableHashSet<TagModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
+    {
+        var currentModels = previousModels.OfType<TagModel>();
+
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
+               from added in GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
+    }
 }

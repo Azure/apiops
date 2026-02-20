@@ -103,7 +103,10 @@ internal static class ApimModule
             Option<IResource> getResourceRoot(IResource resource) =>
                 resource.GetTraversalPredecessorHierarchy()
                         .Head()
-                        .Where(rootResources.Contains);
+                        .Where(rootResources.Contains)
+                        .IfNone(() => rootResources.Contains(resource)
+                                      ? Option.Some(resource)
+                                      : Option.None);
         }
 
         async ValueTask deleteNames(IResource resource, IAsyncEnumerable<ResourceName> names, ParentChain parents, CancellationToken cancellationToken) =>
@@ -154,7 +157,7 @@ internal static class ApimModule
 
     public static void ConfigurePopulateApim(IHostApplicationBuilder builder)
     {
-        ResourceGraphModule.ConfigureResourceGraph(builder);
+        CommonModule.ConfigureSortResources(builder);
         ResourceModule.ConfigurePutResourceInApim(builder);
         ConfigureIsResourceKeySupported(builder);
 
@@ -163,20 +166,22 @@ internal static class ApimModule
 
     private static PopulateApim ResolvePopulateApim(IServiceProvider provider)
     {
-        var graph = provider.GetRequiredService<ResourceGraph>();
+        var sortResources = provider.GetRequiredService<SortResources>();
         var putResource = provider.GetRequiredService<PutResourceInApim>();
         var isResourceKeySupported = provider.GetRequiredService<IsResourceKeySupported>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
-
-        // Build resource type -> topological position index for sorting
-        var topologicalOrder = graph.TopologicallySortedResources
-                                    .Select((resource, index) => (resource, index))
-                                    .ToImmutableDictionary(x => x.resource, x => x.index);
 
         return async (testState, cancellationToken) =>
         {
             using var activity = activitySource.StartActivity("apim.populate");
             activity?.SetTag("test.state", testState);
+
+            var sortedResources = sortResources(testState.Models
+                                                         .Select(model => model.Key.Resource)
+                                                         .Distinct());
+                                                         
+            var topologicalOrder = sortedResources.Select((resource, index) => (resource, index))
+                                                  .ToImmutableDictionary(x => x.resource, x => x.index);
 
             await testState.Models
                            .GroupBy(model => model.Key.Resource)

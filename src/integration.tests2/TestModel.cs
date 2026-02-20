@@ -1,9 +1,12 @@
 using common;
 using CsCheck;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
@@ -32,65 +35,95 @@ internal interface ITestModel
 
 internal interface ITestModel<T> : ITestModel
 {
-    public abstract static Gen<ImmutableHashSet<T>> GenerateSet();
+    public abstract static Gen<ImmutableHashSet<T>> GenerateSet(IEnumerable<ITestModel> models);
     public abstract static Gen<ImmutableHashSet<T>> GenerateUpdates(IEnumerable<T> models);
-    public abstract static Gen<ImmutableHashSet<T>> GenerateNextState(IEnumerable<T> models);
+    public abstract static Gen<ImmutableHashSet<T>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels);
 }
+
+internal delegate Gen<TestState> GenerateTestState();
+internal delegate Gen<TestState> GenerateNextTestState(TestState current);
 
 internal sealed record TestState
 {
     public required ImmutableArray<ITestModel> Models { get; init; }
 
-    public static Gen<TestState> Generator { get; } =
-        from sets in common.tests.Generator.Traverse(TestsModule.ResourceModels.Values, type =>
-        {
-            var method = typeof(TestState).GetMethod(nameof(GenerateSetOf),
-                                                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
-                          ?? throw new InvalidOperationException($"Failed to find method '{nameof(GenerateSetOf)}' on type '{typeof(TestState)}'.");
-
-            var genericMethod = method.MakeGenericMethod(type) ?? throw new InvalidOperationException($"Failed to construct generic method for type '{type}'.");
-
-            var subsetGen = genericMethod.Invoke(obj: default, parameters: [])
-                            ?? throw new InvalidOperationException($"Failed to invoke method '{method.Name}' for type '{type}'.");
-
-            return (Gen<ImmutableHashSet<ITestModel>>)subsetGen;
-        })
-        select new TestState
-        {
-            Models = [.. sets.SelectMany(set => set)]
-        };
-
-    private static Gen<ImmutableHashSet<ITestModel>> GenerateSetOf<T>() where T : ITestModel<T> =>
-        from next in T.GenerateSet()
-        select next.Cast<ITestModel>()
-                   .ToImmutableHashSet();
-
-    public static Gen<TestState> GenerateNextState(TestState current) =>
-        from next in common.tests.Generator.Traverse(TestsModule.ResourceModels.Values, type =>
-        {
-            var method = typeof(TestState).GetMethod(nameof(GenerateNextStateOf),
-                                                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
-                          ?? throw new InvalidOperationException($"Failed to find method '{nameof(GenerateNextStateOf)}' on type '{typeof(TestState)}'.");
-
-            var genericMethod = method.MakeGenericMethod(type) ?? throw new InvalidOperationException($"Failed to construct generic method for type '{type}'.");
-
-            var subsetGen = genericMethod.Invoke(obj: default, parameters: [current.Models])
-                            ?? throw new InvalidOperationException($"Failed to invoke method '{method.Name}' for type '{type}'.");
-
-            return (Gen<ImmutableHashSet<ITestModel>>)subsetGen;
-        })
-        select new TestState
-        {
-            Models = [.. next.SelectMany(models => models)]
-        };
-
-    private static Gen<ImmutableHashSet<ITestModel>> GenerateNextStateOf<T>(IEnumerable<ITestModel> models) where T : ITestModel<T> =>
-        from next in T.GenerateNextState(models.OfType<T>())
-        select next.Cast<ITestModel>()
-                   .ToImmutableHashSet();
-
     public override string ToString() =>
         Models.Select(model => JsonValue.Create($"{model.Key}"))
               .ToJsonArray()
               .ToJsonString();
+}
+
+internal static class TestStateModule
+{
+    public static void ConfigureGenerateTestState(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureSortResources(builder);
+        builder.TryAddSingleton(ResolveGenerateTestState);
+    }
+
+    private static GenerateTestState ResolveGenerateTestState(IServiceProvider provider)
+    {
+        var sortResources = provider.GetRequiredService<SortResources>();
+
+        var sortedTypes = sortResources(TestsModule.ResourceModels.Keys)
+                              .Select(resource => TestsModule.ResourceModels[resource]);
+
+        return () =>
+            from models in sortedTypes.Aggregate(Gen.Const(ImmutableArray<ITestModel>.Empty),
+                                                 (accumulator, type) =>
+                                                    from currentSet in accumulator
+                                                    from newSet in InvokeGenericMethod<Gen<ImmutableHashSet<ITestModel>>>(nameof(GenerateSetOf), type, currentSet)
+                                                    select currentSet.AddRange(newSet))
+            select new TestState
+            {
+                Models = models
+            };
+    }
+
+    private static TReturn InvokeGenericMethod<TReturn>(string methodName, Type genericType, params object[] parameters)
+    {
+        var method = typeof(TestStateModule).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)
+                        ?? throw new InvalidOperationException($"Failed to find method '{methodName}' on type '{typeof(TestStateModule)}'.");
+
+        var genericMethod = method.MakeGenericMethod(genericType)
+                            ?? throw new InvalidOperationException($"Failed to construct generic method  '{methodName}' for type '{genericType}'.");
+
+        return (TReturn)(genericMethod.Invoke(obj: default, parameters: parameters)
+                            ?? throw new InvalidOperationException($"Method '{methodName}' for type '{genericType}' returned a null result."));
+    }
+
+    private static Gen<ImmutableHashSet<ITestModel>> GenerateSetOf<T>(IEnumerable<ITestModel> allModels) where T : ITestModel<T> =>
+        from next in T.GenerateSet(allModels)
+        select next.Cast<ITestModel>()
+                   .ToImmutableHashSet();
+
+    public static void ConfigureGenerateNextTestState(IHostApplicationBuilder builder)
+    {
+        CommonModule.ConfigureSortResources(builder);
+        builder.TryAddSingleton(ResolveGenerateNextTestState);
+    }
+
+    private static GenerateNextTestState ResolveGenerateNextTestState(IServiceProvider provider)
+    {
+        var sortResources = provider.GetRequiredService<SortResources>();
+
+        var sortedTypes = sortResources(TestsModule.ResourceModels.Keys)
+                              .Select(resource => TestsModule.ResourceModels[resource]);
+
+        return current =>
+            from next in sortedTypes.Aggregate(Gen.Const(ImmutableArray<ITestModel>.Empty),
+                                               (accumulator, type) =>
+                                                from nextSet in accumulator
+                                                from typeNextSet in InvokeGenericMethod<Gen<ImmutableHashSet<ITestModel>>>(nameof(GenerateNextStateOf), type, current.Models, nextSet)
+                                                select nextSet.AddRange(typeNextSet))
+            select new TestState
+            {
+                Models = next
+            };
+    }
+
+    private static Gen<ImmutableHashSet<ITestModel>> GenerateNextStateOf<T>(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) where T : ITestModel<T> =>
+        from next in T.GenerateNextState(previousModels, accumulatedNextModels)
+        select next.Cast<ITestModel>()
+                   .ToImmutableHashSet();
 }

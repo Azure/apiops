@@ -4,6 +4,14 @@
 
 We use property-based integration tests to validate the extractor/publisher against a live APIM instance. [CsCheck](https://github.com/AnthonyLloyd/CsCheck) generates random properties that can be reproduced deterministically via seeds.
 
+## Prerequisites
+
+- The following configuration values are set (environment variables, appsettings.json, command-line arguments, etc):
+    - `API_MANAGEMENT_SERVICE_NAME` or `apimServiceName`
+    - `AZURE_RESOURCE_GROUP_NAME`
+    - `AZURE_SUBSCRIPTION_ID`
+- The executable can authenticate to Azure (managed identity, `az login` has already been run, `AZURE_BEARER_TOKEN` passed to configuration, etc).
+
 ## Test pipeline
 
 Each test iteration runs the following steps against a randomly generated `TestState`:
@@ -28,19 +36,24 @@ Every resource type has a model record implementing `ITestModel<T>`. The interfa
 | `Key` | `ResourceKey` identifying the resource (type + name + parents) |
 | `ToDto()` | Produces the JSON DTO used in the APIM PUT |
 | `ValidateDto(dto)` | Validates that the DTO (from an APIM GET or extracted file) matches expectations |
-| `static GenerateSet()` | Generates a random set of initial models |
+| `static GenerateSet(models)` | Generates a random set of initial models. Receives all models generated so far (by predecessor resource types), enabling cross-resource dependencies. |
 | `static GenerateUpdates(models)` | Generates updated versions of existing models (for overrides) |
-| `static GenerateNextState(models)` | Generates a new state from current models (for commit-based publish) |
+| `static GenerateNextState(previousModels, accumulatedNextModels)` | Generates a new state for commit-based publish. `previousModels` is the full previous `TestState`; `accumulatedNextModels` is the partial next state built so far by predecessor types. |
 
 ### `TestState`
 
-The complete set of resource instances for a test run. Its generators use reflection to loop over `TestsModule.ResourceModels.Values` to automatically pull in resource types.
+A plain record holding all resource models for a test run.
 
 | Member | Purpose |
-|--------|---------|
+|--------|--------|
 | `Models` | All resource test models |
-| `static Generator` | Generates a random initial state by calling `GenerateSetOf<T>()` for each registered type |
-| `static GenerateNextState(current)` | Generates a subsequent state by calling `GenerateNextStateOf<T>()` for each registered type |
+
+### `TestStateModule`
+
+| Delegate | Purpose |
+|----------|--------|
+| `GenerateTestState` | Generates a random initial `TestState` by folding over resource types in topological order. Calls each type's `GenerateSet`. |
+| `GenerateNextTestState` | Generates a subsequent `TestState` by folding over resource types in topological order. Calls each type's `GenerateNextState`. |
 
 ### `TestsModule`
 
@@ -74,14 +87,14 @@ Controls which resources the extractor should extract. Serialized to YAML.
 
 ### `CommonModule`
 
-Contains shared generators for model properties
 
-| Method | Example output |
-|--------|---------------|
-| `GenerateDisplayName(name)` | `"myname-display"` |
-| `GenerateDisplayName(name, current)` | `"myname-display-2"` -> `"myname-display-3"` |
-| `GenerateDescription(name)` | `"myname-description"` |
-| `GenerateDescription(name, current)` | `"myname-description-2"` -> `"myname-description-3"` |
+| Member | Notes |
+|--------|--------|
+| `SortResources` delegate | Takes a list of resources and sorts them in topological order |
+| `GenerateDisplayName(name)` | Output: `"myname-display"` |
+| `GenerateDisplayName(name, current)` | Output: `"myname-display-2"` -> `"myname-display-3"` |
+| `GenerateDescription(name)` | Output: `"myname-description"` |
+| `GenerateDescription(name, current)` | Output:  `"myname-description-2"` -> `"myname-description-3"` |
 
 ## Resource Models
 
@@ -90,6 +103,7 @@ Contains shared generators for model properties
 | Tag | `TagModel` | `DisplayName` | Generate 0–5 tags. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName`. | |
 | Named Value | `NamedValueModel` | `DisplayName` <br> `Value` <br> `Secret` | Generate 0–5 named values. <br><br> `Secret` is randomly `true` or `false`. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Secret`. <br><br> Only validate `Value` when `Secret == false` (APIM doesn't return secret values). | Publisher validation skips secret named values unless overridden. |
 | Logger | `LoggerModel` | `Description` <br> `IsBuffered` | Only use `azuremonitor` logger. APIM requires real resources for other application insights and event hub. <br><br> Generate 0 or 1 logger. APIM supports a maximum of 1 logger of type `azuremonitor`. Put extra weight on the 1 logger scenario so it's more likely to be generated than 0. | Always validate `Description` and `IsBuffered`. | Diagnostics depend on loggers via `LoggerId`. |
+| Diagnostic | `DiagnosticModel` | `Verbosity` <br> `LogClientIp` <br> `LoggerKey` | For each logger in the accumulated models, generate 0 or 1 diagnostic. Diagnostic name matches the logger name (APIM requires service-level diagnostic names to match logger types). <br><br> Put extra weight on the 1 diagnostic scenario. <br><br> `LoggerId` in the DTO is a relative ID (e.g. `/loggers/azuremonitor`). | Validate `Verbosity` and `LogClientIp`. <br><br> Skip `LoggerId` validation (format differs between APIM GET and extracted files). | First resource with a cross-resource dependency. Depends on `LoggerResource` via `IResourceWithReference`. <br><br> `GenerateNextState` delegates to `GenerateSet(accumulatedNextModels)` — diagnostics are fully regenerated based on loggers in the new state. |
 
 ## DI pattern
 
@@ -127,7 +141,7 @@ Writes APIM artifacts in `TestState` to disk, creates a git commit, and returns 
 ## Adding a new resource type
 
 1. Create `MyResource.cs` with a record implementing `ITestModel<MyResourceModel>`
-2. Implement `GenerateSet()`, `GenerateUpdates()`, `GenerateNextState()`, `ToDto()`, `ValidateDto()`. The compiler should let you know if you're missing methods.
-3. Register in `TestsModule.ResourceModels`: `(MyResource.Instance, typeof(MyResourceModel))`.
+2. Implement `GenerateSet`, `GenerateUpdates`, `GenerateNextState`, `ToDto`, `ValidateDto`. The compiler should let you know if you're missing methods.
+3. Register in `TestsModule.ResourceModels`: `[MyResource.Instance] = typeof(MyResourceModel)`.
 4. Add any required special handling to the extractor and publisher validation.
-4. That's it. The type will be picked up automatically via reflection where needed.
+5. That's it. The type will be picked up automatically via reflection where needed.

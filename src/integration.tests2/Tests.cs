@@ -20,6 +20,8 @@ internal static class TestsModule
 {
     public static void ConfigureRunTests(IHostApplicationBuilder builder)
     {
+        TestStateModule.ConfigureGenerateTestState(builder);
+        TestStateModule.ConfigureGenerateNextTestState(builder);
         ApimModule.ConfigureWipeApim(builder);
         ApimModule.ConfigurePopulateApim(builder);
         ExtractorModule.ConfigureRunExtractor(builder);
@@ -42,6 +44,8 @@ internal static class TestsModule
         var validatePublisher = provider.GetRequiredService<ValidatePublisher>();
         var writeGitCommit = provider.GetRequiredService<WriteGitCommit>();
         var validateStateTransition = provider.GetRequiredService<ValidatePublisherStateTransition>();
+        var generateTestState = provider.GetRequiredService<GenerateTestState>();
+        var generateNextTestState = provider.GetRequiredService<GenerateNextTestState>();
         var configuration = provider.GetRequiredService<IConfiguration>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
@@ -49,12 +53,12 @@ internal static class TestsModule
         {
             using var activity = activitySource.StartActivity("run.tests");
 
-            var gen = from testState in TestState.Generator
+            var gen = from testState in generateTestState()
                       from serviceDirectory in generateServiceDirectory()
                       from extractorFilter in ExtractorFilter.Generate(testState.Models)
                       where extractorFilter.Resources.SelectMany(kvp => kvp.Value).SelectMany(kvp => kvp.Value).Any()
                       from publisherOverride in PublisherOverride.Generate(testState.Models)
-                      from nextState in TestState.GenerateNextState(testState)
+                      from nextState in generateNextTestState(testState)
                       select (testState, serviceDirectory, extractorFilter, publisherOverride, nextState);
 
             var seed = configuration.GetValue("SEED")
@@ -128,12 +132,13 @@ internal static class TestsModule
     }
 
     public static ImmutableDictionary<IResource, Type> ResourceModels { get; } =
-        ImmutableArray.Create([
-                        (TagResource.Instance as IResource, typeof(TagModel)),
-                        (NamedValueResource.Instance, typeof(NamedValueModel)),
-                        (LoggerResource.Instance, typeof(LoggerModel))
-                      ])
-                      .ToImmutableDictionary(tuple => tuple.Item1, tuple => tuple.Item2);
+        new Dictionary<IResource, Type>
+        {
+            [TagResource.Instance] = typeof(TagModel),
+            [NamedValueResource.Instance] = typeof(NamedValueModel),
+            [LoggerResource.Instance] = typeof(LoggerModel),
+            [DiagnosticResource.Instance] = typeof(DiagnosticModel)
+        }.ToImmutableDictionary();
 
     public static ImmutableHashSet<IResource> Resources { get; } =
         [.. ResourceModels.Keys];

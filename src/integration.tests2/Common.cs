@@ -1,10 +1,36 @@
 using common;
 using CsCheck;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
 
 namespace integration.tests;
 
+internal delegate ImmutableArray<IResource> SortResources(IEnumerable<IResource> resources);
+
 internal static class CommonModule
 {
+    public static void ConfigureSortResources(IHostApplicationBuilder builder)
+    {
+        ResourceGraphModule.ConfigureResourceGraph(builder);
+        builder.TryAddSingleton(ResolveSortResources);
+    }
+
+    private static SortResources ResolveSortResources(IServiceProvider provider)
+    {
+        var graph = provider.GetRequiredService<ResourceGraph>();
+        
+        var resourceIndex = graph.TopologicallySortedResources
+                                 .Select((resource, index) => (resource, index))
+                                 .ToImmutableDictionary(x => x.resource, x => x.index);
+
+        return resources =>
+            [.. resources.OrderBy(resource => resourceIndex[resource])];
+    }
+
     /// <summary>
     /// Generates an initial display name derived from the resource name (e.g. "myresource" => "myresource-display").
     /// </summary>

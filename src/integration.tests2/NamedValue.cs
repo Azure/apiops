@@ -76,9 +76,8 @@ internal sealed record NamedValueModel : ITestModel<NamedValueModel>
             Secret = secret
         };
 
-    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateSet() =>
-        from models in Generator.HashSetOf(0, 5)
-        select models;
+    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        Generator.HashSetOf(0, 5);
 
     public static Gen<ImmutableHashSet<NamedValueModel>> GenerateUpdates(IEnumerable<NamedValueModel> models) =>
         from updatedModels in
@@ -102,13 +101,17 @@ internal sealed record NamedValueModel : ITestModel<NamedValueModel>
             Secret = secret
         };
 
-    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateNextState(IEnumerable<NamedValueModel> currentModels) =>
-        from shuffled in Gen.Shuffle(currentModels.ToArray())
-        from keptCount in Gen.Int[0, shuffled.Length]
-        let kept = shuffled.Take(keptCount).ToImmutableArray()
-        from unchangedCount in Gen.Int[0, kept.Length]
-        let unchanged = kept.Take(unchangedCount)
-        from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
-        from added in GenerateSet()
-        select ToSet([.. unchanged, .. changed, .. added]);
+    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
+    {
+        var currentModels = previousModels.OfType<NamedValueModel>();
+
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
+               from added in GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
+    }
 }

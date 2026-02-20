@@ -74,7 +74,7 @@ internal sealed record LoggerModel : ITestModel<LoggerModel>
         from model in Generator
         select ImmutableHashSet.Create(model);
 
-    public static Gen<ImmutableHashSet<LoggerModel>> GenerateSet() =>
+    public static Gen<ImmutableHashSet<LoggerModel>> GenerateSet(IEnumerable<ITestModel> models) =>
         Gen.Frequency((1, EmptySetGen), (5, SingletonSetGen));
 
     public static Gen<ImmutableHashSet<LoggerModel>> GenerateUpdates(IEnumerable<LoggerModel> models) =>
@@ -90,6 +90,6 @@ internal sealed record LoggerModel : ITestModel<LoggerModel>
             IsBuffered = isBuffered
         };
 
-    public static Gen<ImmutableHashSet<LoggerModel>> GenerateNextState(IEnumerable<LoggerModel> currentModels) =>
+    public static Gen<ImmutableHashSet<LoggerModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
         Gen.Frequency((1, EmptySetGen), (5, SingletonSetGen));
 }
