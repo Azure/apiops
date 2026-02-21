@@ -107,6 +107,7 @@ Controls which resources the extractor should extract. Serialized to YAML.
 | Product | `ProductModel` | `DisplayName` <br> `Description` | Generate 0–5 products. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | APIM auto-creates subscriptions and product-groups when a product is created. `PutProductInApim` in `common` deletes these auto-created resources to avoid polluting state. |
 | Group | `GroupModel` | `DisplayName` <br> `Description` | Generate 0–5 groups. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | Built-in groups (Administrators, Developers, Guests) are excluded by `IsResourceKeySupported`. |
 | Version Set | `VersionSetModel` | `DisplayName` <br> `Description` | Generate 0–5 version sets. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | APIM requires `versioningScheme` on PUT. We use a fixed value (`"Segment"`) in the DTO. |
+| Backend | `BackendModel` | `Description` <br> `Url` | Generate 0–5 backends. <br><br> Deduplicate by `Key`. <br><br> `Url` is derived from `Description` (`https://{description}.example.com`). | Always validate `Description` and `Url`. | APIM requires `protocol` on PUT. We use a fixed value (`"http"`) in the DTO. |
 
 ## DI pattern
 
