@@ -108,6 +108,7 @@ Controls which resources the extractor should extract. Serialized to YAML.
 | Group | `GroupModel` | `DisplayName` <br> `Description` | Generate 0–5 groups. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | Built-in groups (Administrators, Developers, Guests) are excluded by `IsResourceKeySupported`. |
 | Version Set | `VersionSetModel` | `DisplayName` <br> `Description` | Generate 0–5 version sets. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | APIM requires `versioningScheme` on PUT. We use a fixed value (`"Segment"`) in the DTO. |
 | Backend | `BackendModel` | `Description` <br> `Url` | Generate 0–5 backends. <br><br> Deduplicate by `Key`. <br><br> `Url` is derived from `Description` (`https://{description}.example.com`). | Always validate `Description` and `Url`. | APIM requires `protocol` on PUT. We use a fixed value (`"http"`) in the DTO. |
+| Gateway | `GatewayModel` | `Description` | Currently disabled by having all generators return empty sets. Creating a gateway on the Developer SKU fails with a SKU limit error pointing to https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits#limits---api-management-classic-tiers. Revisit once classic SKU limits are clarified. | Always validate `Description`. | APIM requires `locationData` on PUT. We use a fixed value (`"test"`) in the DTO. |
 
 ## DI pattern
 
