@@ -274,15 +274,21 @@ internal static class PublisherModule
         {
             using var localProvider = getLocalDependenciesProvider(serviceDirectory);
             var writeInformationFile = localProvider.GetRequiredService<WriteInformationFile>();
+            var writePolicyFile = localProvider.GetRequiredService<WritePolicyFile>();
 
             await state.Models
                        .IterTaskParallel(async model =>
                        {
-                           switch (model.Key.Resource)
+                           var resource = model.Key.Resource;
+
+                           if (resource is IResourceWithInformationFile resourceWithInfo)
                            {
-                               case IResourceWithInformationFile resourceWithInfo:
-                                   await writeInformationFile(resourceWithInfo, model.Key.Name, model.ToDto(), model.Key.Parents, cancellationToken);
-                                   break;
+                               await writeInformationFile(resourceWithInfo, model.Key.Name, model.ToDto(), model.Key.Parents, cancellationToken);
+                           }
+
+                           if (resource is IPolicyResource policyResource)
+                           {
+                               await writePolicyFile(policyResource, model.Key.Name, model.ToDto(), model.Key.Parents, cancellationToken);
                            }
                        }, maxDegreeOfParallelism: Option.None, cancellationToken);
         }
@@ -306,6 +312,7 @@ internal static class PublisherModule
 
             builder.AddServiceDirectoryToConfiguration(serviceDirectory);
             ResourceModule.ConfigureWriteInformationFile(builder);
+            ResourceModule.ConfigureWritePolicyFile(builder);
 
             return builder.Services.BuildServiceProvider();
         }

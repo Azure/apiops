@@ -72,4 +72,59 @@ internal static class CommonModule
                 _ => $"{currentDescription}-description"
             })
         : GenerateDescription(name);
+
+    public static ResourceName PolicyName { get; } =
+        ResourceName.From("policy").IfErrorThrow();
+
+    public static Gen<string> IpFilterPolicySnippet { get; } =
+        from last3 in Gen.Int[0, 255].Array[3]
+        let ips = last3.Prepend(10)
+        let address = string.Join('.', ips)
+        select $"""
+                <ip-filter action="allow">
+                    <address>{address}</address>
+                </ip-filter>
+                """;
+
+    public static Gen<string> InboundPolicySnippet { get; } =
+        from ipFilterSnippet in IpFilterPolicySnippet
+        select $"""
+                <inbound>
+                    {ipFilterSnippet}
+                </inbound>
+                """;
+
+    private static Gen<(string Name, string Value)> Header { get; } =
+        Gen.OneOf(from contentType in Gen.OneOfConst("application/json", "application/xml", "text/plain")
+                  select ("Content-Type", contentType),
+                  from customHeaderChars in Gen.Char.AlphaNumeric.Array[1, 20]
+                  let customHeader = new string(customHeaderChars)
+                  select ("X-Custom-Header", customHeader));
+
+    public static Gen<string> SetHeaderPolicySnippet { get; } =
+        from x in Header
+        select $"""
+                <set-header name="{x.Name}" exists-action="append">
+                    <value>{x.Value}</value>
+                </set-header>
+                """;
+
+    public static Gen<string> OutboundPolicySnippet { get; } =
+        from setHeaderSnippet in SetHeaderPolicySnippet
+        select $"""
+                <outbound>
+                    {setHeaderSnippet}
+                </outbound>
+                """;
+
+    /// <summary>
+    /// Compares two policy XML strings by stripping all whitespace and comparing case-insensitively.
+    /// Round-tripping through APIM/extractor may change whitespace and formatting.
+    /// </summary>
+    public static bool FuzzyEqualsPolicy(string? first, string? second)
+    {
+        var normalizedFirst = new string([.. first?.Where(c => !char.IsWhiteSpace(c)) ?? []]);
+        var normalizedSecond = new string([.. second?.Where(c => !char.IsWhiteSpace(c)) ?? []]);
+        return normalizedFirst.Equals(normalizedSecond, StringComparison.OrdinalIgnoreCase);
+    }
 }

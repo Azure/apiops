@@ -164,13 +164,14 @@ internal static class ExtractorModule
 
             using var provider = getLocalDependenciesProvider(serviceDirectory);
             var getInformationFileDto = provider.GetRequiredService<GetInformationFileDto>();
+            var getPolicyFileContents = provider.GetRequiredService<GetPolicyFileContents>();
             var parseResourceFile = provider.GetRequiredService<ParseResourceFile>();
             var getLocalFileOperations = provider.GetRequiredService<GetLocalFileOperations>();
             var fileOperations = getLocalFileOperations();
 
             var expectedModels = getExpectedModels(testState, filterOption);
 
-            var result = await validateModelsWereExtracted(expectedModels, getInformationFileDto, fileOperations, cancellationToken);
+            var result = await validateModelsWereExtracted(expectedModels, getInformationFileDto, getPolicyFileContents, fileOperations, cancellationToken);
             result.IfErrorThrow();
 
             result = await validateOnlyModelsWereExtracted(expectedModels, parseResourceFile, fileOperations, cancellationToken);
@@ -183,6 +184,7 @@ internal static class ExtractorModule
 
             builder.AddServiceDirectoryToConfiguration(serviceDirectory);
             ResourceModule.ConfigureGetInformationFileDto(builder);
+            ResourceModule.ConfigureGetPolicyFileContents(builder);
             ResourceModule.ConfigureParseResourceFile(builder);
             FileSystemModule.ConfigureGetLocalFileOperations(builder);
 
@@ -195,7 +197,7 @@ internal static class ExtractorModule
                                                 .ToImmutableArray())
                          .IfNone(() => testState.Models);
 
-        async ValueTask<Result<Unit>> validateModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, GetInformationFileDto getInformationFileDto, FileOperations fileOperations, CancellationToken cancellationToken)
+        async ValueTask<Result<Unit>> validateModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, GetInformationFileDto getInformationFileDto, GetPolicyFileContents getPolicyFileContents, FileOperations fileOperations, CancellationToken cancellationToken)
         {
             var result =
                 await expectedModels
@@ -203,15 +205,20 @@ internal static class ExtractorModule
                         .Where(async (model, cancellationToken) => await isResourceKeySupported(model.Key, cancellationToken))
                         .Traverse(async model =>
                         {
-                            switch (model.Key.Resource)
+                            var (resource, name, parents) = (model.Key.Resource, model.Key.Name, model.Key.Parents);
+
+                            switch (resource)
                             {
                                 case IResourceWithInformationFile resourceWithInformationFile:
-                                    var (resource, name, parents) = (model.Key.Resource, model.Key.Name, model.Key.Parents);
-
                                     var dtoOption = await getInformationFileDto(resourceWithInformationFile, name, parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
 
                                     return dtoOption.Map(model.ValidateDto)
                                                     .IfNone(() => Error.From($"Could not find extracted file for {model.Key}."));
+                                case IPolicyResource policyResource:
+                                    var contentsOption = await getPolicyFileContents(policyResource, name, parents, fileOperations.ReadFile, cancellationToken);
+
+                                    return contentsOption.Map(contents => model.ValidateDto(PolicyContentsToDto(contents)))
+                                                         .IfNone(() => Error.From($"Could not find policy file for {model.Key}."));
                                 default:
                                     return Unit.Instance;
                             }
@@ -219,6 +226,15 @@ internal static class ExtractorModule
 
             return result.Map(_ => Unit.Instance);
         }
+
+        static JsonObject PolicyContentsToDto(BinaryData contents) =>
+            new()
+            {
+                ["properties"] = new JsonObject
+                {
+                    ["value"] = contents.ToString()
+                }
+            };
 
         async ValueTask<Result<Unit>> validateOnlyModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, ParseResourceFile parseResourceFile, FileOperations fileOperations, CancellationToken cancellationToken)
         {
