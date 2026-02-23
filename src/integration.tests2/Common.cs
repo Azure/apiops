@@ -1,4 +1,5 @@
 using common;
+using common.tests;
 using CsCheck;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -22,7 +23,7 @@ internal static class CommonModule
     private static SortResources ResolveSortResources(IServiceProvider provider)
     {
         var graph = provider.GetRequiredService<ResourceGraph>();
-        
+
         var resourceIndex = graph.TopologicallySortedResources
                                  .Select((resource, index) => (resource, index))
                                  .ToImmutableDictionary(x => x.resource, x => x.index);
@@ -72,11 +73,38 @@ internal static class CommonModule
                 _ => $"{currentDescription}-description"
             })
         : GenerateDescription(name);
+}
 
-    public static ResourceName PolicyName { get; } =
+internal static class PolicyModule
+{
+    public static ResourceName ResourceName { get; } =
         ResourceName.From("policy").IfErrorThrow();
 
-    public static Gen<string> IpFilterPolicySnippet { get; } =
+    public static Gen<string> GenerateSetVariableSnippet(IEnumerable<NamedValueModel> namedValues) =>
+        from variableName in Generator.AlphanumericWord
+        from value in GenerateWordOrNamedValue(namedValues)
+        select $"""<set-variable name="{variableName}" value="{value}" />""";
+
+    private static Gen<string> GenerateWordOrNamedValue(IEnumerable<NamedValueModel> namedValues) =>
+        Gen.OneOf([.. namedValues
+                         .Where(model => model.Secret is false)
+                         .Select(model => Gen.Const($$$"""{{{{{model.DisplayName}}}}}"""))
+                         .Append(Generator.AlphanumericWord)]);
+
+    public static Gen<string> GenerateInboundSnippet(IEnumerable<NamedValueModel> namedValues, IEnumerable<PolicyFragmentModel> fragments) =>
+        from snippetGens in Generator.SubSetOf([GenerateSetVariableSnippet(namedValues),
+                                                GenerateIpFilterSnippet(),
+                                                GenerateFindAndReplaceSnippet(namedValues),
+                                                GenerateSetHeaderSnippet(namedValues),
+                                                GenerateIncludeFragmentSnippet(fragments)])
+        from snippets in Generator.Traverse(snippetGens, gen => gen)
+        select $"""
+                <inbound>
+                    {string.Join(Environment.NewLine, snippets)}
+                </inbound>
+                """;
+
+    private static Gen<string> GenerateIpFilterSnippet() =>
         from last3 in Gen.Int[0, 255].Array[3]
         let ips = last3.Prepend(10)
         let address = string.Join('.', ips)
@@ -86,34 +114,40 @@ internal static class CommonModule
                 </ip-filter>
                 """;
 
-    public static Gen<string> InboundPolicySnippet { get; } =
-        from ipFilterSnippet in IpFilterPolicySnippet
-        select $"""
-                <inbound>
-                    {ipFilterSnippet}
-                </inbound>
-                """;
+    private static Gen<string> GenerateFindAndReplaceSnippet(IEnumerable<NamedValueModel> namedValues) =>
+        from @from in GenerateWordOrNamedValue(namedValues)
+        from to in GenerateWordOrNamedValue(namedValues)
+        select $"""<find-and-replace from="{@from}" to="{to}" />""";
 
-    private static Gen<(string Name, string Value)> Header { get; } =
-        Gen.OneOf(from contentType in Gen.OneOfConst("application/json", "application/xml", "text/plain")
-                  select ("Content-Type", contentType),
-                  from customHeaderChars in Gen.Char.AlphaNumeric.Array[1, 20]
-                  let customHeader = new string(customHeaderChars)
-                  select ("X-Custom-Header", customHeader));
-
-    public static Gen<string> SetHeaderPolicySnippet { get; } =
-        from x in Header
+    private static Gen<string> GenerateSetHeaderSnippet(IEnumerable<NamedValueModel> namedValues) =>
+        from x in GenerateHeader(namedValues)
         select $"""
                 <set-header name="{x.Name}" exists-action="append">
                     <value>{x.Value}</value>
                 </set-header>
                 """;
 
-    public static Gen<string> OutboundPolicySnippet { get; } =
-        from setHeaderSnippet in SetHeaderPolicySnippet
+    private static Gen<(string Name, string Value)> GenerateHeader(IEnumerable<NamedValueModel> namedValues) =>
+        Gen.OneOf(from contentType in Gen.OneOfConst("application/json", "application/xml", "text/plain")
+                  select ("Content-Type", contentType),
+                  from customValue in GenerateWordOrNamedValue(namedValues)
+                  select ("X-Custom-Header", customValue));
+
+    private static Gen<string> GenerateIncludeFragmentSnippet(IEnumerable<PolicyFragmentModel> fragments) =>
+        from includes in Generator.SubSetOf([.. from fragment in fragments
+                                                let name = fragment.Key.Name
+                                                select $"""<include-fragment fragment-id="{name}" />"""])
+        select string.Join(Environment.NewLine, includes);
+
+    public static Gen<string> GenerateOutboundSnippet(IEnumerable<NamedValueModel> namedValues, IEnumerable<PolicyFragmentModel> fragments) =>
+        from snippetGens in Generator.SubSetOf([GenerateSetVariableSnippet(namedValues),
+                                                GenerateFindAndReplaceSnippet(namedValues),
+                                                GenerateSetHeaderSnippet(namedValues),
+                                                GenerateIncludeFragmentSnippet(fragments)])
+        from snippets in Generator.Traverse(snippetGens, gen => gen)
         select $"""
                 <outbound>
-                    {setHeaderSnippet}
+                    {string.Join(Environment.NewLine, snippets)}
                 </outbound>
                 """;
 
@@ -121,7 +155,7 @@ internal static class CommonModule
     /// Compares two policy XML strings by stripping all whitespace and comparing case-insensitively.
     /// Round-tripping through APIM/extractor may change whitespace and formatting.
     /// </summary>
-    public static bool FuzzyEqualsPolicy(string? first, string? second)
+    public static bool FuzzyEquals(string? first, string? second)
     {
         var normalizedFirst = new string([.. first?.Where(c => !char.IsWhiteSpace(c)) ?? []]);
         var normalizedSecond = new string([.. second?.Where(c => !char.IsWhiteSpace(c)) ?? []]);

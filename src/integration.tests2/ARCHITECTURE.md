@@ -23,7 +23,7 @@ Each test iteration runs the following steps against a randomly generated `TestS
 5. **Commit-based publish**: wipe APIM, re-populate with `TestState`, set up a git commit transitioning from `TestState` to `NextState`, publish using a commit ID, validate APIM reflects the state transition correctly. Note that the Git commit setup uses three steps:
     - Commit 1: `initialState`
     - Commit 2: `nextState`. This is the commit ID that will passed to the publisher.
-    - Commit 3: `initialState` again. This ensures that the respects the specified commit ID. Previous buggy iterations of the publisher used the latest commit ID instead of the specified one.
+    - Commit 3: `initialState` again. This ensures that the publisher respects the specified commit ID. Previous buggy iterations of the publisher used the latest commit ID instead of the specified one.
 
 ## Key types
 
@@ -95,27 +95,32 @@ Controls which resources the extractor should extract. Serialized to YAML.
 | `GenerateDisplayName(name, current)` | Output: `"myname-display-2"` -> `"myname-display-3"` |
 | `GenerateDescription(name)` | Output: `"myname-description"` |
 | `GenerateDescription(name, current)` | Output:  `"myname-description-2"` -> `"myname-description-3"` |
-| `PolicyName` | Shared `ResourceName` for `"policy"`. Reused across service policy, API policy, etc. |
-| `IpFilterPolicySnippet` | Generates `<ip-filter>` with a random IP address. |
-| `InboundPolicySnippet` | Wraps `IpFilterPolicySnippet` in `<inbound>`. |
-| `SetHeaderPolicySnippet` | Generates `<set-header>` with a random header. |
-| `OutboundPolicySnippet` | Wraps `SetHeaderPolicySnippet` in `<outbound>`. |
-| `FuzzyEqualsPolicy(first, second)` | Compares policy XML by stripping all whitespace and comparing case-insensitively. |
 
-## Resource Models
+### `PolicyModule`
+
+| Member | Notes |
+|--------|--------|
+| `ResourceName` | Shared `ResourceName` for `"policy"`. Reused across service policy and related policy resources. |
+| `GenerateSetVariableSnippet(namedValues)` | Generates `<set-variable>` that can reference named values by display name or a random word. |
+| `GenerateInboundSnippet(namedValues, fragments)` | Builds `<inbound>` from a random subset of snippets |
+| `GenerateOutboundSnippet(namedValues, fragments)` | Builds `<outbound>` from a random subset of snippets |
+| `FuzzyEquals(first, second)` | Compares policy XML by stripping all whitespace and comparing case-insensitively. |
+
+## Resource models
 
 | Resource | Model | Properties | Generation | Validation | Notes |
 |----------|-------|------------|------------|------------|-------|
 | Tag | `TagModel` | `DisplayName` | Generate 0–5 tags. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName`. | |
 | Named Value | `NamedValueModel` | `DisplayName` <br> `Value` <br> `Secret` | Generate 0–5 named values. <br><br> `Secret` is randomly `true` or `false`. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Secret`. <br><br> Only validate `Value` when `Secret == false` (APIM doesn't return secret values). | Publisher validation skips secret named values unless overridden. |
 | Logger | `LoggerModel` | `Description` <br> `IsBuffered` | Only use `azuremonitor` logger. APIM requires real resources for other application insights and event hub. <br><br> Generate 0 or 1 logger. APIM supports a maximum of 1 logger of type `azuremonitor`. Put extra weight on the 1 logger scenario so it's more likely to be generated than 0. | Always validate `Description` and `IsBuffered`. | Diagnostics depend on loggers via `LoggerId`. |
-| Diagnostic | `DiagnosticModel` | `Verbosity` <br> `LogClientIp` <br> `LoggerKey` | For each logger in the accumulated models, generate 0 or 1 diagnostic. Diagnostic name matches the logger name (APIM requires service-level diagnostic names to match logger types). <br><br> Put extra weight on the 1 diagnostic scenario. <br><br> `LoggerId` in the DTO is a relative ID (e.g. `/loggers/azuremonitor`). | Validate `Verbosity` and `LogClientIp`. <br><br> Skip `LoggerId` validation (format differs between APIM GET and extracted files). | First resource with a cross-resource dependency. Depends on `LoggerResource` via `IResourceWithReference`. <br><br> `GenerateNextState` delegates to `GenerateSet(accumulatedNextModels)` — diagnostics are fully regenerated based on loggers in the new state. |
+| Diagnostic | `DiagnosticModel` | `Verbosity` <br> `LogClientIp` <br> `LoggerKey` | Select a random subset of logger models and generate one diagnostic per selected logger.<br><br>Diagnostic name matches the logger name. <br><br> `LoggerId` in the DTO is a relative ID (e.g. `/loggers/azuremonitor`). | Validate `Verbosity` and `LogClientIp`. <br><br> Skip `LoggerId` validation (format differs between APIM GET and extracted files). | First resource with a cross-resource dependency. Depends on `LoggerResource` via `IResourceWithReference`. <br><br> `GenerateNextState` delegates to `GenerateSet(accumulatedNextModels)` — diagnostics are fully regenerated based on loggers in the new state. |
 | Product | `ProductModel` | `DisplayName` <br> `Description` | Generate 0–5 products. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | APIM auto-creates subscriptions and product-groups when a product is created. `PutProductInApim` in `common` deletes these auto-created resources to avoid polluting state. |
 | Group | `GroupModel` | `DisplayName` <br> `Description` | Generate 0–5 groups. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | Built-in groups (Administrators, Developers, Guests) are excluded by `IsResourceKeySupported`. |
 | Version Set | `VersionSetModel` | `DisplayName` <br> `Description` | Generate 0–5 version sets. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | APIM requires `versioningScheme` on PUT. We use a fixed value (`"Segment"`) in the DTO. |
 | Backend | `BackendModel` | `Description` <br> `Url` | Generate 0–5 backends. <br><br> Deduplicate by `Key`. <br><br> `Url` is derived from `Description` (`https://{description}.example.com`). | Always validate `Description` and `Url`. | APIM requires `protocol` on PUT. We use a fixed value (`"http"`) in the DTO. |
 | Gateway | `GatewayModel` | `Description` | Currently disabled by having all generators return empty sets. Creating a gateway on the Developer SKU fails with a SKU limit error pointing to https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits#limits---api-management-classic-tiers. Revisit once classic SKU limits are clarified. | Always validate `Description`. | APIM requires `locationData` on PUT. We use a fixed value (`"test"`) in the DTO. |
-| Service Policy | `ServicePolicyModel` | `Content` | Generate 0 or 1 service policy (singleton). <br><br> Put extra weight on the 1 policy scenario. <br><br> Content is random valid APIM policy XML. | Validate `Content` using `FuzzyEqualsPolicy` (remove whitespace, then do case-insensitive comparison). | Policy name is always `policy` (`CommonModule.PolicyName`). |
+| Policy Fragment | `PolicyFragmentModel` | `Description` <br> `Content` | Generate 0–5 policy fragments. <br><br> `Content` is a random valid policy fragment XML. It occasionally references named values. | Always validate `Description` and `Content`. `Content` validation uses `PolicyModule.FuzzyEquals`. |  |
+| Service Policy | `ServicePolicyModel` | `Content` | Generate 0 or 1 service policy (singleton). <br><br> Put extra weight on the 1 policy scenario. <br><br> `Content` is a random valid APIM policy XML. It occasionally references named values and policy framents. | Always validate `Content` using `PolicyModule.FuzzyEquals` | Policy name is always `policy` (`PolicyModule.ResourceName`). |
 
 ## DI pattern
 

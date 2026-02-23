@@ -18,6 +18,9 @@ namespace publisher;
 internal delegate ValueTask<Relationships> GetCurrentRelationships(CancellationToken cancellationToken);
 internal delegate ValueTask<Relationships> GetPreviousRelationships(CancellationToken cancellationToken);
 internal delegate ValueTask<Relationships> GetRelationships(FileOperations fileOperations, CancellationToken cancellationToken);
+internal delegate ValueTask<ImmutableDictionary<IResource, ImmutableHashSet<ResourceKey>>> BuildResourceMap(FileOperations fileOperations, CancellationToken cancellationToken);
+internal delegate ValueTask<ImmutableHashSet<(ResourceKey Predecessor, ResourceKey Successor)>> GetRelationshipPairs(ImmutableDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, FileOperations fileOperations, CancellationToken cancellationToken);
+internal delegate void ValidateRelationshipGraph(Relationships relationships, ImmutableDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken);
 internal delegate bool IsValidationStrict();
 
 internal abstract record ValidationError
@@ -170,76 +173,119 @@ internal static class RelationshipsModule
 
         return async cancellationToken =>
         {
-            // No commit ID was passed, so we can't access history
             if (commitIdWasPassed() is false)
             {
+                // No commit ID was passed, so we can't access history
                 return Relationships.Empty;
             }
+            else
+            {
+                // If we can get the previous commit ID, map previous relationships
+                var fileOperationsOption = getPreviousCommitFileOperations();
+                var relationshipsOption = await fileOperationsOption.MapTask(async operations => await getRelationships(operations, cancellationToken));
 
-            // If we can get the previous commit ID, map previous relationships
-            var fileOperationsOption = getPreviousCommitFileOperations();
-
-            var relationshipsOption = await fileOperationsOption.MapTask(async operations => await getRelationships(operations, cancellationToken));
-
-            // Otherwise, return an empty set of relationships
-            return relationshipsOption.IfNone(() => Relationships.Empty);
+                // Fall back to an empty set of relationships
+                return relationshipsOption.IfNone(() => Relationships.Empty);
+            }
         };
     }
 
     public static void ConfigureGetRelationships(IHostApplicationBuilder builder)
     {
-        common.ResourceModule.ConfigureParseResourceFile(builder);
-        common.ResourceModule.ConfigureGetInformationFileDto(builder);
-        common.ResourceModule.ConfigureGetPolicyFileContents(builder);
-        ConfigureIsValidationStrict(builder);
+        ConfigureBuildResourceMap(builder);
+        ConfigureGetRelationshipPairs(builder);
+        ConfigureValidateRelationshipGraph(builder);
 
         builder.TryAddSingleton(ResolveGetRelationships);
     }
 
-    internal static GetRelationships ResolveGetRelationships(IServiceProvider provider)
+    public static void ConfigureBuildResourceMap(IHostApplicationBuilder builder)
+    {
+        common.ResourceModule.ConfigureParseResourceFile(builder);
+
+        builder.TryAddSingleton(ResolveBuildResourceMap);
+    }
+
+    private static BuildResourceMap ResolveBuildResourceMap(IServiceProvider provider)
     {
         var parseFile = provider.GetRequiredService<ParseResourceFile>();
+
+        return async (fileOperations, cancellationToken) =>
+        [
+            .. await fileOperations.EnumerateServiceDirectoryFiles()
+                                   .Choose(async file => await parseFile(file, fileOperations.ReadFile, cancellationToken))
+                                   .GroupBy(key => key.Resource)
+                                   .ToDictionaryAsync(group => group.Key,
+                                                      group => group.ToImmutableHashSet(),
+                                                      cancellationToken: cancellationToken)
+        ];
+    }
+
+    public static void ConfigureGetRelationshipPairs(IHostApplicationBuilder builder)
+    {
+        common.ResourceModule.ConfigureGetInformationFileDto(builder);
+        common.ResourceModule.ConfigureGetPolicyFileContents(builder);
+
+        builder.TryAddSingleton(ResolveGetRelationshipPairs);
+    }
+
+    private static GetRelationshipPairs ResolveGetRelationshipPairs(IServiceProvider provider)
+    {
         var getDto = provider.GetRequiredService<GetInformationFileDto>();
         var getPolicyFileContents = provider.GetRequiredService<GetPolicyFileContents>();
-        var isValidationStrict = provider.GetRequiredService<IsValidationStrict>();
-        var logger = provider.GetRequiredService<ILogger>();
 
         var namedValueTokenRegex = new Regex("{{\\s*(.*?)\\s*}}", RegexOptions.CultureInvariant);
         var includeFragmentRegex = new Regex("<include-fragment\\s+fragment-id=\"([^\"]+)\"\\s*/>", RegexOptions.CultureInvariant);
 
-        return async (operations, cancellationToken) =>
+        return async (resources, operations, cancellationToken) =>
         {
             var pairs = new ConcurrentBag<(ResourceKey Predecessor, ResourceKey Successor)>();
 
-            // Build resource dictionary
-            var resources = await operations.EnumerateServiceDirectoryFiles()
-                                            .Choose(async file => await parseFile(file, operations.ReadFile, cancellationToken))
-                                            .GroupBy(key => key.Resource)
-                                            .ToDictionaryAsync(group => group.Key,
-                                                               group => group.ToImmutableHashSet(),
-                                                               cancellationToken: cancellationToken);
+            ImmutableDictionary<IResourceWithInformationFile, ImmutableDictionary<string, ResourceKey>> displayNameDictionary = [
+                .. await resources.Where(kvp => kvp.Key is NamedValueResource or WorkspaceNamedValueResource)
+                                  .Choose(async kvp =>
+                                  {
+                                      var (resource, keys) = kvp;
 
-            // Build resource relationship pairs
+                                      if (resource is IResourceWithInformationFile resourceWithInformationFile)
+                                      {
+                                          ImmutableDictionary<string, ResourceKey> dictionary =
+                                              [.. await keys.Choose(async key =>
+                                              {
+                                                  var (name, parents) = (key.Name, key.Parents);
+
+                                                  return from dto in await getDto(resourceWithInformationFile, name, parents, operations.ReadFile, operations.GetSubDirectories, cancellationToken)
+                                                         from properties in dto.GetJsonObjectProperty("properties").ToOption()
+                                                         from displayName in properties.GetStringProperty("displayName").ToOption()
+                                                         select KeyValuePair.Create(displayName, key);
+                                              }).ToArrayAsync(cancellationToken)];
+
+                                          return Option.Some(KeyValuePair.Create(resourceWithInformationFile, dictionary));
+                                      }
+                                      else
+                                      {
+                                          return Option.None;
+                                      }
+                                  })
+                                  .ToArrayAsync(cancellationToken)
+            ];
+
             await resources.Values
                            .SelectMany(group => group)
                            .IterTaskParallel(async key =>
                            {
-                               // Process child resources
                                if (key.Resource is IChildResource childResource)
                                {
                                    var parent = getParent(childResource, key.Name, key.Parents);
-
                                    pairs.Add((parent, key));
                                }
 
-                               // Get DTO JSON from information file resources
                                var dtoJsonOption = Option<JsonObject>.None();
                                if (key.Resource is IResourceWithInformationFile resourceWithInformationFile)
                                {
                                    dtoJsonOption = await getDto(resourceWithInformationFile, key.Name, key.Parents, operations.ReadFile, operations.GetSubDirectories, cancellationToken);
                                }
 
-                               // Process composite resources
                                if (key.Resource is ICompositeResource compositeResource)
                                {
                                    var primary = getPrimary(compositeResource, key.Name, key.Parents);
@@ -252,7 +298,6 @@ internal static class RelationshipsModule
                                    pairs.Add((secondary, key));
                                }
 
-                               // Process resources with references
                                if (key.Resource is IResourceWithReference resourceWithReference)
                                {
                                    var dto = dtoJsonOption.IfNone(() => throw new InvalidOperationException($"Could not get DTO for resource '{key}'."));
@@ -261,29 +306,25 @@ internal static class RelationshipsModule
                                        .Iter(reference => pairs.Add((reference, key)));
                                }
 
-                               // Process policies for named value references
                                if (key.Resource is IPolicyResource policyResource)
                                {
-                                   var namedValues = await getPolicyNamedValues(policyResource, key.Name, key.Parents, operations.ReadFile, resources, cancellationToken);
+                                   var namedValues = await getPolicyNamedValues(policyResource, key.Name, key.Parents, operations.ReadFile, cancellationToken);
                                    namedValues.Iter(namedValue => pairs.Add((namedValue, key)), cancellationToken);
                                }
 
-                               // Process policies for policy fragment references
                                if (key.Resource is IPolicyResource policyResourceForFragments)
                                {
                                    var policyFragments = await getPolicyFragments(policyResourceForFragments, key.Name, key.Parents, operations.ReadFile, resources, cancellationToken);
                                    policyFragments.Iter(fragment => pairs.Add((fragment, key)), cancellationToken);
                                }
 
-                               // Process DTO named value references
                                dtoJsonOption.Iter(dtoJson =>
                                {
                                    var content = dtoJson.ToJsonString();
-                                   var namedValues = getNamedValuesFromContent(content, key.Parents, resources);
+                                   var namedValues = getNamedValuesFromContent(content, key.Parents);
                                    namedValues.Iter(namedValue => pairs.Add((namedValue, key)), cancellationToken);
                                });
 
-                               // Process backend pools for individual backend references
                                if (key.Resource is BackendResource backendResource)
                                {
                                    dtoJsonOption.Map(json => getBackendPoolBackends(backendResource, key.Name, key.Parents, json, cancellationToken))
@@ -291,7 +332,6 @@ internal static class RelationshipsModule
                                                 .Iter(backend => pairs.Add((backend, key)), cancellationToken);
                                }
 
-                               // Process workspace backend pools for individual backend references
                                if (key.Resource is WorkspaceBackendResource workspaceBackendResource)
                                {
                                    dtoJsonOption.Map(json => getWorkspaceBackendPoolBackends(workspaceBackendResource, key.Name, key.Parents, json, cancellationToken))
@@ -299,7 +339,6 @@ internal static class RelationshipsModule
                                                 .Iter(backend => pairs.Add((backend, key)), cancellationToken);
                                }
 
-                               // Process non-root API revisions
                                if (key.Resource is ApiResource)
                                {
                                    ApiRevisionModule.Parse(key.Name)
@@ -324,9 +363,6 @@ internal static class RelationshipsModule
                                                     });
                                }
 
-                               // Add relationship between API operation policies and their parent APIs.
-                               // We don't directly parse API operations; they get created when their parent API specification is put.
-                               // This relationship enforces the order API operation => API operation policy.
                                if (key.Resource is ApiOperationPolicyResource or WorkspaceApiOperationPolicyResource)
                                {
                                    var (grandParentResource, grandParentName) = (key.Resource, key.Parents.SkipLast(1).LastOrDefault()) switch
@@ -353,22 +389,228 @@ internal static class RelationshipsModule
 
                            }, maxDegreeOfParallelism: Option.None, cancellationToken);
 
-            var relationships = Relationships.From(pairs, cancellationToken);
+            return [.. pairs];
 
-            var fileSystemResourceKeys = ImmutableHashSet.CreateRange(from resourceKeys in resources.Values
-                                                                      from resourceKey in resourceKeys
-                                                                      select resourceKey);
+            async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyNamedValues(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, CancellationToken cancellationToken)
+            {
+                var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
+                                     select binaryData.ToString();
 
-            validateRelationships(relationships, fileSystemResourceKeys.Contains, cancellationToken);
+                var contents = contentsOption.IfNoneNull() ?? string.Empty;
 
-            return relationships;
+                return getNamedValuesFromContent(contents, parents);
+            }
+
+            async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyFragments(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
+            {
+                var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
+                                     select binaryData.ToString();
+
+                var contents = contentsOption.IfNoneNull() ?? string.Empty;
+
+                return getPolicyFragmentsFromContent(contents, parents, resources);
+            }
+
+            ImmutableHashSet<ResourceKey> getNamedValuesFromContent(string content, ParentChain parents)
+            {
+                if (string.IsNullOrWhiteSpace(content))
+                {
+                    return [];
+                }
+
+                return [.. namedValueTokenRegex.Matches(content)
+                                               .Select(match => match.Groups[1].Value.Trim())
+                                               .Choose(displayName => getNamedValueWithDisplayName(displayName))];
+
+                Option<ResourceKey> getNamedValueWithDisplayName(string displayName) =>
+                    parents.Any(tuple => tuple.Resource is WorkspaceResource)
+                        ? findResourceKeyWithDisplayName(WorkspaceNamedValueResource.Instance, displayName)
+                            .IfNone(() => findResourceKeyWithDisplayName(NamedValueResource.Instance, displayName))
+                        : findResourceKeyWithDisplayName(NamedValueResource.Instance, displayName);
+
+                Option<ResourceKey> findResourceKeyWithDisplayName(IResourceWithInformationFile resource, string displayName) =>
+                    from dictionary in displayNameDictionary.Find(resource)
+                    from resourceKey in dictionary.Find(displayName)
+                    select resourceKey;
+            }
+
+            ImmutableHashSet<ResourceKey> getPolicyFragmentsFromContent(string content, ParentChain parents, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources)
+            {
+                if (string.IsNullOrWhiteSpace(content))
+                {
+                    return [];
+                }
+
+                var workspaceOption = parents.Head(tuple => tuple.Resource is WorkspaceResource);
+
+                var referencedFragments = includeFragmentRegex.Matches(content)
+                                                              .Select(match => match.Groups[1].Value.Trim())
+                                                              .Choose(nameString => ResourceName.From(nameString).ToOption())
+                                                              .Choose(name => findPolicyFragment(name, workspaceOption, resources));
+
+                return [.. referencedFragments];
+            }
+
+            Option<ResourceKey> findPolicyFragment(ResourceName name, Option<(IResource, ResourceName)> workspaceOption, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources) =>
+                workspaceOption.Bind(workspace => from fragments in resources.Find(WorkspacePolicyFragmentResource.Instance)
+                                                  from fragment in fragments.Head(key => key.Name == name
+                                                                                         && key.Parents.Any(parent => parent == workspace))
+                                                  select fragment)
+                               .IfNone(() => from fragments in resources.Find(PolicyFragmentResource.Instance)
+                                             from fragment in fragments.Head(key => key.Name == name)
+                                             select fragment);
+
+            ResourceKey getParent(IChildResource resource, ResourceName name, ParentChain parents) =>
+                parents.LastOrDefault() switch
+                {
+                    (null, _) or (_, null) =>
+                        throw new InvalidOperationException($"Resource '{resource}' is missing its parent."),
+                    (var parentResource, _) when parentResource != resource.Parent =>
+                        throw new InvalidOperationException($"Resource '{resource}' has parent '{resource.Parent.GetType().Name}' but its closest ancestor is '{parentResource.GetType().Name}'."),
+                    (var parentResource, var parentName) => new ResourceKey
+                    {
+                        Resource = parentResource,
+                        Name = parentName,
+                        Parents = ParentChain.From(parents.SkipLast(1))
+                    }
+                };
+
+            ResourceKey getPrimary(ICompositeResource resource, ResourceName name, ParentChain parents) =>
+                parents.LastOrDefault() switch
+                {
+                    (null, _) or (_, null) =>
+                        throw new InvalidOperationException($"Resource '{resource}' is missing its primary."),
+                    (var primaryResource, _) when primaryResource != resource.Primary =>
+                        throw new InvalidOperationException($"Resource '{resource}' has primary '{resource.Primary.GetType().Name}' but its closest ancestor is '{primaryResource.GetType().Name}'."),
+                    (var primaryResource, var primaryName) => new ResourceKey
+                    {
+                        Resource = primaryResource,
+                        Name = primaryName,
+                        Parents = ParentChain.From(parents.SkipLast(1))
+                    }
+                };
+
+            Option<ResourceKey> getSecondary(ICompositeResource resource, ResourceName name, ParentChain parents, JsonObject dto)
+            {
+                Option<ResourceName> secondaryNameOption = Option.None;
+                if (resource is ILinkResource linkResource)
+                {
+                    var result = from properties in dto.GetJsonObjectProperty("properties")
+                                 from id in properties.GetStringProperty(linkResource.DtoPropertyNameForLinkedResource)
+                                 from resourceName in ResourceName.From(id.Split('/').Last())
+                                 select resourceName;
+
+                    secondaryNameOption = result.ToOption();
+                }
+                else
+                {
+                    secondaryNameOption = Option.Some(name);
+                }
+
+                return secondaryNameOption.Map(name => new ResourceKey
+                {
+                    Resource = resource.Secondary,
+                    Name = name,
+                    Parents = ParentChain.From(parents.SkipLast(1))
+                });
+            }
+
+            ImmutableHashSet<ResourceKey> getReferences(IResourceWithReference resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
+            {
+                var resourceKey = ResourceKey.From(resource, name, parents);
+
+                var mandatoryReferences = resource.MandatoryReferencedResourceDtoProperties
+                                                  .Select(kvp => getReferencedResourceKey(kvp.Key, kvp.Value)
+                                                                    .MapError(error => Error.From($"Could not obtain mandatory reference to {kvp.Key.GetType().Name} in property {kvp.Value} of DTO {resourceKey}. {error}"))
+                                                                    .IfErrorThrow());
+
+                var optionalReferences = resource.OptionalReferencedResourceDtoProperties
+                                                 .Choose(kvp => getReferencedResourceKey(kvp.Key, kvp.Value).ToOption());
+
+                return [.. mandatoryReferences, .. optionalReferences];
+
+                Result<ResourceKey> getReferencedResourceKey(IResource referencedResource, string dtoPropertyName) =>
+                    from properties in dto.GetJsonObjectProperty("properties")
+                    from id in properties.GetStringProperty(dtoPropertyName)
+                    from referencedResourceParents in getReferencedResourceParents(referencedResource)
+                    from resourceName in getResourceName(id, referencedResource, referencedResourceParents)
+                    select ResourceKey.From(referencedResource, resourceName, referencedResourceParents);
+
+                Result<ParentChain> getReferencedResourceParents(IResource referencedResource) =>
+                    referencedResource.GetTraversalPredecessorHierarchy()
+                                      .Traverse(predecessor => parents.Head(pair => pair.Resource == predecessor)
+                                                                      .Match(pair => Result.Success(pair),
+                                                                             () => Error.From($"Could not find resource {predecessor.GetType().Name} in parent chain of {resourceKey}.")),
+                                                cancellationToken)
+                                      .Map(pairs => ParentChain.From(pairs));
+
+                static Result<ResourceName> getResourceName(string id, IResource resource, ParentChain parents) =>
+                    id.Split('/', StringSplitOptions.RemoveEmptyEntries) switch
+                    {
+                        [.. var head, var collectionUriPath, var resourceName] when
+                            collectionUriPath.Equals(resource.CollectionUriPath, StringComparison.OrdinalIgnoreCase)
+                            && string.Join('/', head).Trim('/').EndsWith(parents.ToResourceId().Trim('/'), StringComparison.OrdinalIgnoreCase) => ResourceName.From(resourceName),
+                        _ => Error.From($"Expected '{id}' to match the format '...{parents.ToResourceId()}/{resource.CollectionUriPath}/{{name}}'.")
+                    };
+            }
+
+            ImmutableHashSet<ResourceKey> getBackendPoolBackends(BackendResource resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
+            {
+                var serializerOptions = ((IResourceWithDto)resource).SerializerOptions;
+
+                return [.. JsonNodeModule.To<BackendDto>(dto, serializerOptions)
+                                     .Map(backendDto => backendDto.Properties.Pool?.Services ?? [])
+                                     .IfError(_ => [])
+                                     .Choose(backend =>
+                                     {
+                                         var nameString = backend.Id?.Split('/').LastOrDefault() ?? string.Empty;
+
+                                         return ResourceName.From(nameString)
+                                                            .ToOption();
+                                     })
+                                     .Select(backendName => ResourceKey.From(resource, backendName, parents))];
+            }
+
+            ImmutableHashSet<ResourceKey> getWorkspaceBackendPoolBackends(WorkspaceBackendResource resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
+            {
+                var serializerOptions = ((IResourceWithDto)resource).SerializerOptions;
+
+                return [.. JsonNodeModule.To<WorkspaceBackendDto>(dto, serializerOptions)
+                                     .Map(backendDto => backendDto.Properties.Pool?.Services ?? [])
+                                     .IfError(_ => [])
+                                     .Choose(backend =>
+                                     {
+                                         var nameString = backend.Id?.Split('/').LastOrDefault() ?? string.Empty;
+
+                                         return ResourceName.From(nameString)
+                                                            .ToOption();
+                                     })
+                                     .Select(backendName => ResourceKey.From(resource, backendName, parents))];
+            }
         };
+    }
 
-        void validateRelationships(Relationships relationships, Func<ResourceKey, bool> resourceInSnapshot, CancellationToken cancellationToken)
+    public static void ConfigureValidateRelationshipGraph(IHostApplicationBuilder builder)
+    {
+        ConfigureIsValidationStrict(builder);
+
+        builder.TryAddSingleton(ResolveValidateRelationshipGraph);
+    }
+
+    private static ValidateRelationshipGraph ResolveValidateRelationshipGraph(IServiceProvider provider)
+    {
+        var isValidationStrict = provider.GetRequiredService<IsValidationStrict>();
+        var logger = provider.GetRequiredService<ILogger>();
+
+        return (relationships, resources, cancellationToken) =>
         {
+            var snapshotKeys = ImmutableHashSet.CreateRange(from resourceKeys in resources.Values
+                                                            from resourceKey in resourceKeys
+                                                            select resourceKey);
+
             var exceptions = new List<string>();
 
-            relationships.Validate(resourceInSnapshot, cancellationToken)
+            relationships.Validate(snapshotKeys.Contains, cancellationToken)
                          .Iter(error =>
                          {
                              switch (error)
@@ -377,7 +619,6 @@ internal static class RelationshipsModule
                                      exceptions.Add($"Found cycle in resource relationships: {string.Join(" -> ", cycle.Path)}.");
                                      break;
                                  case ValidationError.MissingPredecessor missingPredecessor:
-                                     // Skip predecessors that shouldn't be validated
                                      if (shouldValidate(missingPredecessor.Predecessor) is false)
                                      {
                                          break;
@@ -399,236 +640,43 @@ internal static class RelationshipsModule
             {
                 throw new InvalidOperationException($"Found at least one validation error:{Environment.NewLine}{string.Join(Environment.NewLine, exceptions)}");
             }
-        }
 
-        // Some resources don't need validation because they're never extracted
-        bool shouldValidate(ResourceKey resourceKey) =>
-            resourceKey.Resource switch
-            {
-                SubscriptionResource => resourceKey.Name != SubscriptionResource.Master,
-                GroupResource => resourceKey.Name != GroupResource.Administrators
-                                 && resourceKey.Name != GroupResource.Developers
-                                 && resourceKey.Name != GroupResource.Guests,
-                ApiOperationResource => false,
-                WorkspaceResource => false,
-                WorkspaceGroupResource => resourceKey.Name != WorkspaceGroupResource.Administrators
-                                          && resourceKey.Name != WorkspaceGroupResource.Developers
-                                          && resourceKey.Name != WorkspaceGroupResource.Guests,
-                WorkspaceApiOperationResource => false,
-                _ => true
-            };
+            return;
 
-        static ResourceKey getParent(IChildResource resource, ResourceName name, ParentChain parents) =>
-            parents.LastOrDefault() switch
-            {
-                (null, _) or (_, null) =>
-                    throw new InvalidOperationException($"Resource '{resource}' is missing its parent."),
-                (var parentResource, _) when parentResource != resource.Parent =>
-                    throw new InvalidOperationException($"Resource '{resource}' has parent '{resource.Parent.GetType().Name}' but its closest ancestor is '{parentResource.GetType().Name}'."),
-                (var parentResource, var parentName) => new ResourceKey
+            static bool shouldValidate(ResourceKey resourceKey) =>
+                resourceKey.Resource switch
                 {
-                    Resource = parentResource,
-                    Name = parentName,
-                    Parents = ParentChain.From(parents.SkipLast(1))
-                }
-            };
-
-        static ResourceKey getPrimary(ICompositeResource resource, ResourceName name, ParentChain parents) =>
-            parents.LastOrDefault() switch
-            {
-                (null, _) or (_, null) =>
-                    throw new InvalidOperationException($"Resource '{resource}' is missing its primary."),
-                (var primaryResource, _) when primaryResource != resource.Primary =>
-                    throw new InvalidOperationException($"Resource '{resource}' has primary '{resource.Primary.GetType().Name}' but its closest ancestor is '{primaryResource.GetType().Name}'."),
-                (var primaryResource, var primaryName) => new ResourceKey
-                {
-                    Resource = primaryResource,
-                    Name = primaryName,
-                    Parents = ParentChain.From(parents.SkipLast(1))
-                }
-            };
-
-        static Option<ResourceKey> getSecondary(ICompositeResource resource, ResourceName name, ParentChain parents, JsonObject dto)
-        {
-            Option<ResourceName> secondaryNameOption = Option.None;
-            if (resource is ILinkResource linkResource)
-            {
-                // For link resources, the secondary name is in the DTO
-                var resourceKey = ResourceKey.From(resource, name, parents);
-
-                var result = from properties in dto.GetJsonObjectProperty("properties")
-                             from id in properties.GetStringProperty(linkResource.DtoPropertyNameForLinkedResource)
-                             from resourceName in ResourceName.From(id.Split('/').Last())
-                             select resourceName;
-
-                secondaryNameOption = result.ToOption();
-            }
-            else
-            {
-                // Otherwise, the secondary name is the same as the resource name
-                secondaryNameOption = Option.Some(name);
-            }
-
-            return secondaryNameOption.Map(name => new ResourceKey
-            {
-                Resource = resource.Secondary,
-                Name = name,
-                Parents = ParentChain.From(parents.SkipLast(1))
-            });
-        }
-
-        static ImmutableHashSet<ResourceKey> getReferences(IResourceWithReference resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
-        {
-            var resourceKey = ResourceKey.From(resource, name, parents);
-
-            var mandatoryReferences = resource.MandatoryReferencedResourceDtoProperties
-                                              .Select(kvp => getReferencedResourceKey(kvp.Key, kvp.Value)
-                                                                .MapError(error => Error.From($"Could not obtain mandatory reference to {kvp.Key.GetType().Name} in property {kvp.Value} of DTO {resourceKey}. {error}"))
-                                                                .IfErrorThrow());
-
-            var optionalReferences = resource.OptionalReferencedResourceDtoProperties
-                                             .Choose(kvp => getReferencedResourceKey(kvp.Key, kvp.Value).ToOption());
-
-            return [.. mandatoryReferences, .. optionalReferences];
-
-            Result<ResourceKey> getReferencedResourceKey(IResource referencedResource, string dtoPropertyName) =>
-                from properties in dto.GetJsonObjectProperty("properties")
-                from id in properties.GetStringProperty(dtoPropertyName)
-                from referencedResourceParents in getReferencedResourceParents(referencedResource)
-                from resourceName in getResourceName(id, referencedResource, referencedResourceParents)
-                select ResourceKey.From(referencedResource, resourceName, referencedResourceParents);
-
-            // We assume that the referenced resource's predecessors are a subset of the current resource's parent chain
-            Result<ParentChain> getReferencedResourceParents(IResource referencedResource) =>
-                referencedResource.GetTraversalPredecessorHierarchy()
-                                  .Traverse(predecessor => parents.Head(pair => pair.Resource == predecessor)
-                                                                  .Match(pair => Result.Success(pair),
-                                                                         () => Error.From($"Could not find resource {predecessor.GetType().Name} in parent chain of {resourceKey}.")),
-                                            cancellationToken)
-                                  .Map(pairs => ParentChain.From(pairs));
-
-            // We expect that the ID has the format /{serviceResourceId (optional)}/{parents.ToResourceId()}/resource.CollectionUriPath/name
-            static Result<ResourceName> getResourceName(string id, IResource resource, ParentChain parents) =>
-                id.Split('/', StringSplitOptions.RemoveEmptyEntries) switch
-                {
-                    [.. var head, var collectionUriPath, var name] when
-                        // Collection URI paths match
-                        collectionUriPath.Equals(resource.CollectionUriPath, StringComparison.OrdinalIgnoreCase)
-                        // Parents match
-                        && string.Join('/', head).Trim('/').EndsWith(parents.ToResourceId().Trim('/'), StringComparison.OrdinalIgnoreCase) => ResourceName.From(name),
-                    _ => Error.From($"Expected '{id}' to match the format '...{parents.ToResourceId()}/{resource.CollectionUriPath}/{{name}}'.")
+                    SubscriptionResource => resourceKey.Name != SubscriptionResource.Master,
+                    GroupResource => resourceKey.Name != GroupResource.Administrators
+                                     && resourceKey.Name != GroupResource.Developers
+                                     && resourceKey.Name != GroupResource.Guests,
+                    ApiOperationResource => false,
+                    WorkspaceResource => false,
+                    WorkspaceGroupResource => resourceKey.Name != WorkspaceGroupResource.Administrators
+                                              && resourceKey.Name != WorkspaceGroupResource.Developers
+                                              && resourceKey.Name != WorkspaceGroupResource.Guests,
+                    WorkspaceApiOperationResource => false,
+                    _ => true
                 };
-        }
+        };
+    }
 
-        async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyNamedValues(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
+    internal static GetRelationships ResolveGetRelationships(IServiceProvider provider)
+    {
+        var buildResourceMap = provider.GetRequiredService<BuildResourceMap>();
+        var getRelationshipPairs = provider.GetRequiredService<GetRelationshipPairs>();
+        var validateRelationshipGraph = provider.GetRequiredService<ValidateRelationshipGraph>();
+
+        return async (operations, cancellationToken) =>
         {
-            var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
-                                 select binaryData.ToString();
+            var resources = await buildResourceMap(operations, cancellationToken);
+            var pairs = await getRelationshipPairs(resources, operations, cancellationToken);
+            var relationships = Relationships.From(pairs, cancellationToken);
 
-            var contents = contentsOption.IfNoneNull() ?? string.Empty;
+            validateRelationshipGraph(relationships, resources, cancellationToken);
 
-            return getNamedValuesFromContent(contents, parents, resources);
-        }
-
-        async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyFragments(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
-        {
-            var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
-                                 select binaryData.ToString();
-
-            var contents = contentsOption.IfNoneNull() ?? string.Empty;
-
-            return getPolicyFragmentsFromContent(contents, parents, resources);
-        }
-
-        ImmutableHashSet<ResourceKey> getNamedValuesFromContent(string content, ParentChain parents, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources)
-        {
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                return [];
-            }
-
-            var workspaceOption = parents.Head(tuple => tuple.Resource is WorkspaceResource);
-
-            var referencedNamedValues = namedValueTokenRegex.Matches(content)
-                                                            .Select(match => match.Groups[1].Value.Trim())
-                                                            .Choose(nameString => ResourceName.From(nameString).ToOption())
-                                                            .Choose(name => findNamedValue(name, workspaceOption, resources));
-
-            return [.. referencedNamedValues];
-        }
-
-        Option<ResourceKey> findNamedValue(ResourceName name, Option<(IResource, ResourceName)> workspaceOption, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources) =>
-            // Look for the named value in the workspace
-            workspaceOption.Bind(workspace => from namedValues in resources.Find(WorkspaceNamedValueResource.Instance)
-                                              from namedValue in namedValues.Head(key => key.Name == name
-                                                                                         && key.Parents.Any(parent => parent == workspace))
-                                              select namedValue)
-                           // If not found, look for a service-level named value
-                           .IfNone(() => from namedValues in resources.Find(NamedValueResource.Instance)
-                                         from namedValue in namedValues.Head(key => key.Name == name)
-                                         select namedValue);
-
-        ImmutableHashSet<ResourceKey> getPolicyFragmentsFromContent(string content, ParentChain parents, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources)
-        {
-            if (string.IsNullOrWhiteSpace(content))
-            {
-                return [];
-            }
-
-            var workspaceOption = parents.Head(tuple => tuple.Resource is WorkspaceResource);
-
-            var referencedFragments = includeFragmentRegex.Matches(content)
-                                                          .Select(match => match.Groups[1].Value.Trim())
-                                                          .Choose(nameString => ResourceName.From(nameString).ToOption())
-                                                          .Choose(name => findPolicyFragment(name, workspaceOption, resources));
-
-            return [.. referencedFragments];
-        }
-
-        Option<ResourceKey> findPolicyFragment(ResourceName name, Option<(IResource, ResourceName)> workspaceOption, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources) =>
-            // Look for the policy fragment in the workspace
-            workspaceOption.Bind(workspace => from fragments in resources.Find(WorkspacePolicyFragmentResource.Instance)
-                                              from fragment in fragments.Head(key => key.Name == name
-                                                                                     && key.Parents.Any(parent => parent == workspace))
-                                              select fragment)
-                           // If not found, look for a service-level policy fragment
-                           .IfNone(() => from fragments in resources.Find(PolicyFragmentResource.Instance)
-                                         from fragment in fragments.Head(key => key.Name == name)
-                                         select fragment);
-
-        static ImmutableHashSet<ResourceKey> getBackendPoolBackends(BackendResource resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
-        {
-            var serializerOptions = ((IResourceWithDto)resource).SerializerOptions;
-
-            return [.. JsonNodeModule.To<BackendDto>(dto, serializerOptions)
-                                     .Map(backendDto => backendDto.Properties.Pool?.Services ?? [])
-                                     .IfError(_ => [])
-                                     .Choose(backend =>
-                                     {
-                                         var nameString = backend.Id?.Split('/').LastOrDefault() ?? string.Empty;
-
-                                         return ResourceName.From(nameString)
-                                                            .ToOption();
-                                     })
-                                     .Select(backendName => ResourceKey.From(resource, backendName, parents))];
-        }
-
-        static ImmutableHashSet<ResourceKey> getWorkspaceBackendPoolBackends(WorkspaceBackendResource resource, ResourceName name, ParentChain parents, JsonObject dto, CancellationToken cancellationToken)
-        {
-            var serializerOptions = ((IResourceWithDto)resource).SerializerOptions;
-
-            return [.. JsonNodeModule.To<WorkspaceBackendDto>(dto, serializerOptions)
-                                     .Map(backendDto => backendDto.Properties.Pool?.Services ?? [])
-                                     .IfError(_ => [])
-                                     .Choose(backend =>
-                                     {
-                                         var nameString = backend.Id?.Split('/').LastOrDefault() ?? string.Empty;
-
-                                         return ResourceName.From(nameString)
-                                                            .ToOption();
-                                     })
-                                     .Select(backendName => ResourceKey.From(resource, backendName, parents))];
-        }
+            return relationships;
+        };
     }
 
     public static void ConfigureIsValidationStrict(IHostApplicationBuilder builder)

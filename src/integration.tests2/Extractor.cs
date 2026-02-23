@@ -207,21 +207,40 @@ internal static class ExtractorModule
                         {
                             var (resource, name, parents) = (model.Key.Resource, model.Key.Name, model.Key.Parents);
 
-                            switch (resource)
+                            if (resource is PolicyFragmentResource policyFragmentResource)
                             {
-                                case IResourceWithInformationFile resourceWithInformationFile:
-                                    var dtoOption = await getInformationFileDto(resourceWithInformationFile, name, parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
+                                var informationFileDtoOption = await getInformationFileDto(policyFragmentResource, name, parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
+                                var informationFileResult = informationFileDtoOption.ToResult(() => Error.From($"Could not find extracted information file for {model.Key}."));
 
-                                    return dtoOption.Map(model.ValidateDto)
-                                                    .IfNone(() => Error.From($"Could not find extracted file for {model.Key}."));
-                                case IPolicyResource policyResource:
-                                    var contentsOption = await getPolicyFileContents(policyResource, name, parents, fileOperations.ReadFile, cancellationToken);
+                                var policyContentsOption = await getPolicyFileContents(policyFragmentResource, name, parents, fileOperations.ReadFile, cancellationToken);
+                                var policyContentsResult = policyContentsOption.Map(PolicyContentsToDto)
+                                                                               .ToResult(() => Error.From($"Could not find extracted policy file for {model.Key}."));
 
-                                    return contentsOption.Map(contents => model.ValidateDto(PolicyContentsToDto(contents)))
-                                                         .IfNone(() => Error.From($"Could not find policy file for {model.Key}."));
-                                default:
-                                    return Unit.Instance;
+                                return from informationFileDto in informationFileResult
+                                       from policyContentsDto in policyContentsResult
+                                       let mergedDto = informationFileDto.MergeWith(policyContentsDto)
+                                       from validationResult in model.ValidateDto(mergedDto)
+                                       select validationResult;
                             }
+
+                            if (resource is IResourceWithInformationFile resourceWithInformationFile)
+                            {
+                                var dtoOption = await getInformationFileDto(resourceWithInformationFile, name, parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
+                                var dtoResult = dtoOption.ToResult(() => Error.From($"Could not find extracted file for {model.Key}."));
+
+                                return dtoResult.Bind(model.ValidateDto);
+                            }
+
+                            if (resource is IPolicyResource policyResource)
+                            {
+                                var contentsOption = await getPolicyFileContents(policyResource, name, parents, fileOperations.ReadFile, cancellationToken);
+                                var contentsResult = contentsOption.Map(PolicyContentsToDto)
+                                                                   .ToResult(() => Error.From($"Could not find extracted policy file for {model.Key}."));
+
+                                return contentsResult.Bind(dto => model.ValidateDto(dto));
+                            }
+
+                            return Unit.Instance;
                         }, cancellationToken);
 
             return result.Map(_ => Unit.Instance);

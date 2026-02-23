@@ -143,7 +143,8 @@ internal static class TestsModule
             [VersionSetResource.Instance] = typeof(VersionSetModel),
             [BackendResource.Instance] = typeof(BackendModel),
             [GatewayResource.Instance] = typeof(GatewayModel),
-            [ServicePolicyResource.Instance] = typeof(ServicePolicyModel)
+            [ServicePolicyResource.Instance] = typeof(ServicePolicyModel),
+            [PolicyFragmentResource.Instance] = typeof(PolicyFragmentModel)
         }.ToImmutableDictionary();
 
     public static ImmutableHashSet<IResource> Resources { get; } =

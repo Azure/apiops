@@ -237,4 +237,11 @@ public static class Option
         option.Iter(action);
         return option;
     }
+
+    /// <summary>
+    /// Converts the option to a result. If the option is None, using <paramref name="errorFactory"/> to produce an error.
+    /// </summary>
+    public static Result<T> ToResult<T>(this Option<T> option, Func<Error> errorFactory) =>
+        option.Match(t => Result.Success(t),
+                     () => errorFactory());
 }

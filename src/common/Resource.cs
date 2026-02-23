@@ -297,7 +297,14 @@ public static class ResourceExtensions
 
         if (resource is IPolicyResource)
         {
+            // Policies can reference named values in their content
             list.Add(NamedValueResource.Instance);
+
+            // Policies can reference policy fragments
+            if (resource is not PolicyFragmentResource)
+            {
+                list.Add(PolicyFragmentResource.Instance);
+            }
         }
 
         return [.. list];

@@ -49,21 +49,18 @@ internal sealed record GatewayModel : ITestModel<GatewayModel>
             Description = description
         };
 
-    private static Gen<ImmutableHashSet<GatewayModel>> EmptySetGen { get; } =
+    private static Gen<ImmutableHashSet<GatewayModel>> EmptySetGenerator { get; } =
         Gen.Const(ImmutableHashSet<GatewayModel>.Empty);
-
-    private static Gen<ImmutableHashSet<GatewayModel>> SingletonSetGen { get; } =
-        from model in Generator
-        select ImmutableHashSet.Create(model);
 
     // Creating gateways currently fails on the Developer SKU.
     // APIM gives an error message saying the SKU limit has been reached and points to https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits#limits---api-management-classic-tiers.
     // Revisit after we have clarity on gateway SKU limits
     public static Gen<ImmutableHashSet<GatewayModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        EmptySetGen;
+        EmptySetGenerator;
 
     public static Gen<ImmutableHashSet<GatewayModel>> GenerateUpdates(IEnumerable<GatewayModel> models) =>
-        Gen.Const(ImmutableHashSet<GatewayModel>.Empty);
+        from updatedModels in common.tests.Generator.Traverse(models, GenerateUpdate)
+        select updatedModels.ToImmutableHashSet();
 
     private static Gen<GatewayModel> GenerateUpdate(GatewayModel model) =>
         from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
@@ -73,5 +70,5 @@ internal sealed record GatewayModel : ITestModel<GatewayModel>
         };
 
     public static Gen<ImmutableHashSet<GatewayModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
-        EmptySetGen;
+        EmptySetGenerator;
 }

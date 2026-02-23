@@ -66,16 +66,10 @@ internal sealed record DiagnosticModel : ITestModel<DiagnosticModel>
     private static Gen<string> GenerateVerbosity() =>
         Gen.OneOfConst("information", "verbose", "error");
 
-    private static Gen<ImmutableHashSet<DiagnosticModel>> EmptySetGen { get; } =
-        Gen.Const(ImmutableHashSet<DiagnosticModel>.Empty);
-
     public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        from diagnosticModels in Generator.Traverse(models.OfType<LoggerModel>(),
-                                                    logger => Gen.Frequency((1, EmptySetGen),
-                                                                            (5, from model in Generate(logger)
-                                                                                select ImmutableHashSet.Create(model))))
-        select diagnosticModels.SelectMany(set => set)
-                               .ToImmutableHashSet();
+        from loggerModels in Generator.SubSetOf([.. models.OfType<LoggerModel>()])
+        from diagnosticModels in Generator.Traverse(loggerModels, Generate)
+        select diagnosticModels.ToImmutableHashSet();
 
     public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateUpdates(IEnumerable<DiagnosticModel> models) =>
         from updatedModels in Generator.Traverse(models, GenerateUpdate)
