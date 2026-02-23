@@ -135,8 +135,7 @@ internal sealed class ResourceIsInConfigurationTests
     /// The key and its parents do not contain any API or workspace API revisions.
     /// </summary>
     private static bool HasNoRevisionsInPath(ResourceKey key) =>
-        key.Parents
-           .Append(key.Resource, key.Name)
+        key.AsParentChain()
            .All(tuple => tuple.Resource is not (ApiResource or WorkspaceApiResource)
                          || ApiRevisionModule.IsRootName(tuple.Name));
 
@@ -190,12 +189,11 @@ internal sealed class ResourceIsInConfigurationTests
             where keys.Count > 0
             from existingKey in Gen.OneOfConst([.. keys])
                 // Ensure that the key has an API in its path
-            where existingKey.Parents
-                             .Append(existingKey.Resource, existingKey.Name)
+            where existingKey.AsParentChain()
                              .Any(tuple => tuple.Resource is ApiResource or WorkspaceApiResource)
             // Change the API or workspace API name to a revisioned name
             from key in
-                from segments in Generator.Traverse(existingKey.Parents.Append((existingKey.Resource, existingKey.Name)),
+                from segments in Generator.Traverse(existingKey.AsParentChain(),
                                                     tuple => tuple.Resource is (ApiResource or WorkspaceApiResource)
                                                                 ? from revision in Gen.Int[1, 100]
                                                                   let newName = ApiRevisionModule.Combine(tuple.Name, revision)
@@ -243,7 +241,7 @@ internal sealed class ResourceIsInConfigurationTests
 
         JsonNode getResourceKeyJson(ResourceKey resourceKey)
         {
-            var successors = resourceKeys.Where(potentialSuccessor => potentialSuccessor.Parents == resourceKey.Parents.Append(resourceKey.Resource, resourceKey.Name));
+            var successors = resourceKeys.Where(potentialSuccessor => potentialSuccessor.Parents == resourceKey.AsParentChain());
 
             return successors.ToImmutableArray() switch
             {

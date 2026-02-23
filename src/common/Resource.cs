@@ -241,6 +241,9 @@ public sealed record ResourceKey
             Name = name,
             Parents = parents
         };
+
+    public ParentChain AsParentChain() =>
+        Parents.Append(Resource, Name);
 }
 
 public static partial class ResourceModule

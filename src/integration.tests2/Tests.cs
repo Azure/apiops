@@ -139,6 +139,7 @@ internal static class TestsModule
             [LoggerResource.Instance] = typeof(LoggerModel),
             [DiagnosticResource.Instance] = typeof(DiagnosticModel),
             [ProductResource.Instance] = typeof(ProductModel),
+            [ProductPolicyResource.Instance] = typeof(ProductPolicyModel),
             [GroupResource.Instance] = typeof(GroupModel),
             [VersionSetResource.Instance] = typeof(VersionSetModel),
             [BackendResource.Instance] = typeof(BackendModel),
