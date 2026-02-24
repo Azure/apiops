@@ -43,7 +43,10 @@ internal sealed record ExtractorFilter
                 var parentChainWithResource = parentChain.Append(kvp.Key, name);
 
                 return Resources.Find(parentChainWithResource)
-                                .Map(children => new JsonObject(getResourceKvps(parentChainWithResource, children)) as JsonNode)
+                                .Map(children => new JsonObject
+                                {
+                                    [name.ToString()] = new JsonObject(getResourceKvps(parentChainWithResource, children))
+                                } as JsonNode)
                                 .IfNone(() => JsonValue.Create(name.ToString()));
             }).ToJsonArray()
             select KeyValuePair.Create(jsonKey, jsonValue as JsonNode);
