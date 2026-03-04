@@ -241,6 +241,13 @@ internal static class ExtractorModule
             {
                 var (specification, contents) = tuple;
 
+                // APIM exports invalid WSDL that cannot be re-imported. Skip writing.
+                if (specification is ApiSpecification.Wsdl)
+                {
+                    logger.LogWarning("Skipping SOAP specification file for {ResourceKey}. APIM exports invalid WSDL that cannot be reimported.", resourceKey);
+                    return;
+                }
+
                 logger.LogInformation("Writing specification file for {ResourceKey}...", resourceKey);
                 await writeApiSpecificationFile(resourceKey, specification, contents, cancellationToken);
             });
