@@ -170,8 +170,8 @@ internal static partial class ResourceModule
         ConfigureGetDto(builder);
         ConfigurePutApi(builder);
         ConfigurePutWorkspaceApi(builder);
+        ConfigurePutNamedValue(builder);
         CommonModule.ConfigureIsDryRun(builder);
-
         common.ResourceModule.ConfigurePutResourceInApim(builder);
 
         builder.TryAddSingleton(ResolvePutResource);
@@ -182,6 +182,7 @@ internal static partial class ResourceModule
         var getDto = provider.GetRequiredService<GetDto>();
         var putApi = provider.GetRequiredService<PutApi>();
         var putWorkspaceApi = provider.GetRequiredService<PutWorkspaceApi>();
+        var putNamedValue = provider.GetRequiredService<PutNamedValue>();
         var putResourceInApim = provider.GetRequiredService<PutResourceInApim>();
         var isDryRun = provider.GetRequiredService<IsDryRun>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
@@ -228,6 +229,7 @@ internal static partial class ResourceModule
             {
                 ApiResource => putApi(name, dto, cancellationToken),
                 WorkspaceApiResource => putWorkspaceApi(name, parents, dto, cancellationToken),
+                NamedValueResource or WorkspaceNamedValueResource => putNamedValue(ResourceKey.From(resource, name, parents), dto, cancellationToken),
                 _ => putResourceInApim(resource, name, dto, parents, cancellationToken)
             });
     }

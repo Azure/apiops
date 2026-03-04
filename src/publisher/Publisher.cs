@@ -39,6 +39,9 @@ internal static class PublisherModule
         var logger = provider.GetRequiredService<ILogger>();
 
         var cache = new ConcurrentDictionary<ResourceKey, Lazy<Task>>();
+#pragma warning disable CA2000 // Dispose objects before losing scope
+        var namedValueSemaphore = new SemaphoreSlim(1, 1);
+#pragma warning restore CA2000 // Dispose objects before losing scope
 
         return async cancellationToken =>
         {
