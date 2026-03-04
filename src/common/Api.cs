@@ -1,7 +1,6 @@
 using Azure.Core.Pipeline;
 using System;
 using System.Collections.Immutable;
-using System.Linq;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -292,6 +291,7 @@ public static partial class ResourceModule
                          {
                              Properties = newDtoObject.Properties with
                              {
+                                 DisplayName = existingDtoObject.Properties.DisplayName,
                                  Type = existingDtoObject.Properties.Type,
                                  Description = existingDtoObject.Properties.Description,
                                  SubscriptionRequired = existingDtoObject.Properties.SubscriptionRequired,

@@ -571,6 +571,14 @@ public static partial class ResourceModule
 
         async ValueTask putWsdlSpecification(ResourceKey resourceKey, ApiSpecification.Wsdl specification, BinaryData contents, CancellationToken cancellationToken)
         {
+            // WSDL specification import removes the original description. Save the description.            
+            var resource = (IResourceWithDto)resourceKey.Resource;
+            var originalDto = await getDto(resource, resourceKey.Name, resourceKey.Parents, cancellationToken);
+            var descriptionResult = from properties in originalDto.GetJsonObjectProperty("properties")
+                                    from description in properties.GetStringProperty("description")
+                                    select description;
+
+            // Import the specification
             var dto = new JsonObject
             {
                 ["properties"] = new JsonObject
@@ -582,6 +590,22 @@ public static partial class ResourceModule
             };
 
             await putSpecificationDto(resourceKey, dto, useImportQueryParameter: true, cancellationToken);
+
+            // Re-apply the original description
+            await descriptionResult.IterTask(async description =>
+            {
+                if (ApiRevisionModule.IsRootName(resourceKey.Name) is false)
+                {
+                    return;
+                }
+
+                var newDto = await getDto(resource, resourceKey.Name, resourceKey.Parents, cancellationToken);
+
+                newDto.GetJsonObjectProperty("properties")
+                      .Iter(propertiesJson => propertiesJson["description"] = description);
+
+                await putResource(resource, resourceKey.Name, newDto, resourceKey.Parents, cancellationToken);
+            });
         }
 
         async ValueTask putGraphQlSpecification(ResourceKey resourceKey, ApiSpecification.GraphQl specification, BinaryData contents, CancellationToken cancellationToken)
