@@ -4,8 +4,10 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -84,9 +86,7 @@ internal static class PublisherModule
             async ValueTask processPut()
             {
                 // Process predecessors first
-                var predecessors = currentRelationships.Predecessors
-                                                       .Find(resourceKey)
-                                                       .IfNone(() => []);
+                var predecessors = getPredecessors(resourceKey);
 
                 await predecessors.IterTaskParallel(async predecessor => await processResource(predecessor, resourceSet, currentRelationships, previousRelationships, cancellationToken),
                                                     maxDegreeOfParallelism: Option.None,
@@ -97,6 +97,32 @@ internal static class PublisherModule
                 {
                     await putResource(resourceKey, cancellationToken);
                 }
+            }
+
+            IAsyncEnumerable<ResourceKey> getPredecessors(ResourceKey resourceKey)
+            {
+                var predecessors = currentRelationships.Predecessors
+                                                       .Find(resourceKey)
+                                                       .IfNone(() => [])
+                                                       .ToAsyncEnumerable();
+
+                // For composite resources, process deletions first.
+                // Most resources don't support many-to-many relationships with their composite.
+                if (resourceKey.Resource is ICompositeResource compositeResource)
+                {
+                    var old = resourceSet.Where(other => other.Resource == resourceKey.Resource)
+                                         .Where(other => other != resourceKey)
+                                         .Where(other => other.Name == resourceKey.Name)
+                                         // Same hierarchy except for immediate parent
+                                         .Where(other => ParentChain.From(other.Parents.SkipLast(1)) == ParentChain.From(resourceKey.Parents.SkipLast(1)))
+                                         .ToAsyncEnumerable()
+                                         // Other resource was deleted
+                                         .Where(async (other, cancellationToken) => await isInFileSystem(other, cancellationToken) is false);
+
+                    predecessors = predecessors.Concat(old);
+                }
+
+                return predecessors;
             }
 
             async ValueTask processDelete()
