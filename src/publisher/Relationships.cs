@@ -225,6 +225,7 @@ internal static class RelationshipsModule
     {
         common.ResourceModule.ConfigureGetInformationFileDto(builder);
         common.ResourceModule.ConfigureGetPolicyFileContents(builder);
+        ConfigurationModule.ConfigureGetConfigurationOverride(builder);
 
         builder.TryAddSingleton(ResolveGetRelationshipPairs);
     }
@@ -233,6 +234,7 @@ internal static class RelationshipsModule
     {
         var getDto = provider.GetRequiredService<GetInformationFileDto>();
         var getPolicyFileContents = provider.GetRequiredService<GetPolicyFileContents>();
+        var getConfigurationOverride = provider.GetRequiredService<GetConfigurationOverride>();
 
         var namedValueTokenRegex = new Regex("{{\\s*(.*?)\\s*}}", RegexOptions.CultureInvariant);
         var includeFragmentRegex = new Regex("<include-fragment\\s+fragment-id=\"([^\"]+)\"\\s*/>", RegexOptions.CultureInvariant);
@@ -254,7 +256,14 @@ internal static class RelationshipsModule
                                               {
                                                   var (name, parents) = (key.Name, key.Parents);
 
-                                                  return from dto in await getDto(resourceWithInformationFile, name, parents, operations.ReadFile, operations.GetSubDirectories, cancellationToken)
+                                                  var dtoOption = await getDto(resourceWithInformationFile, name, parents, operations.ReadFile, operations.GetSubDirectories, cancellationToken);
+                                                  await dtoOption.IterTask(async dto =>
+                                                  {
+                                                      var configurationOverrideOption = await getConfigurationOverride(key, cancellationToken);
+                                                      configurationOverrideOption.Iter(configurationOverride => dtoOption = dto.MergeWith(configurationOverride));
+                                                  });
+
+                                                  return from dto in dtoOption
                                                          from properties in dto.GetJsonObjectProperty("properties").ToOption()
                                                          from displayName in properties.GetStringProperty("displayName").ToOption()
                                                          select KeyValuePair.Create(displayName, key);
@@ -285,6 +294,13 @@ internal static class RelationshipsModule
                                {
                                    dtoJsonOption = await getDto(resourceWithInformationFile, key.Name, key.Parents, operations.ReadFile, operations.GetSubDirectories, cancellationToken);
                                }
+
+                               // Merge any configuration overrides to ensure relationships are properly captured
+                               await dtoJsonOption.IterTask(async dto =>
+                               {
+                                   var configurationOverrideOption = await getConfigurationOverride(key, cancellationToken);
+                                   configurationOverrideOption.Iter(configurationOverride => dtoJsonOption = dto.MergeWith(configurationOverride));
+                               });
 
                                if (key.Resource is ICompositeResource compositeResource)
                                {
@@ -393,18 +409,35 @@ internal static class RelationshipsModule
 
             async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyNamedValues(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, CancellationToken cancellationToken)
             {
-                var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
-                                     select binaryData.ToString();
+                var contentsOption = await getEffectivePolicyContents(resource, name, parents, readFile, cancellationToken);
 
                 var contents = contentsOption.IfNoneNull() ?? string.Empty;
 
                 return getNamedValuesFromContent(contents, parents);
             }
 
+            // Get policy contents from the policy file and apply any configuration overrides that might exist.
+            async ValueTask<Option<string>> getEffectivePolicyContents(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, CancellationToken cancellationToken)
+            {
+                var fileContentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
+                                         select binaryData.ToString();
+
+                return await fileContentsOption.MapTask(async contents =>
+                {
+                    var overrideOption = from overrideDto in await getConfigurationOverride(ResourceKey.From(resource, name, parents), cancellationToken)
+                                         let overrideContentsResult = from properties in overrideDto.GetJsonObjectProperty("properties")
+                                                                      from value in properties.GetStringProperty("value")
+                                                                      select value
+                                         from overrideContents in overrideContentsResult.ToOption()
+                                         select overrideContents;
+
+                    return overrideOption.IfNone(() => contents);
+                });
+            }
+
             async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyFragments(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
             {
-                var contentsOption = from binaryData in await getPolicyFileContents(resource, name, parents, readFile, cancellationToken)
-                                     select binaryData.ToString();
+                var contentsOption = await getEffectivePolicyContents(resource, name, parents, readFile, cancellationToken);
 
                 var contents = contentsOption.IfNoneNull() ?? string.Empty;
 
