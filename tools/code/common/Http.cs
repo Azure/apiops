@@ -128,7 +128,16 @@ public static class HttpPipelineExtensions
     {
         var either = await pipeline.TryDeleteResource(uri, waitForCompletion, cancellationToken);
 
-        either.IfLeftThrow(uri);
+        either.IfLeft(response =>
+        {
+            using (response)
+            {
+                if (response.Status != 404)
+                {
+                    throw response.ToHttpRequestException(uri);
+                }
+            }
+        });
     }
 
     public static async ValueTask<Either<Response, Unit>> TryDeleteResource(this HttpPipeline pipeline, Uri uri, bool waitForCompletion, CancellationToken cancellationToken)
