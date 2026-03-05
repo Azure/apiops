@@ -13,7 +13,7 @@ internal sealed record ProductGroupModel : ITestModel<ProductGroupModel>
 {
     public required ResourceKey Key { get; init; }
 
-    public required ResourceName GroupName { get; init; }
+    public required ResourceKey GroupKey { get; init; }
 
     public JsonObject ToDto() =>
         new()
@@ -21,7 +21,7 @@ internal sealed record ProductGroupModel : ITestModel<ProductGroupModel>
             ["name"] = Key.Name.ToString(),
             ["properties"] = new JsonObject
             {
-                ["groupId"] = $"/groups/{GroupName}"
+                ["groupId"] = $"/{GroupKey}"
             }
         };
 
@@ -41,15 +41,9 @@ internal sealed record ProductGroupModel : ITestModel<ProductGroupModel>
         Result<Unit> validateGroupId() =>
             from properties in dto.GetJsonObjectProperty("properties")
             from groupId in properties.GetStringProperty("groupId")
-            from unit in groupId.Split('/').ToArray() switch
-            {
-                [.., var secondToLast, var last]
-                    when secondToLast.Equals("groups", StringComparison.OrdinalIgnoreCase)
-                          && last.Equals(GroupName.ToString(), StringComparison.OrdinalIgnoreCase) =>
-                    Result.Success(Unit.Instance),
-                _ =>
-                    Error.From($"Resource '{Key}' has groupId '{groupId}' that does not end with '/groups/{GroupName}'.")
-            }
+            from unit in groupId.EndsWith($"{GroupKey}", StringComparison.OrdinalIgnoreCase)
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has groupId '{groupId}' that does not end with '/{GroupKey}'.")
             select unit;
     }
 
@@ -72,7 +66,7 @@ internal sealed record ProductGroupModel : ITestModel<ProductGroupModel>
                        Name = tuple.@group.Key.Name,
                        Parents = tuple.product.Key.AsParentChain()
                    },
-                   GroupName = tuple.@group.Key.Name
+                   GroupKey = tuple.@group.Key
                }).ToImmutableHashSet();
     }
 
