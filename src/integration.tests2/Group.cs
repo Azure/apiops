@@ -49,8 +49,12 @@ internal sealed record GroupModel : ITestModel<GroupModel>
             select unit;
     }
 
-    private static Gen<GroupModel> Generator { get; } =
-        from name in common.tests.Generator.ResourceName
+    public static Gen<ImmutableHashSet<GroupModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
+
+    private static Gen<GroupModel> Generate() =>
+        from name in Generator.ResourceName
         from displayName in CommonModule.GenerateDisplayName(name)
         from description in CommonModule.GenerateDescription(name)
         select new GroupModel
@@ -60,20 +64,15 @@ internal sealed record GroupModel : ITestModel<GroupModel>
             Description = description
         };
 
-    public static Gen<ImmutableHashSet<GroupModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        Generator.HashSetOf(0, 5);
-
-    public static Gen<ImmutableHashSet<GroupModel>> GenerateUpdates(IEnumerable<GroupModel> models) =>
-        from updatedModels in
-            common.tests.Generator
-                        .Traverse(models, GenerateUpdate)
-        let updatedSet = ToSet(updatedModels)
-        where updatedSet.Count == updatedModels.Length
-        select updatedSet;
-
     private static ImmutableHashSet<GroupModel> ToSet(IEnumerable<GroupModel> models) =>
         [.. models.DistinctBy(model => model.Key)
                   .DistinctBy(model => model.DisplayName)];
+
+    public static Gen<ImmutableHashSet<GroupModel>> GenerateUpdates(IEnumerable<GroupModel> groupModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(groupModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<GroupModel> GenerateUpdate(GroupModel model) =>
         from displayName in CommonModule.GenerateDisplayName(model.Key.Name, model.DisplayName)
@@ -93,7 +92,7 @@ internal sealed record GroupModel : ITestModel<GroupModel>
                let kept = shuffled.Take(keptCount).ToImmutableArray()
                from unchangedCount in Gen.Int[0, kept.Length]
                let unchanged = kept.Take(unchangedCount)
-               from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
                from added in GenerateSet(accumulatedNextModels)
                select ToSet([.. unchanged, .. changed, .. added]);
     }

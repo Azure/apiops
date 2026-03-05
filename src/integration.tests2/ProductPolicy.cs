@@ -37,6 +37,12 @@ internal sealed record ProductPolicyModel : ITestModel<ProductPolicyModel>
             select unit;
     }
 
+    public static Gen<ImmutableHashSet<ProductPolicyModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from productModels in Generator.SubSetOf([.. models.OfType<ProductModel>()])
+        from policyModels in Generator.Traverse(productModels,
+                                                productModel => Generate(productModel, models))
+        select policyModels.ToImmutableHashSet();
+
     private static Gen<string> GenerateContent(IEnumerable<ITestModel> models)
     {
         var namedValues = models.OfType<NamedValueModel>();
@@ -55,13 +61,7 @@ internal sealed record ProductPolicyModel : ITestModel<ProductPolicyModel>
                        """;
     }
 
-    public static Gen<ImmutableHashSet<ProductPolicyModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        from productModels in Generator.SubSetOf([.. models.OfType<ProductModel>()])
-        from policyModels in Generator.Traverse(productModels,
-                                                model => Generate(model, models))
-        select policyModels.ToImmutableHashSet();
-
-    private static Gen<ProductPolicyModel> Generate(ProductModel product, IEnumerable<ITestModel> models) =>
+    private static Gen<ProductPolicyModel> Generate(ProductModel productModel, IEnumerable<ITestModel> models) =>
         from content in GenerateContent(models)
         select new ProductPolicyModel
         {
@@ -69,13 +69,13 @@ internal sealed record ProductPolicyModel : ITestModel<ProductPolicyModel>
             {
                 Resource = ProductPolicyResource.Instance,
                 Name = PolicyModule.ResourceName,
-                Parents = product.Key.AsParentChain()
+                Parents = productModel.Key.AsParentChain()
             },
             Content = content
         };
 
-    public static Gen<ImmutableHashSet<ProductPolicyModel>> GenerateUpdates(IEnumerable<ProductPolicyModel> models) =>
-        from updatedModels in Generator.Traverse(models, model => GenerateUpdate(model, models))
+    public static Gen<ImmutableHashSet<ProductPolicyModel>> GenerateUpdates(IEnumerable<ProductPolicyModel> productPolicyModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(productPolicyModels, model => GenerateUpdate(model, allModels))
         select updatedModels.ToImmutableHashSet();
 
     private static Gen<ProductPolicyModel> GenerateUpdate(ProductPolicyModel model, IEnumerable<ITestModel> allModels) =>

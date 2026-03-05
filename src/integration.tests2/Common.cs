@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace integration.tests;
 
@@ -77,6 +78,9 @@ internal static class CommonModule
 
 internal static class PolicyModule
 {
+    private static Regex NamedValueTokenRegex { get; } = new Regex("{{\\s*(.*?)\\s*}}", RegexOptions.CultureInvariant);
+    private static Regex IncludeFragmentRegex { get; } = new Regex("<include-fragment\\s+fragment-id=\"([^\"]+)\"\\s*/>", RegexOptions.CultureInvariant);
+
     public static ResourceName ResourceName { get; } =
         ResourceName.From("policy").IfErrorThrow();
 
@@ -160,5 +164,16 @@ internal static class PolicyModule
         var normalizedFirst = new string([.. first?.Where(c => !char.IsWhiteSpace(c)) ?? []]);
         var normalizedSecond = new string([.. second?.Where(c => !char.IsWhiteSpace(c)) ?? []]);
         return normalizedFirst.Equals(normalizedSecond, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static IEnumerable<string> GetNamedValueDisplayNamesFromContent(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return [];
+        }
+
+        return [.. NamedValueTokenRegex.Matches(content)
+                                       .Select(match => match.Groups[1].Value.Trim())];
     }
 }

@@ -52,6 +52,11 @@ internal sealed record DiagnosticModel : ITestModel<DiagnosticModel>
             select unit;
     }
 
+    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from loggerModels in Generator.SubSetOf([.. models.OfType<LoggerModel>()])
+        from diagnosticModels in Generator.Traverse(loggerModels, Generate)
+        select ToSet(diagnosticModels);
+
     private static Gen<DiagnosticModel> Generate(LoggerModel logger) =>
         from verbosity in GenerateVerbosity()
         from logClientIp in Gen.Bool
@@ -63,17 +68,17 @@ internal sealed record DiagnosticModel : ITestModel<DiagnosticModel>
             LogClientIp = logClientIp
         };
 
+    private static ImmutableHashSet<DiagnosticModel> ToSet(IEnumerable<DiagnosticModel> models) =>
+        [.. models.DistinctBy(model => model.Key)];
+
     private static Gen<string> GenerateVerbosity() =>
         Gen.OneOfConst("information", "verbose", "error");
 
-    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        from loggerModels in Generator.SubSetOf([.. models.OfType<LoggerModel>()])
-        from diagnosticModels in Generator.Traverse(loggerModels, Generate)
-        select diagnosticModels.ToImmutableHashSet();
-
-    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateUpdates(IEnumerable<DiagnosticModel> models) =>
-        from updatedModels in Generator.Traverse(models, GenerateUpdate)
-        select updatedModels.ToImmutableHashSet();
+    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateUpdates(IEnumerable<DiagnosticModel> diagnosticModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(diagnosticModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<DiagnosticModel> GenerateUpdate(DiagnosticModel model) =>
         from verbosity in GenerateVerbosity()

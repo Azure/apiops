@@ -64,8 +64,12 @@ internal sealed record NamedValueModel : ITestModel<NamedValueModel>
                   select unit;
     }
 
-    private static Gen<NamedValueModel> Generator { get; } =
-        from name in common.tests.Generator.ResourceName
+    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
+
+    private static Gen<NamedValueModel> Generate() =>
+        from name in Generator.ResourceName
         from displayName in CommonModule.GenerateDisplayName(name)
         from secret in Gen.Bool
         select new NamedValueModel
@@ -76,29 +80,22 @@ internal sealed record NamedValueModel : ITestModel<NamedValueModel>
             Secret = secret
         };
 
-    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        Generator.HashSetOf(0, 5);
-
-    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateUpdates(IEnumerable<NamedValueModel> models) =>
-        from updatedModels in
-            common.tests.Generator
-                        .Traverse(models, GenerateUpdate)
-        let updatedSet = ToSet(updatedModels)
-        where updatedSet.Count == updatedModels.Length
-        select updatedSet;
-
     private static ImmutableHashSet<NamedValueModel> ToSet(IEnumerable<NamedValueModel> models) =>
         [.. models.DistinctBy(model => model.Key)
                   .DistinctBy(model => model.DisplayName)];
 
+    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateUpdates(IEnumerable<NamedValueModel> namedValueModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(namedValueModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
+
     private static Gen<NamedValueModel> GenerateUpdate(NamedValueModel model) =>
         from displayName in CommonModule.GenerateDisplayName(model.Key.Name, model.DisplayName)
-        from secret in Gen.Bool
         select model with
         {
             DisplayName = displayName,
-            Value = $"{displayName}-value",
-            Secret = secret
+            Value = $"{displayName}-value"
         };
 
     public static Gen<ImmutableHashSet<NamedValueModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
@@ -110,7 +107,7 @@ internal sealed record NamedValueModel : ITestModel<NamedValueModel>
                let kept = shuffled.Take(keptCount).ToImmutableArray()
                from unchangedCount in Gen.Int[0, kept.Length]
                let unchanged = kept.Take(unchangedCount)
-               from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
                from added in GenerateSet(accumulatedNextModels)
                select ToSet([.. unchanged, .. changed, .. added]);
     }

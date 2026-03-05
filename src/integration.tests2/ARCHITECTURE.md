@@ -19,143 +19,47 @@ Each test iteration runs the following steps against a randomly generated `TestS
 1. **Filtered extraction**: populate APIM, extract with a random filter, validate only filtered resources appear on disk.
 2. **Unfiltered extraction**: extract everything, validate all resources appear on disk.
 3. **Publish without overrides**: wipe APIM, publish extracted artifacts, validate APIM matches `TestState`.
-4. **Publish with overrides**: publish again with a random `PublisherOverride`, validate APIM reflects overridden values.
+4. **Publish with overrides**: publish again with a random `PublisherOverride`, validate APIM reflects overridden values. `PublisherOverride` is created from a generated updated subset of `TestState`.
 5. **Commit-based publish**: wipe APIM, re-populate with `TestState`, set up a git commit transitioning from `TestState` to `NextState`, publish using a commit ID, validate APIM reflects the state transition correctly. Note that the Git commit setup uses three steps:
     - Commit 1: `initialState`
     - Commit 2: `nextState`. This is the commit ID that will passed to the publisher.
     - Commit 3: `initialState` again. This ensures that the publisher respects the specified commit ID. Previous buggy iterations of the publisher used the latest commit ID instead of the specified one.
 
-## Key types
-
-### `ITestModel` / `ITestModel<T>`
-
-Every resource type has a model record implementing `ITestModel<T>`. The interface requires:
-
-| Member | Purpose |
-|--------|---------|
-| `Key` | `ResourceKey` identifying the resource (type + name + parents) |
-| `ToDto()` | Produces the JSON DTO used in the APIM PUT |
-| `ValidateDto(dto)` | Validates that the DTO (from an APIM GET or extracted file) matches expectations |
-| `static GenerateSet(models)` | Generates a random set of initial models. Receives all models generated so far (by predecessor resource types), enabling cross-resource dependencies. |
-| `static GenerateUpdates(models)` | Generates updated versions of existing models (for overrides) |
-| `static GenerateNextState(previousModels, accumulatedNextModels)` | Generates a new state for commit-based publish. `previousModels` is the full previous `TestState`; `accumulatedNextModels` is the partial next state built so far by predecessor types. |
-
-### `TestState`
-
-A plain record holding all resource models for a test run.
-
-| Member | Purpose |
-|--------|--------|
-| `Models` | All resource test models |
-
-### `TestStateModule`
-
-| Delegate | Purpose |
-|----------|--------|
-| `GenerateTestState` | Generates a random initial `TestState` by folding over resource types in topological order. Calls each type's `GenerateSet`. |
-| `GenerateNextTestState` | Generates a subsequent `TestState` by folding over resource types in topological order. Calls each type's `GenerateNextState`. |
-
-### `TestsModule`
-
-Central registration and test orchestration.
-
-| Member | Purpose |
-|--------|---------|
-| `ResourceModels` (`ImmutableDictionary<IResource, Type>`) |  Single registration point that maps resource instances to model types |
-| `Resources` (`ImmutableHashSet<IResource>`) | List of all resources in scope for testing (`ResourceModels.Keys`) |
-| `ConfigureRunTests` | Registers all test delegates into the DI container |
-| `ResolveRunTests` | Runs the test pipeline |
-
-### `PublisherOverride`
-
-| Member | Purpose |
-|--------|---------|
-| `Updates` (`ImmutableDictionary<ResourceKey, ITestModel>`) |  Maps resources to their overridden models |
-| `Serialize()` | Produces a `JsonObject` that the publisher can read for overrides |
-| `static Generate(models)` | Loops over registered types generates overrides for a random subset of models |
-
-### `ExtractorFilter`
-
-Controls which resources the extractor should extract. Serialized to YAML.
-
-| Member | Purpose |
-|--------|---------|
-| `Resources` | Maps parents to child resources that should be extracted |
-| `ShouldExtract(key)` | Returns whether a `ResourceKey` passes the filter. If a parent is not in `Resources`, all its children are extracted. |
-| `Serialize()` | Produces a `JsonObject` that the extractor can read for filters |
-| `static Generate(models)` | Generates a random filter given a list of models |
-
-### `CommonModule`
-
-
-| Member | Notes |
-|--------|--------|
-| `SortResources` delegate | Takes a list of resources and sorts them in topological order |
-| `GenerateDisplayName(name)` | Output: `"myname-display"` |
-| `GenerateDisplayName(name, current)` | Output: `"myname-display-2"` -> `"myname-display-3"` |
-| `GenerateDescription(name)` | Output: `"myname-description"` |
-| `GenerateDescription(name, current)` | Output:  `"myname-description-2"` -> `"myname-description-3"` |
-
-### `PolicyModule`
-
-| Member | Notes |
-|--------|--------|
-| `ResourceName` | Shared `ResourceName` for `"policy"`. Reused across service policy and related policy resources. |
-| `GenerateSetVariableSnippet(namedValues)` | Generates `<set-variable>` that can reference named values by display name or a random word. |
-| `GenerateInboundSnippet(namedValues, fragments)` | Builds `<inbound>` from a random subset of snippets |
-| `GenerateOutboundSnippet(namedValues, fragments)` | Builds `<outbound>` from a random subset of snippets |
-| `FuzzyEquals(first, second)` | Compares policy XML by stripping all whitespace and comparing case-insensitively. |
 
 ## Resource models
 
-| Resource | Model | Properties | Generation | Validation | Notes |
-|----------|-------|------------|------------|------------|-------|
-| Tag | `TagModel` | `DisplayName` | Generate 0–5 tags. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName`. | |
-| Named Value | `NamedValueModel` | `DisplayName` <br> `Value` <br> `Secret` | Generate 0–5 named values. <br><br> `Secret` is randomly `true` or `false`. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Secret`. <br><br> Only validate `Value` when `Secret == false` (APIM doesn't return secret values). | Publisher validation skips secret named values unless overridden. |
-| Logger | `LoggerModel` | `Description` <br> `IsBuffered` | Only use `azuremonitor` logger. APIM requires real resources for other application insights and event hub. <br><br> Generate 0 or 1 logger. APIM supports a maximum of 1 logger of type `azuremonitor`. Put extra weight on the 1 logger scenario so it's more likely to be generated than 0. | Always validate `Description` and `IsBuffered`. | Diagnostics depend on loggers via `LoggerId`. |
-| Diagnostic | `DiagnosticModel` | `Verbosity` <br> `LogClientIp` <br> `LoggerKey` | Select a random subset of logger models and generate one diagnostic per selected logger.<br><br>Diagnostic name matches the logger name. <br><br> `LoggerId` in the DTO is a relative ID (e.g. `/loggers/azuremonitor`). | Validate `Verbosity` and `LogClientIp`. <br><br> Skip `LoggerId` validation (format differs between APIM GET and extracted files). | First resource with a cross-resource dependency. Depends on `LoggerResource` via `IResourceWithReference`. <br><br> `GenerateNextState` delegates to `GenerateSet(accumulatedNextModels)` — diagnostics are fully regenerated based on loggers in the new state. |
-| Product | `ProductModel` | `DisplayName` <br> `Description` | Generate 0–5 products. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | APIM auto-creates subscriptions and product-groups when a product is created. `PutProductInApim` in `common` deletes these auto-created resources to avoid polluting state. |
-| Product Policy | `ProductPolicyModel` | `Content` | Select a random subset of products and generate one policy per selected product. <br><br> `Content` is a random valid policy XML. It occasionally references named values and policy framents. | Always validate `Content` using `PolicyModule.FuzzyEquals`. | Policy name is always `policy`.  |
-| Group | `GroupModel` | `DisplayName` <br> `Description` | Generate 0–5 groups. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | Built-in groups (Administrators, Developers, Guests) are excluded by `IsResourceKeySupported`. |
-| Product Group | `ProductGroupModel` | `GroupName` | Pair all products with all groups and pick a random subset.  <br><br> Name is always `{groupName}`. | Validate `name` equals `Key.Name`. <br><br> Validate `properties.groupId` ends with `"groups/GroupName"`. | Publisher override set always empty. Links have nothing to override. |
-| Version Set | `VersionSetModel` | `DisplayName` <br> `Description` | Generate 0–5 version sets. <br><br> Deduplicate by `Key` and by `DisplayName`. | Always validate `DisplayName` and `Description`. | APIM requires `versioningScheme` on PUT. We use a fixed value (`"Segment"`) in the DTO. |
-| Backend | `BackendModel` | `Description` <br> `Url` | Generate 0–5 backends. <br><br> Deduplicate by `Key`. <br><br> `Url` is derived from `Description` (`https://{description}.example.com`). | Always validate `Description` and `Url`. | APIM requires `protocol` on PUT. We use a fixed value (`"http"`) in the DTO. |
-| Gateway | `GatewayModel` | `Description` | Currently disabled by having all generators return empty sets. Creating a gateway on the Developer SKU fails with a SKU limit error pointing to https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits#limits---api-management-classic-tiers. Revisit once classic SKU limits are clarified. | Always validate `Description`. | APIM requires `locationData` on PUT. We use a fixed value (`"test"`) in the DTO. |
-| Policy Fragment | `PolicyFragmentModel` | `Description` <br> `Content` | Generate 0–5 policy fragments. <br><br> `Content` is a random valid policy fragment XML. It occasionally references named values. | Always validate `Description` and `Content`. `Content` validation uses `PolicyModule.FuzzyEquals`. |  |
-| Service Policy | `ServicePolicyModel` | `Content` | Generate 0 or 1 service policy (singleton). <br><br> Put extra weight on the 1 policy scenario. <br><br> `Content` is a random valid policy XML. It occasionally references named values and policy framents. | Always validate `Content` using `PolicyModule.FuzzyEquals` | Policy name is always `policy` (`PolicyModule.ResourceName`). |
-
-## DI pattern
-
-Each module follows the `Configure*` / `Resolve*` pattern:
-- `Configure*(IHostApplicationBuilder)` registers dependencies
-- `Resolve*(IServiceProvider)` returns `*` by using configured dependencies
-
-Some operations in the `common` project require a singleton `ServiceDirectory` in DI. However, our tests generate a random `ServiceDirectory` during each test iteration, and after DI is resolved. To work around this, we:
-- Create an empty application builder
-- Pass the `ServiceDirectory` to the builder's configuration
-- Pass the builder to the `Configure*` method in `common` that requires a service directory
-- Build the builder's service provider.
-- Return `*` from the built service provider.
-
-## Useful delegates
-
-### `IsResourceKeySupported`
-
-Filters out resources that tests should not touch:
-- Groups: Administrators, Developers, Guests
-- Subscriptions: Master
-- Any resource type not in `TestsModule.Resources`
-- Any resource type that the APIM SKU doesn't support (e.g. Gateways in the Consumption SKU)
-
-### `WriteGitCommit`
-
-Writes APIM artifacts in `TestState` to disk, creates a git commit, and returns a commit ID.
+| Model | Generation | Notes |
+|-------|------------|-------|
+| `TagModel` | Generate 0–5 tags. <br><br> Deduplicate by `Key` and by `DisplayName`. | |
+| `NamedValueModel` | Generate 0–5 named values. <br><br> Deduplicate by `Key` and by `DisplayName`. | `Value` is only validated when `Secret == false` (APIM doesn't return secret values). <br><br> Publisher validation skips secret named values unless overridden. |
+| `LoggerModel` | Generate 0–1 (singleton) with weighted frequency favoring one logger. <br><br> Only use `azuremonitor`. | |
+| `DiagnosticModel` | Select a random subset of logger models and generate one diagnostic per selected logger. <br><br> Diagnostic name matches the logger name. <br><br> `LoggerId` in the DTO is a relative ID (e.g. `/loggers/azuremonitor`). <br><br> For next state, regenerate all diagnostics based on available loggers. | Skip `LoggerId` validation (format differs between APIM GET and extracted files). |
+| `ProductModel` | Generate 0–5 products. <br><br> Deduplicate by `Key` and by `DisplayName`. | APIM auto-creates subscriptions and product-groups when a product is created. `PutProductInApim` in `common` deletes these auto-created resources to avoid polluting state. |
+| `ApiModel` | Each generated API is a "group": a root API plus 0–3 additional revisions sharing `DisplayName`, `Type`, `Path`, etc. <br><br> Generate API type from OpenAPI, WADL, WSDL, and GraphQL (WebSocket currently excluded). <br><br> `ServiceUrl` is required for WADL/WSDL; optional for others. <br><br> Optionally attach APIs to version sets. <br><br> Deduplicate by `DisplayName` and by `VersionSetName` (no two API groups in the same version set). <br><br> For next state, keep/update/add API groups. | `ServiceUrl`, `OperationNames`, and `Specification` are validated during extractor validation, not via `ValidateDto`. <br><br> Non-current revisions can't update certain properties (`DisplayName`, `Type`, `Description`, `Path`, etc.) — the publisher copies these from the current revision during PUT. <br><br> WSDL import destroys the `Description` field; publisher saves and restores it after import (root API only). <br><br> Extractor expects no specification file for WSDL. APIM randomly generates WADL/WSDL operation names, so extractor skips operation validation for those types. |
+| `ProductPolicyModel` | Select a random subset of products and generate one policy per selected product. <br><br> Policy name is always `policy`. <br><br> `Content` is a random valid policy XML. It occasionally references named values and policy fragments. | |
+| `ApiOperationPolicyModel` | Generate one policy per selected API operation, from a random subset of API operations. <br><br> Policy name is always `policy`. <br><br> Skip WSDL and WADL APIs because APIM may generate operation names. | |
+| `GroupModel` | Generate 0–5 groups. <br><br> Deduplicate by `Key` and by `DisplayName`. | Built-in groups (Administrators, Developers, Guests) are excluded by `IsResourceKeySupported`. |
+| `ProductGroupModel` | Pair all products with all groups and pick a random subset. <br><br> Name is always `{groupName}`. | Validates DTO structure (`name` equals `Key.Name`, `properties.groupId` ends with `"groups/GroupName"`). <br><br> Publisher override set always empty. Links have nothing to override. |
+| `VersionSetModel` | Generate 0–5 version sets. <br><br> Deduplicate by `Key` and by `DisplayName`. | APIM requires `versioningScheme` on PUT. We use a fixed value (`"Segment"`) in the DTO. |
+| `BackendModel` | Generate 0–5 backends. <br><br> Deduplicate by `Key`. | APIM requires `protocol` on PUT. We use a fixed value (`"http"`) in the DTO. |
+| `GatewayModel` | Disabled. | Disabled on Developer SKU due to [classic tier limits](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits#limits---api-management-classic-tiers). Revisit once clarified. <br><br> APIM requires `locationData` on PUT. We use a fixed value (`"test"`) in the DTO. |
+| `PolicyFragmentModel` | Generate 0–5 policy fragments. <br><br> `Content` is a random valid policy fragment XML. It occasionally references named values. | |
+| `ServicePolicyModel` | Generate 0–1 (singleton) with weighted frequency favoring one policy. <br><br> Policy name is always `policy`. <br><br> `Content` is a random valid policy XML. It occasionally references named values and policy fragments. | |
 
 ## Style notes
 
 - Use `ResourceKey.From(...)` for simple construction, and `new ResourceKey { ... }` when parameters are complex
 - Use `Gen.Frequency` for weighted generation when uniform distribution isn't appropriate
 - Use local functions for helpers inside resolvers. Make them static if they're pure. Make them class methods if they're shared.
+- Each module follows the `Configure*` / `Resolve*` pattern:
+  - `Configure*(IHostApplicationBuilder)` registers dependencies
+  - `Resolve*(IServiceProvider)` returns `*` by using configured dependencies
+- Some operations in the `common` project require a singleton `ServiceDirectory` in DI. However, our tests generate a random `ServiceDirectory` during each test iteration, and after DI is resolved. To work around this, we:
+  - Create an empty application builder
+  - Pass the `ServiceDirectory` to the builder's configuration
+  - Pass the builder to the `Configure*` method in `common` that requires a service directory
+  - Build the builder's service provider.
+  - Return `*` from the built service provider.
 
 ## Adding a new resource type
 

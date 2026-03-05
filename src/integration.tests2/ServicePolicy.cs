@@ -37,6 +37,16 @@ internal sealed record ServicePolicyModel : ITestModel<ServicePolicyModel>
             select unit;
     }
 
+    public static Gen<ImmutableHashSet<ServicePolicyModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        Gen.Frequency((1, EmptySetGenerator), (5, GenerateSingletonSet(models)));
+
+    private static Gen<ImmutableHashSet<ServicePolicyModel>> EmptySetGenerator { get; } =
+        Gen.Const(ImmutableHashSet<ServicePolicyModel>.Empty);
+
+    private static Gen<ImmutableHashSet<ServicePolicyModel>> GenerateSingletonSet(IEnumerable<ITestModel> models) =>
+        from model in Generate(models)
+        select ImmutableHashSet.Create(model);
+
     private static Gen<ServicePolicyModel> Generate(IEnumerable<ITestModel> models) =>
         from content in GenerateContent(models)
         select new ServicePolicyModel
@@ -63,18 +73,9 @@ internal sealed record ServicePolicyModel : ITestModel<ServicePolicyModel>
                        """;
     }
 
-    private static Gen<ImmutableHashSet<ServicePolicyModel>> EmptySetGenerator { get; } =
-        Gen.Const(ImmutableHashSet<ServicePolicyModel>.Empty);
-
-    private static Gen<ImmutableHashSet<ServicePolicyModel>> GenerateSingletonSet(IEnumerable<ITestModel> models) =>
-        from model in Generate(models)
-        select ImmutableHashSet.Create(model);
-
-    public static Gen<ImmutableHashSet<ServicePolicyModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        Gen.Frequency((1, EmptySetGenerator), (5, GenerateSingletonSet(models)));
-
-    public static Gen<ImmutableHashSet<ServicePolicyModel>> GenerateUpdates(IEnumerable<ServicePolicyModel> models) =>
-        from updatedModels in Generator.Traverse(models, model => GenerateUpdate(model, models))
+    public static Gen<ImmutableHashSet<ServicePolicyModel>> GenerateUpdates(IEnumerable<ServicePolicyModel> servicePolicyModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(servicePolicyModels,
+                                                 model => GenerateUpdate(model, allModels))
         select updatedModels.ToImmutableHashSet();
 
     private static Gen<ServicePolicyModel> GenerateUpdate(ServicePolicyModel model, IEnumerable<ITestModel> allModels) =>

@@ -159,6 +159,7 @@ internal static class ApimModule
     {
         CommonModule.ConfigureSortResources(builder);
         ResourceModule.ConfigurePutResourceInApim(builder);
+        ResourceModule.ConfigurePutApiSpecificationInApim(builder);
         ConfigureIsResourceKeySupported(builder);
 
         builder.TryAddSingleton(ResolvePopulateApim);
@@ -168,6 +169,7 @@ internal static class ApimModule
     {
         var sortResources = provider.GetRequiredService<SortResources>();
         var putResource = provider.GetRequiredService<PutResourceInApim>();
+        var putApiSpecification = provider.GetRequiredService<PutApiSpecificationInApim>();
         var isResourceKeySupported = provider.GetRequiredService<IsResourceKeySupported>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
@@ -179,7 +181,7 @@ internal static class ApimModule
             var sortedResources = sortResources(testState.Models
                                                          .Select(model => model.Key.Resource)
                                                          .Distinct());
-                                                         
+
             var topologicalOrder = sortedResources.Select((resource, index) => (resource, index))
                                                   .ToImmutableDictionary(x => x.resource, x => x.index);
 
@@ -196,6 +198,42 @@ internal static class ApimModule
 
             await (group.Key switch
             {
+                ApiResource apiResource =>
+                    group.OfType<ApiModel>()
+                         .ToAsyncEnumerable()
+                         .Where(async (model, cancellationToken) => await isResourceKeySupported(model.Key, cancellationToken))
+                         // Separate root APIs from non-root ones
+                         .GroupBy(model => model.RootName == model.Key.Name
+                                            ? 0
+                                            : 1)
+                         // Process root APIs first
+                         .OrderBy(group => group.Key)
+                         .IterTask(async group => await group.IterTaskParallel(async model =>
+                         {
+                             await putResource(apiResource, model.Key.Name, model.ToDto(), model.Key.Parents, cancellationToken);
+
+                             var specificationOption = from specificationText in model.Specification
+                                                       let contents = BinaryData.FromString(specificationText)
+                                                       let specification = model.Type switch
+                                                       {
+                                                           ApiType.OpenApi => new ApiSpecification.OpenApi
+                                                           {
+                                                               Format = OpenApiFormat.Yaml.Instance,
+                                                               Version = OpenApiVersion.V3.Instance
+                                                           } as ApiSpecification,
+                                                           ApiType.Wadl => ApiSpecification.Wadl.Instance,
+                                                           ApiType.Wsdl => ApiSpecification.Wsdl.Instance,
+                                                           ApiType.GraphQl => ApiSpecification.GraphQl.Instance,
+                                                           var type => throw new InvalidOperationException($"Cannot find specification for '{type}'.")
+                                                       }
+                                                       select (specification, contents);
+
+                             await specificationOption.IterTask(async tuple =>
+                             {
+                                 var (specification, contents) = tuple;
+                                 await putApiSpecification(model.Key, specification, contents, cancellationToken);
+                             });
+                         }, maxDegreeOfParallelism: Option.None, cancellationToken), cancellationToken),
                 IResourceWithDto resourceWithDto =>
                      group.ToAsyncEnumerable()
                           .Where(async (model, cancellationToken) => await isResourceKeySupported(model.Key, cancellationToken))

@@ -23,10 +23,58 @@ internal sealed record ExtractorFilter
 {
     public required ImmutableDictionary<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>> Resources { get; init; }
 
-    public bool ShouldExtract(ResourceKey resourceKey) =>
-        Resources.TryGetValue(resourceKey.Parents, out var resourceDictionary) is false
-        || resourceDictionary.TryGetValue(resourceKey.Resource, out var resourceNames) is false
-        || resourceNames.Contains(resourceKey.Name);
+    public bool ShouldExtract(ResourceKey resourceKey)
+    {
+        var normalizedResources =
+            Resources.GroupBy(kvp => normalizeParentChain(kvp.Key),
+                              kvp => kvp.Value)
+                     .ToImmutableDictionary(parentGroup => parentGroup.Key,
+                                            parentGroup =>
+                                                parentGroup
+                                                    .SelectMany(resourceNames => resourceNames)
+                                                    .GroupBy(kvp => kvp.Key, kvp => kvp.Value)
+                                                    .ToImmutableDictionary(resourceGroup => resourceGroup.Key,
+                                                                           resourceGroup => resourceGroup.SelectMany(names => names)
+                                                                                                         .Select(name => normalizeName(resourceGroup.Key, name))
+                                                                                                         .ToImmutableHashSet()));
+
+        return shouldExtract(resourceKey);
+
+        bool shouldExtract(ResourceKey resourceKey)
+        {
+            var normalizedKey = normalizeKey(resourceKey);
+
+            return normalizedKey.Parents.All(parent =>
+            {
+                var parentParents = ParentChain.From(normalizedKey.Parents.TakeWhile(ancestor => ancestor != parent));
+                var parentKey = ResourceKey.From(parent.Resource, parent.Name, parentParents);
+                return shouldExtract(parentKey);
+            })
+            && (normalizedResources.TryGetValue(normalizedKey.Parents, out var resourceDictionary) is false
+                || resourceDictionary.TryGetValue(normalizedKey.Resource, out var resourceNames) is false
+                || resourceNames.Contains(normalizedKey.Name));
+        }
+
+        static ResourceKey normalizeKey(ResourceKey key) =>
+            key with
+            {
+                Parents = normalizeParentChain(key.Parents),
+                Name = normalizeName(key.Resource, key.Name)
+            };
+
+        static ParentChain normalizeParentChain(ParentChain parentChain) =>
+            ParentChain.From(from tuple in parentChain
+                             let resource = tuple.Resource
+                             let normalizedName = normalizeName(resource, tuple.Name)
+                             select (resource, normalizedName));
+
+        static ResourceName normalizeName(IResource resource, ResourceName name) =>
+            resource switch
+            {
+                ApiResource => ApiRevisionModule.GetRootName(name),
+                _ => name
+            };
+    }
 
     public JsonObject Serialize()
     {
@@ -168,13 +216,14 @@ internal static class ExtractorModule
             using var provider = getLocalDependenciesProvider(serviceDirectory);
             var getInformationFileDto = provider.GetRequiredService<GetInformationFileDto>();
             var getPolicyFileContents = provider.GetRequiredService<GetPolicyFileContents>();
+            var getApiSpecificationFromFile = provider.GetRequiredService<GetApiSpecificationFromFile>();
             var parseResourceFile = provider.GetRequiredService<ParseResourceFile>();
             var getLocalFileOperations = provider.GetRequiredService<GetLocalFileOperations>();
             var fileOperations = getLocalFileOperations();
 
             var expectedModels = getExpectedModels(testState, filterOption);
 
-            var result = await validateModelsWereExtracted(expectedModels, getInformationFileDto, getPolicyFileContents, fileOperations, cancellationToken);
+            var result = await validateModelsWereExtracted(expectedModels, getInformationFileDto, getPolicyFileContents, getApiSpecificationFromFile, fileOperations, cancellationToken);
             result.IfErrorThrow();
 
             result = await validateOnlyModelsWereExtracted(expectedModels, parseResourceFile, fileOperations, cancellationToken);
@@ -188,6 +237,7 @@ internal static class ExtractorModule
             builder.AddServiceDirectoryToConfiguration(serviceDirectory);
             ResourceModule.ConfigureGetInformationFileDto(builder);
             ResourceModule.ConfigureGetPolicyFileContents(builder);
+            ResourceModule.ConfigureGetApiSpecificationFromFile(builder);
             ResourceModule.ConfigureParseResourceFile(builder);
             FileSystemModule.ConfigureGetLocalFileOperations(builder);
 
@@ -200,7 +250,7 @@ internal static class ExtractorModule
                                                 .ToImmutableArray())
                          .IfNone(() => testState.Models);
 
-        async ValueTask<Result<Unit>> validateModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, GetInformationFileDto getInformationFileDto, GetPolicyFileContents getPolicyFileContents, FileOperations fileOperations, CancellationToken cancellationToken)
+        async ValueTask<Result<Unit>> validateModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, GetInformationFileDto getInformationFileDto, GetPolicyFileContents getPolicyFileContents, GetApiSpecificationFromFile getApiSpecificationFromFile, FileOperations fileOperations, CancellationToken cancellationToken)
         {
             var result =
                 await expectedModels
@@ -209,6 +259,37 @@ internal static class ExtractorModule
                         .Traverse(async model =>
                         {
                             var (resource, name, parents) = (model.Key.Resource, model.Key.Name, model.Key.Parents);
+
+                            if (resource is ApiResource apiResource && model is ApiModel apiModel)
+                            {
+                                var dtoOption = await getInformationFileDto(apiResource, name, parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
+                                var dtoResult = dtoOption.ToResult(() => Error.From($"Could not find extracted file for {model.Key}."));
+
+                                var specificationOption = await getApiSpecificationFromFile(model.Key, fileOperations.ReadFile, cancellationToken);
+                                var specificationResult = (specificationOption.IfNoneNullable(), apiModel.Specification.IfNoneNull(), apiModel.OperationNames.IfNoneNull()) switch
+                                {
+                                    // No extracted specification file found
+                                    (null, null, _) => Result.Success(Unit.Instance),
+                                    (null, not null, _) when apiModel.Type is ApiType.Wsdl => Result.Success(Unit.Instance), // SOAP APIs should never have specifications extracted.
+                                    (null, not null, _) => Error.From($"Could not find extracted specification file for {model.Key}."),
+                                    // Extracted specification file found
+                                    (not null, null, _) => Error.From($"Found specification file for '{model.Key}', but model has no specification."),
+                                    (not null, _, _) when apiModel.Type is ApiType.Wsdl => Error.From($"Found specification file for SOAP API '{model.Key}'."), // SOAP APIs should never have specifications extracted.
+                                    (not null, not null, null) => Result.Success(Unit.Instance),
+                                    (not null, not null, not null) when apiModel.Type is ApiType.Wsdl or ApiType.Wadl => Result.Success(Unit.Instance), // APIM randomly generates operation names for SOAP and WADL APIs, so we cannot reliably validate them.
+                                    (var (_, contents), _, var operationNames) => operationNames.Traverse(name => contents.ToString().Contains($"{name}", StringComparison.OrdinalIgnoreCase)
+                                                                                                                    ? Result.Success(Unit.Instance)
+                                                                                                                    : Error.From($"Specification file for {model.Key} does not contain operation {name}."),
+                                                                                                          cancellationToken)
+                                                                                                .Map(_ => Unit.Instance)
+                                };
+
+                                var validationResult = from _ in dtoResult
+                                                        from __ in specificationResult
+                                                        select Unit.Instance;
+
+                                return validationResult.MapError(error => Error.From($"Validation failed for {model.Key}. {error}"));
+                            }
 
                             if (resource is PolicyFragmentResource policyFragmentResource)
                             {
@@ -223,6 +304,7 @@ internal static class ExtractorModule
                                        from policyContentsDto in policyContentsResult
                                        let mergedDto = informationFileDto.MergeWith(policyContentsDto)
                                        from validationResult in model.ValidateDto(mergedDto)
+                                                                     .MapError(error => Error.From($"Validation failed for {model.Key}. {error}"))
                                        select validationResult;
                             }
 
@@ -240,7 +322,8 @@ internal static class ExtractorModule
                                 var contentsResult = contentsOption.Map(PolicyContentsToDto)
                                                                    .ToResult(() => Error.From($"Could not find extracted policy file for {model.Key}."));
 
-                                return contentsResult.Bind(dto => model.ValidateDto(dto));
+                                return contentsResult.Bind(dto => model.ValidateDto(dto)
+                                                                       .MapError(error => Error.From($"Validation failed for {model.Key}. {error}")));
                             }
 
                             return Unit.Instance;

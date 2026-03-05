@@ -50,36 +50,37 @@ internal sealed record BackendModel : ITestModel<BackendModel>
             select unit;
     }
 
-    private static Gen<BackendModel> Generator { get; } =
-        from name in common.tests.Generator.ResourceName
+    public static Gen<ImmutableHashSet<BackendModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
+
+    private static Gen<BackendModel> Generate() =>
+        from name in Generator.ResourceName
         from description in CommonModule.GenerateDescription(name)
+        from uri in Generator.AbsoluteUri
         select new BackendModel
         {
             Key = ResourceKey.From(BackendResource.Instance, name),
             Description = description,
-            Url = $"https://{description}.example.com"
+            Url = uri.ToString()
         };
-
-    public static Gen<ImmutableHashSet<BackendModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        Generator.HashSetOf(0, 5);
-
-    public static Gen<ImmutableHashSet<BackendModel>> GenerateUpdates(IEnumerable<BackendModel> models) =>
-        from updatedModels in
-            common.tests.Generator
-                        .Traverse(models, GenerateUpdate)
-        let updatedSet = ToSet(updatedModels)
-        where updatedSet.Count == updatedModels.Length
-        select updatedSet;
 
     private static ImmutableHashSet<BackendModel> ToSet(IEnumerable<BackendModel> models) =>
         [.. models.DistinctBy(model => model.Key)];
 
+    public static Gen<ImmutableHashSet<BackendModel>> GenerateUpdates(IEnumerable<BackendModel> backendModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(backendModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
+
     private static Gen<BackendModel> GenerateUpdate(BackendModel model) =>
         from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
+        from uri in Generator.AbsoluteUri
         select model with
         {
             Description = description,
-            Url = $"https://{description}.example.com"
+            Url = uri.ToString()
         };
 
     public static Gen<ImmutableHashSet<BackendModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
@@ -91,7 +92,7 @@ internal sealed record BackendModel : ITestModel<BackendModel>
                let kept = shuffled.Take(keptCount).ToImmutableArray()
                from unchangedCount in Gen.Int[0, kept.Length]
                let unchanged = kept.Take(unchangedCount)
-               from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
                from added in GenerateSet(accumulatedNextModels)
                select ToSet([.. unchanged, .. changed, .. added]);
     }

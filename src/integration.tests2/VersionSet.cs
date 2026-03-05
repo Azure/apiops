@@ -50,8 +50,12 @@ internal sealed record VersionSetModel : ITestModel<VersionSetModel>
             select unit;
     }
 
-    private static Gen<VersionSetModel> Generator { get; } =
-        from name in common.tests.Generator.ResourceName
+    public static Gen<ImmutableHashSet<VersionSetModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
+
+    private static Gen<VersionSetModel> Generate() =>
+        from name in Generator.ResourceName
         from displayName in CommonModule.GenerateDisplayName(name)
         from description in CommonModule.GenerateDescription(name)
         select new VersionSetModel
@@ -61,20 +65,15 @@ internal sealed record VersionSetModel : ITestModel<VersionSetModel>
             Description = description
         };
 
-    public static Gen<ImmutableHashSet<VersionSetModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        Generator.HashSetOf(0, 5);
-
-    public static Gen<ImmutableHashSet<VersionSetModel>> GenerateUpdates(IEnumerable<VersionSetModel> models) =>
-        from updatedModels in
-            common.tests.Generator
-                        .Traverse(models, GenerateUpdate)
-        let updatedSet = ToSet(updatedModels)
-        where updatedSet.Count == updatedModels.Length
-        select updatedSet;
-
     private static ImmutableHashSet<VersionSetModel> ToSet(IEnumerable<VersionSetModel> models) =>
         [.. models.DistinctBy(model => model.Key)
                   .DistinctBy(model => model.DisplayName)];
+
+    public static Gen<ImmutableHashSet<VersionSetModel>> GenerateUpdates(IEnumerable<VersionSetModel> versionSetModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(versionSetModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<VersionSetModel> GenerateUpdate(VersionSetModel model) =>
         from displayName in CommonModule.GenerateDisplayName(model.Key.Name, model.DisplayName)
@@ -94,7 +93,7 @@ internal sealed record VersionSetModel : ITestModel<VersionSetModel>
                let kept = shuffled.Take(keptCount).ToImmutableArray()
                from unchangedCount in Gen.Int[0, kept.Length]
                let unchanged = kept.Take(unchangedCount)
-               from changed in common.tests.Generator.Traverse(kept.Skip(unchangedCount), GenerateUpdate)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
                from added in GenerateSet(accumulatedNextModels)
                select ToSet([.. unchanged, .. changed, .. added]);
     }

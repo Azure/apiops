@@ -28,10 +28,6 @@ public static class Generator
         from randomizer in Randomizer
         select new Internet { Random = randomizer };
 
-    public static Gen<Uri> Uri { get; } =
-        from internet in Internet
-        select new Uri(internet.Url());
-
     public static Gen<Address> Address { get; } =
         from randomizer in Randomizer
         select new Address { Random = randomizer };
@@ -41,6 +37,16 @@ public static class Generator
         let word = randomizer.Word()
         where word.All(char.IsLetterOrDigit)
         select word;
+
+    public static Gen<Uri> Uri { get; } =
+        from internet in Internet
+        select new Uri(internet.Url());
+
+    public static Gen<Uri> AbsoluteUri { get; } =
+        from protocol in Gen.OneOfConst("http", "https")
+        from tld in Gen.OneOfConst("com", "net", "org", "io")
+        from domain in AlphanumericWord
+        select new Uri($"{protocol}://{domain}.{tld}");
 
     public static Gen<ResourceName> ResourceName { get; } =
         from words in Gen.Char['a', 'z']
@@ -223,6 +229,11 @@ public static class Generator
         Generator.Traverse(source,
                            item => from t3 in f(item.Item1)
                                    select (t3, item.Item2));
+
+    public static Gen<Option<T2>> Traverse<T1, T2>(Option<T1> option, Func<T1, Gen<T2>> f) =>
+        option.Map(t1 => from t2 in f(t1)
+                         select Option.Some(t2))
+              .IfNone(() => Gen.Const(Option<T2>.None()));
 
     public static Gen<Func<T, bool>> GeneratePredicate<T>() =>
         from x in Gen.Int[2, 100]

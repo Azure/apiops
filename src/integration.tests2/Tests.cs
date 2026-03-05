@@ -21,6 +21,7 @@ internal static class TestsModule
     public static void ConfigureRunTests(IHostApplicationBuilder builder)
     {
         TestStateModule.ConfigureGenerateTestState(builder);
+        TestStateModule.ConfigureGenerateUpdatedSubsetOfTestState(builder);
         TestStateModule.ConfigureGenerateNextTestState(builder);
         ApimModule.ConfigureWipeApim(builder);
         ApimModule.ConfigurePopulateApim(builder);
@@ -45,6 +46,7 @@ internal static class TestsModule
         var writeGitCommit = provider.GetRequiredService<WriteGitCommit>();
         var validateStateTransition = provider.GetRequiredService<ValidatePublisherStateTransition>();
         var generateTestState = provider.GetRequiredService<GenerateTestState>();
+        var generateUpdatedSubsetOfTestState = provider.GetRequiredService<GenerateUpdatedSubsetOfTestState>();
         var generateNextTestState = provider.GetRequiredService<GenerateNextTestState>();
         var configuration = provider.GetRequiredService<IConfiguration>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
@@ -55,9 +57,8 @@ internal static class TestsModule
 
             var gen = from testState in generateTestState()
                       from serviceDirectory in generateServiceDirectory()
-                      from extractorFilter in ExtractorFilter.Generate(testState.Models)
-                      where extractorFilter.Resources.SelectMany(kvp => kvp.Value).SelectMany(kvp => kvp.Value).Any()
-                      from publisherOverride in PublisherOverride.Generate(testState.Models)
+                      from extractorFilter in generateExtractorFilter(testState)
+                      from publisherOverride in generatePublisherOverride(testState)
                       from nextState in generateNextTestState(testState)
                       select (testState, serviceDirectory, extractorFilter, publisherOverride, nextState);
 
@@ -108,6 +109,23 @@ internal static class TestsModule
                 where folderName.Length < 15
                 let path = Path.Combine(Path.GetTempPath(), "apiops-integration-tests", folderName)
                 select ServiceDirectory.FromPath(path);
+
+            static Gen<ExtractorFilter> generateExtractorFilter(TestState testState) =>
+                from extractorFilter in ExtractorFilter.Generate(testState.Models)
+                let filterResourceNames = from parentDictionary in extractorFilter.Resources
+                                          from resourceDictionary in parentDictionary.Value
+                                          from resourceNames in resourceDictionary.Value
+                                          select resourceNames
+                where filterResourceNames.Any()
+                select extractorFilter;
+
+            Gen<PublisherOverride> generatePublisherOverride(TestState testState) =>
+                from updatedSubset in generateUpdatedSubsetOfTestState(testState)
+                let modelDictionary = updatedSubset.Models.ToImmutableDictionary(model => model.Key)
+                select new PublisherOverride
+                {
+                    Updates = modelDictionary
+                };
         };
 
         static void cleanupDirectory(ServiceDirectory directory) =>
@@ -134,6 +152,8 @@ internal static class TestsModule
     public static ImmutableDictionary<IResource, Type> ResourceModels { get; } =
         new Dictionary<IResource, Type>
         {
+            [ApiResource.Instance] = typeof(ApiModel),
+            [ApiOperationPolicyResource.Instance] = typeof(ApiOperationPolicyModel),
             [TagResource.Instance] = typeof(TagModel),
             [NamedValueResource.Instance] = typeof(NamedValueModel),
             [LoggerResource.Instance] = typeof(LoggerModel),

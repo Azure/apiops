@@ -76,7 +76,7 @@ internal sealed record ProductGroupModel : ITestModel<ProductGroupModel>
                }).ToImmutableHashSet();
     }
 
-    public static Gen<ImmutableHashSet<ProductGroupModel>> GenerateUpdates(IEnumerable<ProductGroupModel> models) =>
+    public static Gen<ImmutableHashSet<ProductGroupModel>> GenerateUpdates(IEnumerable<ProductGroupModel> models, IEnumerable<ITestModel> allModels) =>
         // Link resources have nothing to update
         Gen.Const(ImmutableHashSet<ProductGroupModel>.Empty);
 

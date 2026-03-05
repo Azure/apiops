@@ -50,17 +50,9 @@ internal sealed record PolicyFragmentModel : ITestModel<PolicyFragmentModel>
             select unit;
     }
 
-    private static Gen<string> GenerateContent(IEnumerable<ITestModel> models)
-    {
-        var namedValues = models.OfType<NamedValueModel>();
-
-        return from setVariableSnippet in PolicyModule.GenerateSetVariableSnippet(namedValues)
-               select $"""
-                       <fragment>
-                           {setVariableSnippet}
-                       </fragment>
-                       """;
-    }
+    public static Gen<ImmutableHashSet<PolicyFragmentModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate(models).HashSetOf(0, 5)
+        select ToSet(set);
 
     private static Gen<PolicyFragmentModel> Generate(IEnumerable<ITestModel> models) =>
         from name in Generator.ResourceName
@@ -73,12 +65,27 @@ internal sealed record PolicyFragmentModel : ITestModel<PolicyFragmentModel>
             Content = content
         };
 
-    public static Gen<ImmutableHashSet<PolicyFragmentModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        Generate(models).HashSetOf(0, 5);
+    private static Gen<string> GenerateContent(IEnumerable<ITestModel> models)
+    {
+        var namedValues = models.OfType<NamedValueModel>();
 
-    public static Gen<ImmutableHashSet<PolicyFragmentModel>> GenerateUpdates(IEnumerable<PolicyFragmentModel> models) =>
-        from updatedModels in Generator.Traverse(models, model => GenerateUpdate(model, models))
-        select updatedModels.ToImmutableHashSet();
+        return from setVariableSnippet in PolicyModule.GenerateSetVariableSnippet(namedValues)
+               select $"""
+                       <fragment>
+                           {setVariableSnippet}
+                       </fragment>
+                       """;
+    }
+
+    private static ImmutableHashSet<PolicyFragmentModel> ToSet(IEnumerable<PolicyFragmentModel> models) =>
+        [.. models.DistinctBy(model => model.Key)];
+
+    public static Gen<ImmutableHashSet<PolicyFragmentModel>> GenerateUpdates(IEnumerable<PolicyFragmentModel> policyFragmentModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(policyFragmentModels,
+                                                 model => GenerateUpdate(model, allModels))
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<PolicyFragmentModel> GenerateUpdate(PolicyFragmentModel model, IEnumerable<ITestModel> allModels) =>
         from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
@@ -93,13 +100,11 @@ internal sealed record PolicyFragmentModel : ITestModel<PolicyFragmentModel>
     {
         var currentModels = previousModels.OfType<PolicyFragmentModel>();
 
-        return from shuffled in Gen.Shuffle(currentModels.ToArray())
-               from keptCount in Gen.Int[0, shuffled.Length]
-               let kept = shuffled.Take(keptCount).ToImmutableArray()
-               from unchangedCount in Gen.Int[0, kept.Length]
-               let unchanged = kept.Take(unchangedCount)
-               from changed in Generator.Traverse(kept.Skip(unchangedCount), model => GenerateUpdate(model, accumulatedNextModels))
+        return from changed in
+                   from modelsToUpdate in Generator.SubSetOf([.. currentModels])
+                   from changed in Generator.Traverse(modelsToUpdate, model => GenerateUpdate(model, accumulatedNextModels))
+                   select changed
                from added in GenerateSet(accumulatedNextModels)
-               select ImmutableHashSet.CreateRange([.. unchanged, .. changed, .. added]);
+               select ImmutableHashSet.CreateRange([.. changed, .. added]);
     }
 }

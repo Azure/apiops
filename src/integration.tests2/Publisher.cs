@@ -27,68 +27,56 @@ internal sealed record PublisherOverride
 
     public JsonObject Serialize()
     {
-        var parentDictionary = Updates.GroupBy(kvp => kvp.Key.Parents,
-                                               kvp => kvp.Value)
-                                      .ToImmutableDictionary(group => group.Key,
-                                                             group => group.GroupBy(model => model.Key.Resource)
-                                                                           .ToImmutableDictionary(group => group.Key,
-                                                                                                  group => group.ToImmutableHashSet()));
+        var keyJsons = new Dictionary<ResourceKey, JsonObject>();
+        Updates.Iter(kvp =>
+        {
+            var (key, value) = kvp;
+            keyJsons[key] = value.ToDto();
+            key.Parents.Iter(parent =>
+            {
+                var parentParents = ParentChain.From(key.Parents.TakeWhile(ancestor => ancestor != parent));
+                var parentKey = ResourceKey.From(parent.Resource, parent.Name, parentParents);
+                if (keyJsons.ContainsKey(parentKey) is false)
+                {
+                    keyJsons[parentKey] = [];
+                }
+            });
+        });
+
+        var parentDictionary =
+            keyJsons.GroupBy(kvp => kvp.Key.Parents,
+                             kvp => (kvp.Key.Resource, kvp.Key.Name, Dto: kvp.Value))
+                    .ToImmutableDictionary(group => group.Key,
+                                           group => group.GroupBy(tuple => tuple.Resource,
+                                                                  tuple => (tuple.Name, tuple.Dto))
+                                                         .ToImmutableDictionary(group => group.Key,
+                                                                                group => group.ToImmutableHashSet()));
 
         var rootResources = parentDictionary.Find(ParentChain.Empty)
                                             .IfNone(() => []);
 
         return [.. getResourceKvps(ParentChain.Empty, rootResources)];
 
-        IEnumerable<KeyValuePair<string, JsonNode?>> getResourceKvps(ParentChain parentChain, ImmutableDictionary<IResource, ImmutableHashSet<ITestModel>> resources) =>
+        IEnumerable<KeyValuePair<string, JsonNode?>> getResourceKvps(ParentChain parentChain, ImmutableDictionary<IResource, ImmutableHashSet<(ResourceName Name, JsonObject Dto)>> resources) =>
             from kvp in resources
             let jsonKey = kvp.Key.ConfigurationKey
-            let jsonValue = kvp.Value.Select(model =>
+            let jsonValue = kvp.Value.Select(tuple =>
             {
-                var (resource, name) = (model.Key.Resource, model.Key.Name);
+                var (resource, (name, dto)) = (kvp.Key, tuple);
                 var parentChainWithResource = parentChain.Append(resource, name);
 
-                // Create DTO Json
-                var json = model.ToDto();
-
                 // Add name property
-                json["name"] = name.ToString();
+                dto["name"] = name.ToString();
 
                 // Add children
                 parentDictionary.Find(parentChainWithResource)
                                 .Iter(children => getResourceKvps(parentChainWithResource, children)
-                                                    .Iter(kvp => json[kvp.Key] = kvp.Value));
+                                                    .Iter(kvp => dto[kvp.Key] = kvp.Value));
 
-                return json;
+                return dto;
             }).ToJsonArray()
             select KeyValuePair.Create(jsonKey, jsonValue as JsonNode);
     }
-
-    public static Gen<PublisherOverride> Generate(IEnumerable<ITestModel> models) =>
-        from subsets in Generator.Traverse(TestsModule.ResourceModels.Values,
-                                           type =>
-                                           {
-                                               var method = typeof(PublisherOverride).GetMethod(nameof(GenerateUpdatedSubSetOf),
-                                                                                                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
-                                                             ?? throw new InvalidOperationException($"Failed to find method '{nameof(GenerateUpdatedSubSetOf)}' on type '{typeof(PublisherOverride)}'.");
-
-                                               var genericMethod = method.MakeGenericMethod(type) ?? throw new InvalidOperationException($"Failed to construct generic method for type '{type}'.");
-
-                                               var subsetGen = genericMethod.Invoke(obj: default, parameters: [models])
-                                                               ?? throw new InvalidOperationException($"Failed to invoke method '{method.Name}' for type '{type}'.");
-
-                                               return (Gen<ImmutableHashSet<ITestModel>>)subsetGen;
-                                           })
-        select new PublisherOverride
-        {
-            Updates = subsets.SelectMany(models => models)
-                             .ToImmutableDictionary(model => model.Key)
-        };
-
-    private static Gen<ImmutableHashSet<ITestModel>> GenerateUpdatedSubSetOf<T>(IEnumerable<ITestModel> models) where T : ITestModel<T> =>
-        from updated in T.GenerateUpdates(models.OfType<T>())
-        from subset in Generator.SubSetOf(updated)
-        select subset.Cast<ITestModel>()
-                     .ToImmutableHashSet();
 
     public override string ToString() =>
         Serialize().ToJsonString();
@@ -192,7 +180,7 @@ internal static class PublisherModule
 
             return [.. from model in testState.Models
                        let overriddenModel  = overrides.Find(model.Key)
-                                                     .IfNone(() => model)
+                                                       .IfNone(() => model)
                        // Only include secret named values if there is an override
                        where overriddenModel is not NamedValueModel { Secret: true }
                              || overrides.ContainsKey(overriddenModel .Key)
@@ -211,7 +199,8 @@ internal static class PublisherModule
                                     case IResourceWithDto resourceWithDto:
                                         var dtoOption = await getDtoFromApim(resourceWithDto, model.Key.Name, model.Key.Parents, cancellationToken);
 
-                                        return dtoOption.Map(model.ValidateDto)
+                                        return dtoOption.Map(dto => model.ValidateDto(dto)
+                                                                         .MapError(error => Error.From($"Validation failed for {model.Key}. {error}")))
                                                         .IfNone(() => Error.From($"Resource '{model.Key}' was not found in APIM after publishing."));
                                     default:
                                         return Unit.Instance;
@@ -249,11 +238,14 @@ internal static class PublisherModule
 
     public static void ConfigureWriteGitCommit(IHostApplicationBuilder builder)
     {
+        ApimModule.ConfigureIsResourceKeySupported(builder);
+
         builder.TryAddSingleton(ResolveWriteGitCommit);
     }
 
     private static WriteGitCommit ResolveWriteGitCommit(IServiceProvider provider)
     {
+        var isResourceKeySupported = provider.GetRequiredService<IsResourceKeySupported>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
         return async (serviceDirectory, state, cancellationToken) =>
@@ -270,15 +262,21 @@ internal static class PublisherModule
         static bool isGitDirectory(DirectoryInfo directory) =>
             directory.Name.Equals(".git", StringComparison.OrdinalIgnoreCase);
 
-        static async ValueTask writeModels(ServiceDirectory serviceDirectory, TestState state, CancellationToken cancellationToken)
+        async ValueTask writeModels(ServiceDirectory serviceDirectory, TestState state, CancellationToken cancellationToken)
         {
             using var localProvider = getLocalDependenciesProvider(serviceDirectory);
             var writeInformationFile = localProvider.GetRequiredService<WriteInformationFile>();
+            var writeApiSpecificationFile = localProvider.GetRequiredService<WriteApiSpecificationFile>();
             var writePolicyFile = localProvider.GetRequiredService<WritePolicyFile>();
 
             await state.Models
                        .IterTaskParallel(async model =>
                        {
+                           if (await isResourceKeySupported(model.Key, cancellationToken) is false)
+                           {
+                               return;
+                           }
+
                            var resource = model.Key.Resource;
 
                            if (resource is IResourceWithInformationFile resourceWithInfo)
@@ -289,6 +287,31 @@ internal static class PublisherModule
                            if (resource is IPolicyResource policyResource)
                            {
                                await writePolicyFile(policyResource, model.Key.Name, model.ToDto(), model.Key.Parents, cancellationToken);
+                           }
+
+                           if (model is ApiModel apiModel)
+                           {
+                               var option = from specificationText in apiModel.Specification
+                                            let contents = BinaryData.FromString(specificationText)
+                                            let specification = apiModel.Type switch
+                                            {
+                                                ApiType.OpenApi => new ApiSpecification.OpenApi
+                                                {
+                                                    Format = OpenApiFormat.Yaml.Instance,
+                                                    Version = OpenApiVersion.V3.Instance
+                                                } as ApiSpecification,
+                                                ApiType.Wadl => ApiSpecification.Wadl.Instance,
+                                                ApiType.Wsdl => ApiSpecification.Wsdl.Instance,
+                                                ApiType.GraphQl => ApiSpecification.GraphQl.Instance,
+                                                var type => throw new InvalidOperationException($"Cannot find specification for '{type}'.")
+                                            }
+                                            select (specification, contents);
+
+                               await option.IterTask(async tuple =>
+                               {
+                                   var (specification, contents) = tuple;
+                                   await writeApiSpecificationFile(model.Key, specification, contents, cancellationToken);
+                               });
                            }
                        }, maxDegreeOfParallelism: Option.None, cancellationToken);
         }
@@ -312,6 +335,7 @@ internal static class PublisherModule
 
             builder.AddServiceDirectoryToConfiguration(serviceDirectory);
             ResourceModule.ConfigureWriteInformationFile(builder);
+            ResourceModule.ConfigureWriteApiSpecificationFile(builder);
             ResourceModule.ConfigureWritePolicyFile(builder);
 
             return builder.Services.BuildServiceProvider();
@@ -369,7 +393,8 @@ internal static class PublisherModule
                                           case IResourceWithDto resourceWithDto:
                                               var dtoOption = await getDtoFromApim(resourceWithDto, model.Key.Name, model.Key.Parents, cancellationToken);
 
-                                              return dtoOption.Map(model.ValidateDto)
+                                              return dtoOption.Map(dto => model.ValidateDto(dto)
+                                                                               .MapError(error => Error.From($"Validation failed for {model.Key}. {error}")))
                                                               .IfNone(() => Error.From($"Resource '{model.Key}' was not found in APIM after commit-based publish."));
                                           default:
                                               return Unit.Instance;
@@ -386,6 +411,18 @@ internal static class PublisherModule
             var deletedKeys = previousState.Models
                                            .Select(model => model.Key)
                                            .Where(key => currentKeys.Contains(key) is false);
+
+            // Don't consider an API "deleted" if its revision went from non-current to current
+            var currentRevisionApis = currentState.Models
+                                                  .OfType<ApiModel>()
+                                                  .Where(model => model.RootName == model.Key.Name)
+                                                  .ToImmutableDictionary(model => model.RootName, model => model.RevisionNumber);
+            
+            deletedKeys = deletedKeys.Where(key => key.Resource is not ApiResource
+                                                   || ApiRevisionModule.Parse(key.Name)
+                                                                       .Where(tuple => currentRevisionApis.TryGetValue(tuple.RootName, out var currentRevisionNumber)
+                                                                                       && tuple.Revision == currentRevisionNumber)
+                                                                       .IsNone);
 
             result =
                 await deletedKeys.ToAsyncEnumerable()

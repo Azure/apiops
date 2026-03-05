@@ -58,7 +58,15 @@ internal sealed record LoggerModel : ITestModel<LoggerModel>
             select unit;
     }
 
-    private static Gen<LoggerModel> Generator { get; } =
+    public static Gen<ImmutableHashSet<LoggerModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Gen.Frequency((1, EmptySetGenerator),
+                                  (5, Generate().HashSetOf(1)))
+        select ToSet(set);
+
+    private static Gen<ImmutableHashSet<LoggerModel>> EmptySetGenerator { get; } =
+        Gen.Const(ImmutableHashSet<LoggerModel>.Empty);
+
+    private static Gen<LoggerModel> Generate() =>
         from description in CommonModule.GenerateDescription(azureMonitorName)
         from isBuffered in Gen.Bool
         select new LoggerModel
@@ -67,19 +75,14 @@ internal sealed record LoggerModel : ITestModel<LoggerModel>
             IsBuffered = isBuffered
         };
 
-    private static Gen<ImmutableHashSet<LoggerModel>> EmptySetGenerator { get; } =
-        Gen.Const(ImmutableHashSet<LoggerModel>.Empty);
+    private static ImmutableHashSet<LoggerModel> ToSet(IEnumerable<LoggerModel> models) =>
+        [.. models.DistinctBy(model => model.Key)];
 
-    private static Gen<ImmutableHashSet<LoggerModel>> SingletonSetGenerator { get; } =
-        from model in Generator
-        select ImmutableHashSet.Create(model);
-
-    public static Gen<ImmutableHashSet<LoggerModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        Gen.Frequency((1, EmptySetGenerator), (5, SingletonSetGenerator));
-
-    public static Gen<ImmutableHashSet<LoggerModel>> GenerateUpdates(IEnumerable<LoggerModel> models) =>
-        from updatedModels in common.tests.Generator.Traverse(models, GenerateUpdate)
-        select updatedModels.ToImmutableHashSet();
+    public static Gen<ImmutableHashSet<LoggerModel>> GenerateUpdates(IEnumerable<LoggerModel> loggerModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(loggerModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<LoggerModel> GenerateUpdate(LoggerModel model) =>
         from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
@@ -90,6 +93,19 @@ internal sealed record LoggerModel : ITestModel<LoggerModel>
             IsBuffered = isBuffered
         };
 
-    public static Gen<ImmutableHashSet<LoggerModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
-        Gen.Frequency((1, EmptySetGenerator), (5, SingletonSetGenerator));
+    public static Gen<ImmutableHashSet<LoggerModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
+    {
+        var currentModels = previousModels.OfType<LoggerModel>();
+
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
+               from added in kept.Any()
+                                ? EmptySetGenerator
+                                : GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
+    }
 }
