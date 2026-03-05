@@ -153,6 +153,7 @@ internal static class TestsModule
         new Dictionary<IResource, Type>
         {
             [ApiResource.Instance] = typeof(ApiModel),
+            [ApiPolicyResource.Instance] = typeof(ApiPolicyModel),
             [ApiOperationPolicyResource.Instance] = typeof(ApiOperationPolicyModel),
             [TagResource.Instance] = typeof(TagModel),
             [NamedValueResource.Instance] = typeof(NamedValueModel),
