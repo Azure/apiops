@@ -205,11 +205,11 @@ internal static class TestStateModule
         IEnumerable<ITestModel> removeUnreferencedVersionSets(IEnumerable<ITestModel> models)
         {
             var referencedVersionSets = models.OfType<ApiModel>()
-                                              .Choose(api => api.VersionSetName)
+                                              .Choose(api => api.VersionSetKey)
                                               .ToImmutableHashSet();
 
             return models.Where(model => model is not VersionSetModel versionSet
-                                         || referencedVersionSets.Contains(versionSet.Key.Name));
+                                         || referencedVersionSets.Contains(versionSet.Key));
         }
     }
 

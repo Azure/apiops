@@ -206,7 +206,7 @@ internal sealed record ApiModel : ITestModel<ApiModel>
 
     public required bool SubscriptionRequired { get; init; }
 
-    public required Option<ResourceName> VersionSetName { get; init; }
+    public required Option<ResourceKey> VersionSetKey { get; init; }
 
     public required Option<Uri> ServiceUrl { get; init; }
 
@@ -223,8 +223,6 @@ internal sealed record ApiModel : ITestModel<ApiModel>
             ["path"] = Path,
             ["subscriptionRequired"] = SubscriptionRequired,
             ["apiRevision"] = RevisionNumber.ToString(),
-            ["apiVersionSetId"] = VersionSetName.Map(name => $"/apiVersionSets/{name}")
-                                                .IfNoneNull(),
             ["protocols"] = Type switch
             {
                 ApiType.WebSocket => new JsonArray("wss"),
@@ -245,7 +243,7 @@ internal sealed record ApiModel : ITestModel<ApiModel>
         ServiceUrl.Iter(uri => propertiesJson["serviceUrl"] = uri.ToString());
 
         // Set version set
-        VersionSetName.Iter(name => propertiesJson["apiVersionSetId"] = $"/apiVersionSets/{name}");
+        VersionSetKey.Iter(key => propertiesJson["apiVersionSetId"] = $"/{key}");
 
         return new()
         {
@@ -317,14 +315,14 @@ internal sealed record ApiModel : ITestModel<ApiModel>
             from properties in dto.GetJsonObjectProperty("properties")
             let versionSetIdOption = properties.GetStringProperty("apiVersionSetId")
                                                .ToOption()
-            from unit in (VersionSetName.IfNoneNull(), versionSetIdOption.IfNoneNull()) switch
+            from unit in (VersionSetKey.IfNoneNull(), versionSetIdOption.IfNoneNull()) switch
             {
                 (null, null) => Result.Success(Unit.Instance),
                 (null, var value) => Error.From($"Resource '{Key}' has apiVersionSetId '{value}', but it should be missing."),
                 (var value, null) => Error.From($"Resource '{Key}' is missing apiVersionSetId, but it should be '{value}'."),
-                (var expected, var actual) => actual.EndsWith($"/apiVersionSets/{expected}", StringComparison.OrdinalIgnoreCase)
+                (var expected, var actual) => actual.EndsWith($"{expected}", StringComparison.OrdinalIgnoreCase)
                                                 ? Result.Success(Unit.Instance)
-                                                : Error.From($"Resource '{Key}' has apiVersionSetId '{actual}', but it should end with '/apiVersionSets/{expected}'.")
+                                                : Error.From($"Resource '{Key}' has apiVersionSetId '{actual}', but it should end with '{expected}'.")
             }
             select unit;
 
@@ -349,10 +347,10 @@ internal sealed record ApiModel : ITestModel<ApiModel>
             ApiType.Wadl or ApiType.Wsdl or ApiType.WebSocket => Generator.AbsoluteUri.Select(Option.Some),
             _ => Generator.AbsoluteUri.OptionOf()
         }
-        from versionSetName in Gen.OneOfConst([.. models.OfType<VersionSetModel>()
-                                                        .Select(model => model.Key.Name)
-                                                        .Select(Option.Some)
-                                                        .Append(Option.None)])
+        from versionSetKey in Gen.OneOfConst([.. models.OfType<VersionSetModel>()
+                                                       .Select(model => model.Key)
+                                                       .Select(Option.Some)
+                                                       .Append(Option.None)])
         from operationNames in GenerateOperationNames(apiType)
         from specification in GenerateSpecification(apiType, rootName, operationNames, serviceUrl, path, displayName, description)
         from subscriptionRequired in Gen.Bool
@@ -368,7 +366,7 @@ internal sealed record ApiModel : ITestModel<ApiModel>
             Specification = specification,
             SubscriptionRequired = subscriptionRequired,
             Type = apiType,
-            VersionSetName = versionSetName
+            VersionSetKey = versionSetKey
         }
         from otherRevisionNumbers in Gen.Int[2, 100].HashSetOf(0, 3)
         from otherRevisions in Generator.Traverse(otherRevisionNumbers, revisionNumber =>
@@ -451,10 +449,10 @@ internal sealed record ApiModel : ITestModel<ApiModel>
         // Deduplicate group display names
         rootGroups = rootGroups.DistinctBy(group => group.First().DisplayName, StringComparer.OrdinalIgnoreCase);
 
-        // Deduplicate version set names
+        // Deduplicate version sets
         rootGroups = rootGroups.DistinctBy(group => group.First()
-                                                         .VersionSetName
-                                                         .Map(name => name.ToString())
+                                                         .VersionSetKey
+                                                         .Map(key => key.ToString())
                                                          .IfNone(() => Guid.NewGuid().ToString()));
 
         return [.. rootGroups.SelectMany(group => group)];
@@ -549,16 +547,16 @@ internal sealed record ApiModel : ITestModel<ApiModel>
                                                              .ToImmutableHashSet();
 
             // Remove non-continuous version set references
-            return next.Select(model => model.VersionSetName
+            return next.Select(model => model.VersionSetKey
                                              .Where(nonContinuousVersionSets.Contains)
-                                             .Match(name => model with { VersionSetName = Option.None },
+                                             .Match(key => model with { VersionSetKey = Option.None },
                                                     () => model));
         }
 
-        ImmutableDictionary<ResourceName, ImmutableHashSet<ResourceName>> getVersionSetApis(IEnumerable<ApiModel> models) =>
-            models.Choose(apiModel => from versionSetName in apiModel.VersionSetName
-                                      select (versionSetName, apiModel.RootName))
-                  .GroupBy(tuple => tuple.versionSetName, tuple => tuple.RootName)
+        ImmutableDictionary<ResourceKey, ImmutableHashSet<ResourceName>> getVersionSetApis(IEnumerable<ApiModel> models) =>
+            models.Choose(apiModel => from versionSetKey in apiModel.VersionSetKey
+                                      select (versionSetKey, apiModel.RootName))
+                  .GroupBy(tuple => tuple.versionSetKey, tuple => tuple.RootName)
                   .ToImmutableDictionary(group => group.Key, group => group.ToImmutableHashSet());
     }
 }
