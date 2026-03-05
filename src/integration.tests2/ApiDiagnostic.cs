@@ -1,6 +1,7 @@
 using common;
 using common.tests;
 using CsCheck;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -8,15 +9,15 @@ using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record DiagnosticModel : ITestModel<DiagnosticModel>
+internal sealed record ApiDiagnosticModel : ITestModel<ApiDiagnosticModel>
 {
-    public required string Verbosity { get; init; }
-
-    public required bool LogClientIp { get; init; }
+    public required ResourceKey Key { get; init; }
 
     public required ResourceKey LoggerKey { get; init; }
 
-    public required ResourceKey Key { get; init; }
+    public required string Verbosity { get; init; }
+
+    public required bool LogClientIp { get; init; }
 
     public JsonObject ToDto() =>
         new()
@@ -38,7 +39,7 @@ internal sealed record DiagnosticModel : ITestModel<DiagnosticModel>
         Result<Unit> validateVerbosity() =>
             from properties in dto.GetJsonObjectProperty("properties")
             from verbosity in properties.GetStringProperty("verbosity")
-            from unit in verbosity == Verbosity
+            from unit in verbosity.Equals(Verbosity, StringComparison.OrdinalIgnoreCase)
                         ? Result.Success(Unit.Instance)
                         : Error.From($"Resource '{Key}' has verbosity '{verbosity}' instead of '{Verbosity}'.")
             select unit;
@@ -52,35 +53,46 @@ internal sealed record DiagnosticModel : ITestModel<DiagnosticModel>
             select unit;
     }
 
-    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateSet(IEnumerable<ITestModel> models) =>
-        from loggerModels in Generator.SubSetOf([.. models.OfType<LoggerModel>()])
-        from diagnosticModels in Generator.Traverse(loggerModels, Generate)
-        select ToSet(diagnosticModels);
+    public static Gen<ImmutableHashSet<ApiDiagnosticModel>> GenerateSet(IEnumerable<ITestModel> models)
+    {
+        var modelArray = models.ToImmutableArray();
+        var apis = modelArray.OfType<ApiModel>();
+        var loggers = modelArray.OfType<LoggerModel>();
 
-    private static Gen<DiagnosticModel> Generate(LoggerModel logger) =>
+        var apiLoggers = from api in apis
+                         from logger in loggers
+                         select (api, logger);
+
+        return from apiLoggersSubSet in Generator.SubSetOf([.. apiLoggers])
+               from diagnostics in Generator.Traverse(apiLoggersSubSet,
+                                                      tuple => Generate(tuple.api, tuple.logger))
+               select diagnostics.ToImmutableHashSet();
+    }
+
+    private static Gen<ApiDiagnosticModel> Generate(ApiModel apiModel, LoggerModel loggerModel) =>
         from verbosity in GenerateVerbosity()
         from logClientIp in Gen.Bool
-        select new DiagnosticModel
+        select new ApiDiagnosticModel
         {
-            Key = ResourceKey.From(DiagnosticResource.Instance, logger.Key.Name),
-            LoggerKey = logger.Key,
+            Key = new ResourceKey
+            {
+                Resource = ApiDiagnosticResource.Instance,
+                Name = loggerModel.Key.Name,
+                Parents = apiModel.Key.AsParentChain()
+            },
+            LoggerKey = loggerModel.Key,
             Verbosity = verbosity,
             LogClientIp = logClientIp
         };
 
-    private static ImmutableHashSet<DiagnosticModel> ToSet(IEnumerable<DiagnosticModel> models) =>
-        [.. models.DistinctBy(model => model.Key)];
-
     private static Gen<string> GenerateVerbosity() =>
         Gen.OneOfConst("information", "verbose", "error");
 
-    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateUpdates(IEnumerable<DiagnosticModel> diagnosticModels, IEnumerable<ITestModel> allModels) =>
-        from updatedModels in Generator.Traverse(diagnosticModels, GenerateUpdate)
-        let updatedSet = ToSet(updatedModels)
-        where updatedSet.Count == updatedModels.Length
-        select updatedSet;
+    public static Gen<ImmutableHashSet<ApiDiagnosticModel>> GenerateUpdates(IEnumerable<ApiDiagnosticModel> apiDiagnosticModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(apiDiagnosticModels, GenerateUpdate)
+        select updatedModels.ToImmutableHashSet();
 
-    private static Gen<DiagnosticModel> GenerateUpdate(DiagnosticModel model) =>
+    private static Gen<ApiDiagnosticModel> GenerateUpdate(ApiDiagnosticModel model) =>
         from verbosity in GenerateVerbosity()
         from logClientIp in Gen.Bool
         select model with
@@ -89,6 +101,6 @@ internal sealed record DiagnosticModel : ITestModel<DiagnosticModel>
             LogClientIp = logClientIp
         };
 
-    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
+    public static Gen<ImmutableHashSet<ApiDiagnosticModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
         GenerateSet(accumulatedNextModels);
 }
