@@ -156,6 +156,7 @@ internal static class TestsModule
             [ApiDiagnosticResource.Instance] = typeof(ApiDiagnosticModel),
             [ApiPolicyResource.Instance] = typeof(ApiPolicyModel),
             [ApiOperationPolicyResource.Instance] = typeof(ApiOperationPolicyModel),
+            [SubscriptionResource.Instance] = typeof(SubscriptionModel),
             [TagResource.Instance] = typeof(TagModel),
             [NamedValueResource.Instance] = typeof(NamedValueModel),
             [LoggerResource.Instance] = typeof(LoggerModel),
