@@ -23,6 +23,7 @@ internal static class PublisherModule
         RelationshipsModule.ConfigureGetPreviousRelationships(builder);
         ResourceModule.ConfigureListResourcesToProcess(builder);
         ResourceModule.ConfigureIsResourceInFileSystem(builder);
+        ResourceModule.ConfigureGetDto(builder);
         ResourceModule.ConfigurePutResource(builder);
         ResourceModule.ConfigureDeleteResource(builder);
 
@@ -35,15 +36,13 @@ internal static class PublisherModule
         var getPreviousRelationships = provider.GetRequiredService<GetPreviousRelationships>();
         var listResourcesToProcess = provider.GetRequiredService<ListResourcesToProcess>();
         var isInFileSystem = provider.GetRequiredService<IsResourceInFileSystem>();
+        var getDto = provider.GetRequiredService<GetDto>();
         var putResource = provider.GetRequiredService<PutResource>();
         var deleteResource = provider.GetRequiredService<DeleteResource>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
         var cache = new ConcurrentDictionary<ResourceKey, Lazy<Task>>();
-#pragma warning disable CA2000 // Dispose objects before losing scope
-        var namedValueSemaphore = new SemaphoreSlim(1, 1);
-#pragma warning restore CA2000 // Dispose objects before losing scope
 
         return async cancellationToken =>
         {
@@ -106,20 +105,42 @@ internal static class PublisherModule
                                                        .IfNone(() => [])
                                                        .ToAsyncEnumerable();
 
-                // For composite resources, process deletions first.
-                // Most resources don't support many-to-many relationships with their composite.
-                if (resourceKey.Resource is ICompositeResource compositeResource)
+                // For link resources, process deletions first.
+                // APIM doesn't support duplicates (same primary/secondary, different link name).
+                // If we don't, we run the risk of putting a link resource while its duplicate still exists.
+                if (resourceKey.Resource is ILinkResource linkResource)
                 {
-                    var old = resourceSet.Where(other => other.Resource == resourceKey.Resource)
-                                         .Where(other => other != resourceKey)
-                                         .Where(other => other.Name == resourceKey.Name)
-                                         // Same hierarchy except for immediate parent
-                                         .Where(other => ParentChain.From(other.Parents.SkipLast(1)) == ParentChain.From(resourceKey.Parents.SkipLast(1)))
-                                         .ToAsyncEnumerable()
-                                         // Other resource was deleted
-                                         .Where(async (other, cancellationToken) => await isInFileSystem(other, cancellationToken) is false);
+                    // Let's use product groups as an example. Assume our resource key is ProductGroupResource composed of product1 and group1.
 
-                    predecessors = predecessors.Concat(old);
+                    // First, look for the primary resource (product1)
+                    var currentPrimaryPredecessorOption =
+                       from currentPredecessors in currentRelationships.Predecessors.Find(resourceKey)
+                       from primaryPredecessor in currentPredecessors.Head(predecessor => predecessor.Resource == linkResource.Primary)
+                       select primaryPredecessor;
+
+                    // Then, look for the secondary resource (group1)
+                    var currentSecondaryPredecessorOption =
+                        from currentPredecessors in currentRelationships.Predecessors.Find(resourceKey)
+                        from secondaryPredecessor in currentPredecessors.Head(predecessor => predecessor.Resource == linkResource.Secondary)
+                        select secondaryPredecessor;
+
+                    // Now, find all product groups that were previously linked to product1 and group1.
+                    var previousLinkResourcesOption =
+                        from currentPrimaryPredecessor in currentPrimaryPredecessorOption
+                        from currentSecondaryPredecessor in currentSecondaryPredecessorOption
+                        from previousPrimarySuccessors in previousRelationships.Successors.Find(currentPrimaryPredecessor)
+                        from previousSecondarySuccessors in previousRelationships.Successors.Find(currentSecondaryPredecessor)
+                        select previousPrimarySuccessors
+                                .Concat(previousSecondarySuccessors)
+                                .Where(successor => successor.Resource == linkResource);
+
+                    // Filter out the ones still in the file system. Remaining ones are deletions.
+                    var deletions = previousLinkResourcesOption
+                                        .IfNone(() => [])
+                                        .ToAsyncEnumerable()
+                                        .Where(async (key, cancellationToken) => await isInFileSystem(key, cancellationToken) is false);
+
+                    predecessors = predecessors.Concat(deletions);
                 }
 
                 return predecessors;
