@@ -234,7 +234,7 @@ internal static partial class ResourceModule
             });
     }
 
-    private static void ConfigureGetDto(IHostApplicationBuilder builder)
+    internal static void ConfigureGetDto(IHostApplicationBuilder builder)
     {
         GitModule.ConfigureCommitIdWasPassed(builder);
         GitModule.ConfigureGetCurrentCommitFileOperations(builder);

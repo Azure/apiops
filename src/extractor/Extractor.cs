@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 namespace extractor;
 
 internal delegate ValueTask RunExtractor(CancellationToken cancellationToken);
-internal delegate ValueTask<bool> ShouldExtract(ResourceKey resourceKey, CancellationToken cancellationToken);
+internal delegate ValueTask<bool> ShouldExtract(ResourceKey resourceKey, Option<JsonObject> dtoOption, CancellationToken cancellationToken);
 internal delegate ValueTask WriteResource(ResourceKey resourceKey, Option<JsonObject> dtoOption, CancellationToken cancellationToken);
 
 internal static class ExtractorModule
@@ -85,7 +85,7 @@ internal static class ExtractorModule
             var resourceKey = ResourceKey.From(resource, name, parents);
 
             // Skip the resource if it should not be extracted.
-            if (await shouldExtract(resourceKey, cancellationToken) is false)
+            if (await shouldExtract(resourceKey, dtoOption, cancellationToken) is false)
             {
                 return;
             }
@@ -125,21 +125,21 @@ internal static class ExtractorModule
         var activitySource = provider.GetRequiredService<ActivitySource>();
         var logger = provider.GetRequiredService<ILogger>();
 
-        return async (resourceKey, cancellationToken) =>
+        return async (resourceKey, dtoOption, cancellationToken) =>
         {
             using var activity = activitySource.StartActivity("should.extract")
                                               ?.SetTag("resourceKey", resourceKey);
 
-            var result = await shouldExtract(resourceKey, cancellationToken);
+            var result = await shouldExtract(resourceKey, dtoOption, cancellationToken);
 
             activity?.SetTag("result", result);
 
             return result;
         };
 
-        async ValueTask<bool> shouldExtract(ResourceKey resourceKey, CancellationToken cancellationToken)
+        async ValueTask<bool> shouldExtract(ResourceKey resourceKey, Option<JsonObject> dtoOption, CancellationToken cancellationToken)
         {
-            var (resource, name, parents) = (resourceKey.Resource, resourceKey.Name, resourceKey.Parents);
+            var (resource, name) = (resourceKey.Resource, resourceKey.Name);
 
             // Never extract the `master` subscription
             if (resource is SubscriptionResource && name == SubscriptionResource.Master)
@@ -147,37 +147,55 @@ internal static class ExtractorModule
                 logger.LogWarning("Skipping master subscription '{Name}'...", name);
                 return false;
             }
-            // Never extract system groups
-            else if (resource is GroupResource
-                     && (name == GroupResource.Administrators || name == GroupResource.Developers || name == GroupResource.Guests))
+
+            // Never extract system groups            
+            if (resource is GroupResource
+                && (name == GroupResource.Administrators || name == GroupResource.Developers || name == GroupResource.Guests))
             {
                 logger.LogWarning("Skipping system group '{Name}'...", name);
                 return false;
             }
+
             // Never extract workspace system groups
-            else if (resource is WorkspaceGroupResource
-                     && (name == WorkspaceGroupResource.Administrators || name == WorkspaceGroupResource.Developers || name == WorkspaceGroupResource.Guests))
+            if (resource is WorkspaceGroupResource
+                && (name == WorkspaceGroupResource.Administrators || name == WorkspaceGroupResource.Developers || name == WorkspaceGroupResource.Guests))
             {
                 logger.LogWarning("Skipping workspace system group '{Name}'...", name);
                 return false;
             }
-            // Check from configuration
-            else
-            {
-                var option = await resourceIsInConfiguration(resourceKey, cancellationToken);
 
-                return option
-                        // Log a warning if the resource is not in configuration
-                        .Tap(isInConfiguration =>
-                        {
-                            if (isInConfiguration is false)
-                            {
-                                logger.LogWarning("Skipping {ResourceKey} as it is not in configuration...", resourceKey);
-                            }
-                        })
-                        // If no configuration was defined for the resource type, extract all.
-                        .IfNone(() => true);
+            // Never extract composite APIs that are not the current revision. Publisher round-tripping doesn't work properly.
+            if (resource is ICompositeResource compositeResource
+                && compositeResource.Secondary is ApiResource or WorkspaceApiResource)
+            {
+                var apiNameOption = compositeResource switch
+                {
+                    ILinkResource linkResource => from dto in dtoOption
+                                                  from apiName in linkResource.GetSecondaryResourceName(dto)
+                                                  select apiName,
+                    _ => name
+                };
+
+                var nonCurrentRevisionName = apiNameOption.Where(apiName => ApiRevisionModule.IsRootName(apiName) is false)
+                                                          .IfNoneNull();
+
+                if (nonCurrentRevisionName is not null)
+                {
+                    logger.LogWarning("Skipping composite resource '{ResourceKey}'. API '{ResourceName}' is not the current API revision.", resourceKey, nonCurrentRevisionName);
+                    return false;
+                }
             }
+
+            // Skip resources based on configuration
+            var isInConfigurationOption = await resourceIsInConfiguration(resourceKey, cancellationToken);
+            var isInConfiguration = isInConfigurationOption.IfNone(() => true);
+            if (isInConfiguration is false)
+            {
+                logger.LogWarning("Skipping {ResourceKey} as it is not in configuration...", resourceKey);
+                return false;
+            }
+
+            return true;
         }
     }
 

@@ -71,7 +71,7 @@ internal sealed record ExtractorFilter
         static ResourceName normalizeName(IResource resource, ResourceName name) =>
             resource switch
             {
-                ApiResource => ApiRevisionModule.GetRootName(name),
+                ApiResource or WorkspaceApiResource => ApiRevisionModule.GetRootName(name),
                 _ => name
             };
     }
@@ -110,9 +110,10 @@ internal sealed record ExtractorFilter
                                                                                           group => group.ToImmutableHashSet()));
 
         return from generatedResources in generateResources(ParentChain.Empty)
+               let normalizedResources = alwaysIncludeRootApis(generatedResources)
                select new ExtractorFilter
                {
-                   Resources = [.. generatedResources]
+                   Resources = [.. normalizedResources]
                };
 
         Gen<ImmutableArray<KeyValuePair<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>>>> generateResources(ParentChain parentChain) =>
@@ -132,6 +133,20 @@ internal sealed record ExtractorFilter
                                                      kvp => from names in Generator.SubSetOf(kvp.Value)
                                                             select KeyValuePair.Create(kvp.Key, names))
             select resourceNames;
+
+        IEnumerable<KeyValuePair<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>>> alwaysIncludeRootApis(IEnumerable<KeyValuePair<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>>> resources) =>
+           from kvp in resources
+           let value = from kvp2 in kvp.Value
+                       let resource = kvp2.Key
+                       let names = kvp2.Value
+                       let rootNamesToAdd = names.Choose(name => resource switch
+                       {
+                           ApiResource or WorkspaceApiResource when ApiRevisionModule.IsRootName(name) is false => Option.Some(ApiRevisionModule.GetRootName(name)),
+                           _ => Option.None
+                       })
+                       let normalizedNames = names.Union(rootNamesToAdd)
+                       select KeyValuePair.Create(resource, normalizedNames)
+           select KeyValuePair.Create(kvp.Key, value.ToImmutableDictionary());
     }
 
     public override string ToString() =>
@@ -226,7 +241,7 @@ internal static class ExtractorModule
             var result = await validateModelsWereExtracted(expectedModels, getInformationFileDto, getPolicyFileContents, getApiSpecificationFromFile, fileOperations, cancellationToken);
             result.IfErrorThrow();
 
-            result = await validateOnlyModelsWereExtracted(expectedModels, parseResourceFile, fileOperations, cancellationToken);
+            result = await validateOnlyModelsWereExtracted(expectedModels, parseResourceFile, getInformationFileDto, fileOperations, cancellationToken);
             result.IfErrorThrow();
         };
 
@@ -285,8 +300,8 @@ internal static class ExtractorModule
                                 };
 
                                 var validationResult = from _ in dtoResult
-                                                        from __ in specificationResult
-                                                        select Unit.Instance;
+                                                       from __ in specificationResult
+                                                       select Unit.Instance;
 
                                 return validationResult.MapError(error => Error.From($"Validation failed for {model.Key}. {error}"));
                             }
@@ -341,7 +356,7 @@ internal static class ExtractorModule
                 }
             };
 
-        async ValueTask<Result<Unit>> validateOnlyModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, ParseResourceFile parseResourceFile, FileOperations fileOperations, CancellationToken cancellationToken)
+        async ValueTask<Result<Unit>> validateOnlyModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, ParseResourceFile parseResourceFile, GetInformationFileDto getInformationFileDto, FileOperations fileOperations, CancellationToken cancellationToken)
         {
             var modelKeys = expectedModels
                                 .Select(model => model.Key)
@@ -352,6 +367,26 @@ internal static class ExtractorModule
                                     .ToAsyncEnumerable()
                                     .Choose(async file => await parseResourceFile(file, fileOperations.ReadFile, cancellationToken))
                                     .Where(async (key, cancellationToken) => await isResourceKeySupported(key, cancellationToken))
+                                    // Skip composites where the secondary resource is a non-current API revision
+                                    .Where(async (key, cancellationToken) =>
+                                    {
+                                        if (key.Resource is not ICompositeResource compositeResource
+                                            || compositeResource.Secondary is not (ApiResource or WorkspaceApiResource))
+                                        {
+                                            return true;
+                                        }
+
+                                        var apiNameOption = compositeResource switch
+                                        {
+                                            ILinkResource linkResource => from dto in await getInformationFileDto(compositeResource, key.Name, key.Parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken)
+                                                                          from apiName in ResourceModule.GetSecondaryResourceName(linkResource, dto)
+                                                                          select apiName,
+                                            _ => key.Name
+                                        };
+
+                                        return apiNameOption.Map(ApiRevisionModule.IsRootName)
+                                                            .IfNone(() => true);
+                                    })
                                     .Traverse(async key => modelKeys.Contains(key)
                                                             ? Result.Success(Unit.Instance)
                                                             : Error.From($"Resource '{key}' was extracted but has no corresponding model."), cancellationToken);

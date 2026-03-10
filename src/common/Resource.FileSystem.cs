@@ -255,35 +255,6 @@ public static partial class ResourceModule
         return updatedDto.IfError(_ => dto);
     }
 
-    /// <summary>
-    /// Transforms an absolute resource ID to a relative ID that is not tied to a specific service.
-    /// For example, "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg1/providers/Microsoft.ApiManagement/service/apimService1/loggers/azuremonitor"
-    /// becomes "/loggers/azuremonitor".
-    /// </summary>
-    private static string SetAbsoluteToRelativeId(string absoluteResourceId)
-    {
-        if (string.IsNullOrWhiteSpace(absoluteResourceId))
-        {
-            return string.Empty;
-        }
-
-        const string delimiter = "Microsoft.ApiManagement/service/";
-        var delimiterIndex = absoluteResourceId.IndexOf(delimiter, StringComparison.OrdinalIgnoreCase);
-
-        if (delimiterIndex == -1)
-        {
-            return absoluteResourceId;
-        }
-
-        var startIndex = delimiterIndex + delimiter.Length;
-        var remainingPath = absoluteResourceId[startIndex..];
-        var pathSegments = remainingPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-        return pathSegments.Length < 2
-                ? absoluteResourceId
-                : $"/{string.Join('/', pathSegments.Skip(1))}";
-    }
-
     private static DirectoryInfo GetCollectionDirectoryInfo(this IResourceWithDirectory resource, ParentChain parents, ServiceDirectory serviceDirectory) =>
         parents.Aggregate(serviceDirectory.ToDirectoryInfo(),
                           (directory, parent) => parent.Resource switch

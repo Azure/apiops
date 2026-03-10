@@ -3,6 +3,7 @@ using common.tests;
 using CsCheck;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -792,7 +793,14 @@ internal sealed class GetRelationshipsTests
                           ["description"] = $"uses {{{{{namedValueName}}}}}"
                       }
                   }
-                  select (namedValueKey, resourceKey, fileOperations, dto, fixture with
+                  let namedValueDto = new JsonObject
+                  {
+                      ["properties"] = new JsonObject
+                      {
+                          ["displayName"] = namedValueName.ToString()
+                      }
+                  }
+                  select (namedValueKey, resourceKey, fileOperations, fixture with
                   {
                       IsValidationStrict = () => false,
                       ParseResourceFile = async (file, _, _) =>
@@ -819,14 +827,16 @@ internal sealed class GetRelationshipsTests
 
                           return key == resourceKey
                                     ? dto
-                                    : Option.None;
+                                    : key == namedValueKey
+                                        ? namedValueDto
+                                        : Option.None;
                       }
                   });
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (namedValueKey, resourceKey, fileOperations, dto, fixture) = tuple;
+            var (namedValueKey, resourceKey, fileOperations, fixture) = tuple;
             var getRelationships = fixture.Resolve();
 
             // Act
@@ -847,6 +857,13 @@ internal sealed class GetRelationshipsTests
                                                                                  and not PolicyFragmentResource
                                                                                  and not WorkspacePolicyFragmentResource)
                   let policyContent = $"<policies><inbound><set-header name=\"x\" exists-action=\"override\"><value>{{{{{namedValueKey.Name}}}}}</value></set-header><base /></inbound></policies>"
+                  let namedValueDto = new JsonObject
+                  {
+                      ["properties"] = new JsonObject
+                      {
+                          ["displayName"] = namedValueKey.Name.ToString()
+                      }
+                  }
                   let policyFile = new FileInfo("policy.xml")
                   let namedValueFile = new FileInfo("namedValue.json")
                   let fileOperations = Common.NoOpFileOperations with
@@ -880,6 +897,16 @@ internal sealed class GetRelationshipsTests
 
                           return key == policyKey
                                     ? BinaryData.FromString(policyContent)
+                                    : Option.None;
+                      },
+                      GetInformationFileDto = async (resource, name, parents, readFile, getSubDirectories, cancellationToken) =>
+                      {
+                          await ValueTask.CompletedTask;
+
+                          var key = ResourceKey.From(resource, name, parents);
+
+                          return key == namedValueKey
+                                    ? namedValueDto
                                     : Option.None;
                       }
                   });
@@ -1064,6 +1091,7 @@ internal sealed class GetRelationshipsTests
         public required ParseResourceFile ParseResourceFile { get; init; }
         public required GetInformationFileDto GetInformationFileDto { get; init; }
         public required GetPolicyFileContents GetPolicyFileContents { get; init; }
+        public required GetConfigurationOverride GetConfigurationOverride { get; init; }
         public required IsValidationStrict IsValidationStrict { get; init; }
 
         public GetRelationships Resolve()
@@ -1073,7 +1101,9 @@ internal sealed class GetRelationshipsTests
             services.AddSingleton(ParseResourceFile)
                     .AddSingleton(GetInformationFileDto)
                     .AddSingleton(GetPolicyFileContents)
+                    .AddSingleton(GetConfigurationOverride)
                     .AddSingleton(IsValidationStrict)
+                    .AddTestActivitySource()
                     .AddNullLogger();
 
             using var provider = services.BuildServiceProvider();
@@ -1099,6 +1129,11 @@ internal sealed class GetRelationshipsTests
                 {
                     await ValueTask.CompletedTask;
                     return Option<BinaryData>.None();
+                },
+                GetConfigurationOverride = async (_, _) =>
+                {
+                    await ValueTask.CompletedTask;
+                    return Option<JsonObject>.None();
                 },
                 IsValidationStrict = () => isStrict,
             };

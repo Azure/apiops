@@ -99,7 +99,7 @@ internal sealed class RunExtractorTests
                   let writtenResourceKeys = new List<ResourceKey>()
                   select (writtenResourceKeys, shouldExtract, fixture with
                   {
-                      ShouldExtract = async (key, cancellationToken) =>
+                      ShouldExtract = async (key, _, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
                           return shouldExtract(key);
@@ -191,7 +191,7 @@ internal sealed class RunExtractorTests
                           await ValueTask.CompletedTask;
                           return true;
                       },
-                      ShouldExtract = async (key, cancellationToken) =>
+                      ShouldExtract = async (key, _, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
                           return true;
@@ -278,7 +278,7 @@ internal sealed class RunExtractorTests
                                                       select (kvp.Key.Name, dto))
                                        .ToAsyncEnumerable();
                 },
-                ShouldExtract = (_, _) => ValueTask.FromResult(true),
+                ShouldExtract = (_, _, _) => ValueTask.FromResult(true),
                 WriteResource = (_, _, _) => ValueTask.CompletedTask
             };
     }
@@ -294,7 +294,8 @@ internal sealed class ShouldExtractTests
     {
         var gen = from fixture in Fixture.Generate()
                   from resourceKey in Generator.ResourceKey
-                  select (resourceKey, fixture with
+                  from dtoOption in Gen.Const(new JsonObject()).OptionOf()
+                  select (resourceKey, dtoOption, fixture with
                   {
                       ResourceIsInConfiguration = async (_, _) =>
                       {
@@ -306,11 +307,11 @@ internal sealed class ShouldExtractTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, fixture) = tuple;
+            var (resourceKey, dtoOption, fixture) = tuple;
             var shouldExtract = fixture.Resolve();
 
             // Act
-            var extract = await shouldExtract(resourceKey, CancellationToken);
+            var extract = await shouldExtract(resourceKey, dtoOption, CancellationToken);
 
             // Assert that the resource should be extracted
             await Assert.That(extract)
@@ -323,7 +324,8 @@ internal sealed class ShouldExtractTests
     {
         var gen = from fixture in Fixture.Generate()
                   from resourceKey in Generator.ResourceKey
-                  select (resourceKey, fixture with
+                  from dtoOption in Gen.Const(new JsonObject()).OptionOf()
+                  select (resourceKey, dtoOption, fixture with
                   {
                       ResourceIsInConfiguration = async (_, _) =>
                       {
@@ -335,11 +337,11 @@ internal sealed class ShouldExtractTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, fixture) = tuple;
+            var (resourceKey, dtoOption, fixture) = tuple;
             var shouldExtract = fixture.Resolve();
 
             // Act
-            var extract = await shouldExtract(resourceKey, CancellationToken);
+            var extract = await shouldExtract(resourceKey, dtoOption, CancellationToken);
 
             // Assert that the resource should not be extracted
             await Assert.That(extract).IsFalse();
@@ -351,7 +353,8 @@ internal sealed class ShouldExtractTests
     {
         var gen = from fixture in Fixture.Generate()
                   from resourceKey in Generator.ResourceKey
-                  select (resourceKey, fixture with
+                  from dtoOption in Gen.Const(new JsonObject()).OptionOf()
+                  select (resourceKey, dtoOption, fixture with
                   {
                       ResourceIsInConfiguration = async (_, _) =>
                       {
@@ -363,11 +366,11 @@ internal sealed class ShouldExtractTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, fixture) = tuple;
+            var (resourceKey, dtoOption, fixture) = tuple;
             var shouldExtract = fixture.Resolve();
 
             // Act
-            var extract = await shouldExtract(resourceKey, CancellationToken);
+            var extract = await shouldExtract(resourceKey, dtoOption, CancellationToken);
 
             // Assert that the resource should be extracted
             await Assert.That(extract).IsTrue();
@@ -396,7 +399,8 @@ internal sealed class ShouldExtractTests
                                 {
                                     Name = name
                                 })
-                  select (resourceKey, fixture with
+                  from dtoOption in Gen.Const(new JsonObject()).OptionOf()
+                  select (resourceKey, dtoOption, fixture with
                   {
                       ResourceIsInConfiguration = async (_, _) =>
                       {
@@ -408,11 +412,11 @@ internal sealed class ShouldExtractTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, fixture) = tuple;
+            var (resourceKey, dtoOption, fixture) = tuple;
             var shouldExtract = fixture.Resolve();
 
             // Act
-            var extract = await shouldExtract(resourceKey, CancellationToken);
+            var extract = await shouldExtract(resourceKey, dtoOption, CancellationToken);
 
             // Assert that the resource should not be extracted
             await Assert.That(extract).IsFalse();

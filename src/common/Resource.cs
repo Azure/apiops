@@ -313,3 +313,45 @@ public static class ResourceExtensions
         return [.. list];
     }
 }
+
+public static partial class ResourceModule
+{
+    /// <summary>
+    /// Transforms an absolute resource ID to a relative ID that is not tied to a specific service.
+    /// For example, "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg1/providers/Microsoft.ApiManagement/service/apimService1/loggers/azuremonitor"
+    /// becomes "/loggers/azuremonitor".
+    /// </summary>
+    internal static string SetAbsoluteToRelativeId(string absoluteResourceId)
+    {
+        if (string.IsNullOrWhiteSpace(absoluteResourceId))
+        {
+            return string.Empty;
+        }
+
+        const string delimiter = "Microsoft.ApiManagement/service/";
+        var delimiterIndex = absoluteResourceId.IndexOf(delimiter, StringComparison.OrdinalIgnoreCase);
+
+        if (delimiterIndex == -1)
+        {
+            return absoluteResourceId;
+        }
+
+        var startIndex = delimiterIndex + delimiter.Length;
+        var remainingPath = absoluteResourceId[startIndex..];
+        var pathSegments = remainingPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        return pathSegments.Length < 2
+                ? absoluteResourceId
+                : $"/{string.Join('/', pathSegments.Skip(1))}";
+    }
+
+    /// <summary>
+    /// Link resources store the secondary resource name in the DTO.
+    /// </summary>
+    public static Option<ResourceName> GetSecondaryResourceName(this ILinkResource linkResource, JsonObject dto) =>
+        dto.GetJsonObjectProperty("properties")
+           .Bind(properties => properties.GetStringProperty(linkResource.DtoPropertyNameForLinkedResource))
+           .Map(name => name.Split('/').LastOrDefault())
+           .Bind(ResourceName.From)
+           .ToOption();
+}

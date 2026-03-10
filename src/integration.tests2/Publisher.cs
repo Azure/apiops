@@ -225,6 +225,26 @@ internal static class PublisherModule
                                 var apimNames =
                                     await listNamesFromApim(resource, parents, cancellationToken)
                                             .Where(async (name, cancellationToken) => await isResourceKeySupported(ResourceKey.From(resource, name, parents), cancellationToken))
+                                            // Skip composites where the secondary resource is a non-current API revision
+                                            .Where(async (name, cancellationToken) =>
+                                            {
+                                                if (resource is not ICompositeResource compositeResource
+                                                    || compositeResource.Secondary is not (ApiResource or WorkspaceApiResource))
+                                                {
+                                                    return true;
+                                                }
+
+                                                var apiNameOption = compositeResource switch
+                                                {
+                                                    ILinkResource linkResource => from dto in await getDtoFromApim(compositeResource, name, parents, cancellationToken)
+                                                                                  from apiName in ResourceModule.GetSecondaryResourceName(linkResource, dto)
+                                                                                  select apiName,
+                                                    _ => name
+                                                };
+
+                                                return apiNameOption.Map(ApiRevisionModule.IsRootName)
+                                                                    .IfNone(() => true);
+                                            })
                                             .ToArrayAsync(cancellationToken);
 
                                 return apimNames.Where(name => modelNames.Contains(name) is false)
@@ -417,7 +437,7 @@ internal static class PublisherModule
                                                   .OfType<ApiModel>()
                                                   .Where(model => model.RootName == model.Key.Name)
                                                   .ToImmutableDictionary(model => model.RootName, model => model.RevisionNumber);
-            
+
             deletedKeys = deletedKeys.Where(key => key.Resource is not ApiResource
                                                    || ApiRevisionModule.Parse(key.Name)
                                                                        .Where(tuple => currentRevisionApis.TryGetValue(tuple.RootName, out var currentRevisionNumber)

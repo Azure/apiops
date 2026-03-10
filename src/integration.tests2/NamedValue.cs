@@ -72,11 +72,12 @@ internal sealed record NamedValueModel : ITestModel<NamedValueModel>
         from name in Generator.ResourceName
         from displayName in CommonModule.GenerateDisplayName(name)
         from secret in Gen.Bool
+        from value in Generator.AlphanumericWord
         select new NamedValueModel
         {
             Key = ResourceKey.From(NamedValueResource.Instance, name),
             DisplayName = displayName,
-            Value = $"{name}-value",
+            Value = value,
             Secret = secret
         };
 
@@ -91,11 +92,10 @@ internal sealed record NamedValueModel : ITestModel<NamedValueModel>
         select updatedSet;
 
     private static Gen<NamedValueModel> GenerateUpdate(NamedValueModel model) =>
-        from displayName in CommonModule.GenerateDisplayName(model.Key.Name, model.DisplayName)
+        from value in Generator.AlphanumericWord
         select model with
         {
-            DisplayName = displayName,
-            Value = $"{displayName}-value"
+            Value = value
         };
 
     public static Gen<ImmutableHashSet<NamedValueModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)

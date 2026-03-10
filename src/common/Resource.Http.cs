@@ -103,13 +103,21 @@ public static partial class ResourceModule
 
         return (resource, parents, cancellationToken) =>
         {
-            var uri = resource.GetCollectionUri(parents, serviceUri);
+            switch (resource)
+            {
+                case TagApiResource tagApiResource:
+                    return ListTagApiNamesFromApim(parents, serviceUri, pipeline, cancellationToken);
+                case TagProductResource tagProductResource:
+                    return ListTagProductNamesFromApim(parents, serviceUri, pipeline, cancellationToken);
+                default:
+                    var uri = resource.GetCollectionUri(parents, serviceUri);
 
-            return pipeline.ListJsonObjects(uri, cancellationToken)
-                           .Select(jsonObject => from name in jsonObject.GetStringProperty("name")
-                                                 from resourceName in ResourceName.From(name)
-                                                 select resourceName)
-                           .Select(result => result.IfErrorThrow());
+                    return pipeline.ListJsonObjects(uri, cancellationToken)
+                                   .Select(jsonObject => from name in jsonObject.GetStringProperty("name")
+                                                         from resourceName in ResourceName.From(name)
+                                                         select resourceName)
+                                   .Select(result => result.IfErrorThrow());
+            }
         };
     }
 
@@ -136,6 +144,10 @@ public static partial class ResourceModule
             {
                 case IPolicyResource policyResource:
                     return policyResource.ListDtosFromApim(parents, listNames, getDto, cancellationToken);
+                case TagApiResource tagApiResource:
+                    return ListTagApiDtosFromApim(parents, serviceUri, pipeline, cancellationToken);
+                case TagProductResource tagProductResource:
+                    return ListTagProductDtosFromApim(parents, serviceUri, pipeline, cancellationToken);
                 case var _ when isWorkspaceResource(parents):
                     return getWorkspaceResourceDtos(resource, parents, cancellationToken);
                 default:
@@ -235,6 +247,10 @@ public static partial class ResourceModule
             {
                 case ILinkResource linkResource:
                     return await linkResource.ExistsInApim(name, parents, serviceUri, pipeline, cancellationToken);
+                case TagApiResource tagApiResource:
+                    return await TagApiExistsInApim(name, parents, serviceUri, pipeline, cancellationToken);
+                case TagProductResource tagProductResource:
+                    return await TagProductExistsInApim(name, parents, serviceUri, pipeline, cancellationToken);
                 default:
                     var uri = resource.GetUri(name, parents, serviceUri);
                     var result = await pipeline.Head(uri, cancellationToken);
@@ -309,6 +325,12 @@ public static partial class ResourceModule
                 case WorkspaceApiReleaseResource:
                     await PutWorkspaceApiReleaseInApim(name, dto, parents, pipeline, serviceUri, cancellationToken);
                     return;
+                case TagApiResource:
+                    await PutTagApiInApim(name, dto, parents, pipeline, serviceUri, cancellationToken);
+                    return;
+                case TagProductResource:
+                    await PutTagProductInApim(name, dto, parents, pipeline, serviceUri, cancellationToken);
+                    return;
                 default:
                     var uri = resource.GetUri(name, parents, serviceUri);
                     var result = await pipeline.PutJson(uri, dto, cancellationToken);
@@ -334,9 +356,21 @@ public static partial class ResourceModule
         return async (resourceKey, ignoreNotFound, waitForCompletion, cancellationToken) =>
         {
             var (resource, name, parents) = (resourceKey.Resource, resourceKey.Name, resourceKey.Parents);
-            var uri = resource.GetUri(name, parents, serviceUri);
-            var result = await pipeline.Delete(uri, cancellationToken, ignoreNotFound, waitForCompletion);
-            result.IfErrorThrow();
+
+            switch (resource)
+            {
+                case TagApiResource tagApiResource:
+                    await DeleteTagApiFromApim(name, parents, pipeline, serviceUri, ignoreNotFound, waitForCompletion, cancellationToken);
+                    return;
+                case TagProductResource tagProductResource:
+                    await DeleteTagProductFromApim(name, parents, pipeline, serviceUri, ignoreNotFound, waitForCompletion, cancellationToken);
+                    return;
+                default:
+                    var uri = resource.GetUri(name, parents, serviceUri);
+                    var result = await pipeline.Delete(uri, cancellationToken, ignoreNotFound, waitForCompletion);
+                    result.IfErrorThrow();
+                    return;
+            }
         };
     }
 

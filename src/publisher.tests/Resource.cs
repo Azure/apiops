@@ -429,6 +429,11 @@ internal sealed class PutResourceTests
                           await ValueTask.CompletedTask;
                           putCalls.Add(0);
                       },
+                      PutNamedValue = async (_, _, _) =>
+                      {
+                          await ValueTask.CompletedTask;
+                          putCalls.Add(0);
+                      },
                       PutResourceInApim = async (_, _, _, _, _) =>
                       {
                           await ValueTask.CompletedTask;
@@ -475,6 +480,11 @@ internal sealed class PutResourceTests
                           await ValueTask.CompletedTask;
                           putCalls.Add(0);
                       },
+                      PutNamedValue = async (_, _, _) =>
+                      {
+                          await ValueTask.CompletedTask;
+                          putCalls.Add(0);
+                      },
                       PutResourceInApim = async (_, _, _, _, _) =>
                       {
                           await ValueTask.CompletedTask;
@@ -504,9 +514,10 @@ internal sealed class PutResourceTests
                   from dto in Generator.JsonObject
                   let putApis = new ConcurrentBag<(ResourceName Name, JsonObject Dto)>()
                   let putWorkspaceApis = new ConcurrentBag<(ResourceName Name, ParentChain ParentChain, JsonObject Dto)>()
+                  let putNamedValues = new ConcurrentBag<(ResourceKey Key, JsonObject Dto)>()
                   let putOthers = new ConcurrentBag<(ResourceKey Key, JsonObject Dto)>()
                   from fixture in Fixture.Generate()
-                  select (resourceKey, dto, putApis, putWorkspaceApis, putOthers, fixture with
+                  select (resourceKey, dto, putApis, putWorkspaceApis, putNamedValues, putOthers, fixture with
                   {
                       IsDryRun = () => false,
                       GetDto = async (_, _, _, _) =>
@@ -524,6 +535,11 @@ internal sealed class PutResourceTests
                           await ValueTask.CompletedTask;
                           putWorkspaceApis.Add((name, parentChain, dto));
                       },
+                      PutNamedValue = async (key, dto, _) =>
+                      {
+                          await ValueTask.CompletedTask;
+                          putNamedValues.Add((key, dto));
+                      },
                       PutResourceInApim = async (resource, name, dto, parents, _) =>
                       {
                           await ValueTask.CompletedTask;
@@ -535,7 +551,7 @@ internal sealed class PutResourceTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (resourceKey, dto, putApis, putWorkspaceApis, putOthers, fixture) = tuple;
+            var (resourceKey, dto, putApis, putWorkspaceApis, putNamedValues, putOthers, fixture) = tuple;
             var putResource = fixture.Resolve();
 
             // Act
@@ -551,6 +567,10 @@ internal sealed class PutResourceTests
                 case WorkspaceApiResource:
                     await Assert.That(putWorkspaceApis)
                                 .Contains((resourceKey.Name, resourceKey.Parents, dto));
+                    break;
+                case NamedValueResource or WorkspaceNamedValueResource:
+                    await Assert.That(putNamedValues)
+                                .Contains((resourceKey, dto));
                     break;
                 default:
                     await Assert.That(putOthers)
@@ -585,6 +605,11 @@ internal sealed class PutResourceTests
                           await ValueTask.CompletedTask;
                           putCalls.Add(0);
                       },
+                      PutNamedValue = async (_, _, _) =>
+                      {
+                          await ValueTask.CompletedTask;
+                          putCalls.Add(0);
+                      },
                       PutResourceInApim = async (_, _, _, _, _) =>
                       {
                           await ValueTask.CompletedTask;
@@ -613,6 +638,7 @@ internal sealed class PutResourceTests
         public required GetDto GetDto { get; init; }
         public required PutApi PutApi { get; init; }
         public required PutWorkspaceApi PutWorkspaceApi { get; init; }
+        public required PutNamedValue PutNamedValue { get; init; }
         public required PutResourceInApim PutResourceInApim { get; init; }
 
         public PutResource Resolve()
@@ -623,6 +649,7 @@ internal sealed class PutResourceTests
                     .AddSingleton(GetDto)
                     .AddSingleton(PutApi)
                     .AddSingleton(PutWorkspaceApi)
+                    .AddSingleton(PutNamedValue)
                     .AddSingleton(PutResourceInApim)
                     .AddTestActivitySource()
                     .AddNullLogger();
@@ -648,6 +675,10 @@ internal sealed class PutResourceTests
                     await ValueTask.CompletedTask;
                 },
                 PutWorkspaceApi = async (_, _, _, _) =>
+                {
+                    await ValueTask.CompletedTask;
+                },
+                PutNamedValue = async (_, _, _) =>
                 {
                     await ValueTask.CompletedTask;
                 },

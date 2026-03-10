@@ -162,6 +162,8 @@ internal static class TestsModule
             [DiagnosticResource.Instance] = typeof(DiagnosticModel),
             [ProductResource.Instance] = typeof(ProductModel),
             [ProductApiResource.Instance] = typeof(ProductApiModel),
+            [TagApiResource.Instance] = typeof(TagApiModel),
+            [TagProductResource.Instance] = typeof(TagProductModel),
             [ProductPolicyResource.Instance] = typeof(ProductPolicyModel),
             [GroupResource.Instance] = typeof(GroupModel),
             [ProductGroupResource.Instance] = typeof(ProductGroupModel),

@@ -4,9 +4,9 @@ using CsCheck;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -296,6 +296,7 @@ internal sealed class RunPublisherTests
         public required GetPreviousRelationships GetPreviousRelationships { get; init; }
         public required ListResourcesToProcess ListResourcesToProcess { get; init; }
         public required IsResourceInFileSystem IsResourceInFileSystem { get; init; }
+        public required GetDto GetDto { get; init; }
         public required PutResource PutResource { get; init; }
         public required DeleteResource DeleteResource { get; init; }
 
@@ -307,6 +308,7 @@ internal sealed class RunPublisherTests
                     .AddSingleton(GetPreviousRelationships)
                     .AddSingleton(ListResourcesToProcess)
                     .AddSingleton(IsResourceInFileSystem)
+                    .AddSingleton(GetDto)
                     .AddSingleton(PutResource)
                     .AddSingleton(DeleteResource)
                     .AddTestActivitySource()
@@ -343,6 +345,11 @@ internal sealed class RunPublisherTests
                 {
                     await ValueTask.CompletedTask;
                     return resourceKeyPredicate(key);
+                },
+                GetDto = async (_, _, _, _) =>
+                {
+                    await ValueTask.CompletedTask;
+                    return Option.None;
                 },
                 PutResource = async (_, _) =>
                 {
