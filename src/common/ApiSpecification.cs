@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Reader;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
@@ -113,6 +114,8 @@ public static partial class ResourceModule
         var pipeline = provider.GetRequiredService<HttpPipeline>();
         var configuration = provider.GetRequiredService<IConfiguration>();
 
+        var throttler = new ConcurrentDictionary<string, SemaphoreSlim>();
+
         return async (resourceKey, dto, cancellationToken) =>
         {
             var (resource, name, parents) = (resourceKey.Resource, resourceKey.Name, resourceKey.Parents);
@@ -124,8 +127,39 @@ public static partial class ResourceModule
 
             var specificationOption = getSpecification(resource, dto);
 
-            return await specificationOption.BindTask(async specification => from contents in await getSpecificationContents(resourceKey, specification, cancellationToken)
-                                                                             select (specification, contents));
+            return await specificationOption.BindTask(async specification =>
+            {
+                // APIM has an issue where concurrent requests with the same version set always return the same specification.
+                // If apiA and apiB share a version set, and we request their specification simultaneously, the same specification
+                // file is returned (even if they have different specifications).
+                // We throttle concurrent requests with the same version set ID to avoid this issue.
+                var versionSetIdOption =
+                    dto.GetJsonObjectProperty("properties")
+                       .Bind(properties => properties.GetStringProperty("apiVersionSetId"))
+                       .Map(ResourceModule.SetAbsoluteToRelativeId)
+                       .ToOption();
+
+                var throttlerKeyOption = versionSetIdOption;
+
+                // APIM has an issue where concurrent requests with the same root API always return the current revision's specification.
+                // If we request the specification for apiA (current) and apiA;rev=3 (non-current) simultaneously, apiA's specification
+                // is returned in both instances. We throttle concurrent requests with the same root name to avoid this issue.
+                var throttlerKey = throttlerKeyOption.IfNone(() => ApiRevisionModule.GetRootName(name).ToString());
+
+                var semaphore = throttler.GetOrAdd(throttlerKey, _ => new SemaphoreSlim(1, 1));
+
+                await semaphore.WaitAsync(cancellationToken);
+
+                try
+                {
+                    return from contents in await getSpecificationContents(resourceKey, specification, cancellationToken)
+                           select (specification, contents);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
         };
 
         Option<ApiSpecification> getSpecification(IResource resource, JsonObject dtoJson)
