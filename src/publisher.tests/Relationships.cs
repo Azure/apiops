@@ -527,7 +527,92 @@ internal sealed class IsValidationStrictTests
     }
 }
 
-internal sealed class GetRelationshipsTests
+internal sealed class BuildResourceMapTests
+{
+    private static CancellationToken CancellationToken =>
+        TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None;
+
+    [Test]
+    public async Task Returns_parsed_resources_grouped_by_resource_type()
+    {
+        var gen = from firstKey in Generator.ResourceKey
+                  from secondKey in Generator.ResourceKey
+                  from fixture in Fixture.Generate()
+                  let firstFile = new FileInfo("first.json")
+                  let secondFile = new FileInfo("second.json")
+                  let ignoredFile = new FileInfo("ignored.json")
+                  let fileOperations = Common.NoOpFileOperations with
+                  {
+                      EnumerateServiceDirectoryFiles = () => [firstFile, secondFile, ignoredFile]
+                  }
+                  select (firstKey, secondKey, fileOperations, fixture with
+                  {
+                      ParseResourceFile = async (file, _, _) =>
+                      {
+                          await ValueTask.CompletedTask;
+
+                          if (file.FullName == firstFile.FullName)
+                          {
+                              return firstKey;
+                          }
+
+                          if (file.FullName == secondFile.FullName)
+                          {
+                              return secondKey;
+                          }
+
+                          return Option<ResourceKey>.None();
+                      }
+                  });
+
+        await gen.SampleAsync(async tuple =>
+        {
+            // Arrange
+            var (firstKey, secondKey, fileOperations, fixture) = tuple;
+            var buildResourceMap = fixture.Resolve();
+
+            // Act
+            var resources = await buildResourceMap(fileOperations, CancellationToken);
+
+            // Assert
+            await Assert.That(resources[firstKey.Resource])
+                        .Contains(firstKey);
+
+            await Assert.That(resources[secondKey.Resource])
+                        .Contains(secondKey);
+        });
+    }
+
+    private sealed record Fixture
+    {
+        public required ParseResourceFile ParseResourceFile { get; init; }
+
+        public BuildResourceMap Resolve()
+        {
+            var builder = Host.CreateApplicationBuilder();
+
+            builder.Services.AddSingleton(ParseResourceFile);
+
+            RelationshipsModule.ConfigureBuildResourceMap(builder);
+
+            using var host = builder.Build();
+
+            return host.Services.GetRequiredService<BuildResourceMap>();
+        }
+
+        public static Gen<Fixture> Generate() =>
+            Gen.Const(new Fixture
+            {
+                ParseResourceFile = async (_, _, _) =>
+                {
+                    await ValueTask.CompletedTask;
+                    return Option<ResourceKey>.None();
+                }
+            });
+    }
+}
+
+internal sealed class GetRelationshipPairsTests
 {
     private static CancellationToken CancellationToken =>
         TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None;
@@ -547,37 +632,18 @@ internal sealed class GetRelationshipsTests
                       Name = childKey.Parents.Last().Name,
                       Parents = ParentChain.From(childKey.Parents.SkipLast(1))
                   }
-                  let childFile = new FileInfo("child.json")
-                  let fileOperations = Common.NoOpFileOperations with
-                  {
-                      EnumerateServiceDirectoryFiles = () => [childFile]
-                  }
-                  select (parentKey, childKey, fileOperations, fixture with
-                  {
-                      IsValidationStrict = () => false,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          if (file.FullName == childFile.FullName)
-                          {
-                              return childKey;
-                          }
-                          else
-                          {
-                              return Option.None;
-                          }
-                      }
-                  });
+                  let resources = RelationshipTestData.ToResourceMap([childKey])
+                  select (parentKey, childKey, resources, Common.NoOpFileOperations, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (parentKey, childKey, fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
+            var (parentKey, childKey, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
 
             // Act
-            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
 
             // Assert that the parent is a predecessor of the child
             await Assert.That(relationships.Predecessors[childKey])
@@ -603,32 +669,18 @@ internal sealed class GetRelationshipsTests
                       Parents = ParentChain.From([.. operationKey.Parents, (operationKey.Resource, operationKey.Name)])
                   }
                   from fixture in Fixture.Generate()
-                  let policyFile = new FileInfo("operationPolicy.xml")
-                  let fileOperations = Common.NoOpFileOperations with
-                  {
-                      EnumerateServiceDirectoryFiles = () => [policyFile]
-                  }
-                  select (apiKey, policyKey, fileOperations, fixture with
-                  {
-                      IsValidationStrict = () => false,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          return file.FullName == policyFile.FullName
-                                    ? policyKey
-                                    : Option.None;
-                      }
-                  });
+                  let resources = RelationshipTestData.ToResourceMap([policyKey])
+                  select (apiKey, policyKey, resources, Common.NoOpFileOperations, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (apiKey, policyKey, fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
+            var (apiKey, policyKey, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
 
             // Act
-            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
 
             // Assert that the API is a predecessor of the policy
             await Assert.That(relationships.Predecessors[policyKey])
@@ -654,32 +706,18 @@ internal sealed class GetRelationshipsTests
                       Parents = ParentChain.From([.. operationKey.Parents, (operationKey.Resource, operationKey.Name)])
                   }
                   from fixture in Fixture.Generate()
-                  let policyFile = new FileInfo("operationPolicy.xml")
-                  let fileOperations = Common.NoOpFileOperations with
-                  {
-                      EnumerateServiceDirectoryFiles = () => [policyFile]
-                  }
-                  select (apiKey, policyKey, fileOperations, fixture with
-                  {
-                      IsValidationStrict = () => false,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          return file.FullName == policyFile.FullName
-                                    ? policyKey
-                                    : Option.None;
-                      }
-                  });
+                  let resources = RelationshipTestData.ToResourceMap([policyKey])
+                  select (apiKey, policyKey, resources, Common.NoOpFileOperations, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (apiKey, policyKey, fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
+            var (apiKey, policyKey, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
 
             // Act
-            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
 
             // Assert that the API is a predecessor of the policy
             await Assert.That(relationships.Predecessors[policyKey])
@@ -724,22 +762,9 @@ internal sealed class GetRelationshipsTests
                       },
                       _ => new JsonObject()
                   }
-                  select (primaryKey, secondaryKey, compositeKey, dto, fileOperations, fixture with
+                  let resources = RelationshipTestData.ToResourceMap([compositeKey])
+                  select (primaryKey, secondaryKey, compositeKey, resources, fileOperations, fixture with
                   {
-                      IsValidationStrict = () => false,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          if (file.FullName == compositeFile.FullName)
-                          {
-                              return compositeKey;
-                          }
-                          else
-                          {
-                              return Option.None;
-                          }
-                      },
                       GetInformationFileDto = async (resource, name, parents, readFile, getSubDirectories, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
@@ -755,11 +780,12 @@ internal sealed class GetRelationshipsTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (primaryKey, secondaryKey, compositeKey, dto, fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
+            var (primaryKey, secondaryKey, compositeKey, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
 
             // Act
-            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
 
             // Assert that the composite resource depends on its primary and secondary resources
             await Assert.That(relationships.Predecessors[compositeKey])
@@ -800,25 +826,9 @@ internal sealed class GetRelationshipsTests
                           ["displayName"] = namedValueName.ToString()
                       }
                   }
-                  select (namedValueKey, resourceKey, fileOperations, fixture with
+                  let resources = RelationshipTestData.ToResourceMap([resourceKey, namedValueKey])
+                  select (namedValueKey, resourceKey, resources, fileOperations, fixture with
                   {
-                      IsValidationStrict = () => false,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          if (file.FullName == resourceFile.FullName)
-                          {
-                              return resourceKey;
-                          }
-
-                          if (file.FullName == namedValueFile.FullName)
-                          {
-                              return namedValueKey;
-                          }
-
-                          return Option.None;
-                      },
                       GetInformationFileDto = async (resource, name, parents, readFile, getSubDirectories, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
@@ -836,11 +846,12 @@ internal sealed class GetRelationshipsTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (namedValueKey, resourceKey, fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
+            var (namedValueKey, resourceKey, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
 
             // Act
-            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
 
             // Assert
             await Assert.That(relationships.Predecessors[resourceKey])
@@ -864,31 +875,9 @@ internal sealed class GetRelationshipsTests
                           ["displayName"] = namedValueKey.Name.ToString()
                       }
                   }
-                  let policyFile = new FileInfo("policy.xml")
-                  let namedValueFile = new FileInfo("namedValue.json")
-                  let fileOperations = Common.NoOpFileOperations with
+                  let resources = RelationshipTestData.ToResourceMap([policyKey, namedValueKey])
+                  select (namedValueKey, policyKey, policyContent, resources, Common.NoOpFileOperations, fixture with
                   {
-                      EnumerateServiceDirectoryFiles = () => [policyFile, namedValueFile]
-                  }
-                  select (namedValueKey, policyKey, policyContent, fileOperations, fixture with
-                  {
-                      IsValidationStrict = () => false,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          if (file.FullName == policyFile.FullName)
-                          {
-                              return policyKey;
-                          }
-
-                          if (file.FullName == namedValueFile.FullName)
-                          {
-                              return namedValueKey;
-                          }
-
-                          return Option.None;
-                      },
                       GetPolicyFileContents = async (resource, name, parents, readFile, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
@@ -914,11 +903,12 @@ internal sealed class GetRelationshipsTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (namedValueKey, policyKey, policyContent, fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
+            var (namedValueKey, policyKey, policyContent, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
 
             // Act
-            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
 
             // Assert that the named value is a predecessor of the policy
             await Assert.That(relationships.Predecessors[policyKey])
@@ -935,31 +925,9 @@ internal sealed class GetRelationshipsTests
                                                                                  and not PolicyFragmentResource
                                                                                  and not WorkspacePolicyFragmentResource)
                   let policyContent = $"<policies><inbound><include-fragment fragment-id=\"{fragmentKey.Name}\" /><base /></inbound></policies>"
-                  let policyFile = new FileInfo("policy.xml")
-                  let fragmentFile = new FileInfo("fragment.json")
-                  let fileOperations = Common.NoOpFileOperations with
+                  let resources = RelationshipTestData.ToResourceMap([policyKey, fragmentKey])
+                  select (fragmentKey, policyKey, policyContent, resources, Common.NoOpFileOperations, fixture with
                   {
-                      EnumerateServiceDirectoryFiles = () => [policyFile, fragmentFile]
-                  }
-                  select (fragmentKey, policyKey, policyContent, fileOperations, fixture with
-                  {
-                      IsValidationStrict = () => false,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          if (file.FullName == policyFile.FullName)
-                          {
-                              return policyKey;
-                          }
-
-                          if (file.FullName == fragmentFile.FullName)
-                          {
-                              return fragmentKey;
-                          }
-
-                          return Option.None;
-                      },
                       GetPolicyFileContents = async (resource, name, parents, readFile, cancellationToken) =>
                       {
                           await ValueTask.CompletedTask;
@@ -975,11 +943,12 @@ internal sealed class GetRelationshipsTests
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (fragmentKey, policyKey, policyContent, fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
+            var (fragmentKey, policyKey, policyContent, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
 
             // Act
-            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
 
             // Assert that the policy fragment is a predecessor of the policy
             await Assert.That(relationships.Predecessors[policyKey])
@@ -988,53 +957,7 @@ internal sealed class GetRelationshipsTests
     }
 
     [Test]
-    public async Task Throws_when_a_predecessor_is_missing_and_validation_is_strict()
-    {
-        var gen = from childKey in Generator.GenerateResourceKey(resource => resource is IChildResource
-                                                                                and not IResourceWithReference
-                                                                                and not ICompositeResource
-                                                                                and not IPolicyResource)
-                  // Skip parents that should not be validated
-                  let parentResource = childKey.Parents.Last().Resource
-                  where parentResource is not (GroupResource or ApiOperationResource or WorkspaceResource or WorkspaceGroupResource or WorkspaceApiOperationResource)
-                  from fixture in Fixture.Generate()
-                  let childFile = new FileInfo("child.json")
-                  let fileOperations = Common.NoOpFileOperations with
-                  {
-                      EnumerateServiceDirectoryFiles = () => [childFile]
-                  }
-                  select (fileOperations, fixture with
-                  {
-                      IsValidationStrict = () => true,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          if (file.FullName == childFile.FullName)
-                          {
-                              return childKey;
-                          }
-                          else
-                          {
-                              return Option.None;
-                          }
-                      }
-                  });
-
-        await gen.SampleAsync(async tuple =>
-        {
-            // Arrange
-            var (fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
-
-            // Assert that an exception is thrown
-            await Assert.That(async () => await getRelationships(fileOperations, CancellationToken))
-                        .Throws<InvalidOperationException>();
-        });
-    }
-
-    [Test]
-    public async Task Returns_relationships_when_a_predecessor_is_missing_and_validation_is_not_strict()
+    public async Task Returns_a_missing_parent_relationship_for_a_child_resource()
     {
         var gen = from childKey in Generator.GenerateResourceKey(resource => resource is IChildResource
                                                                                 and not IResourceWithReference
@@ -1048,39 +971,20 @@ internal sealed class GetRelationshipsTests
                       Name = childKey.Parents.Last().Name,
                       Parents = ParentChain.From(childKey.Parents.SkipLast(1))
                   }
-                  let childFile = new FileInfo("child.json")
-                  let fileOperations = Common.NoOpFileOperations with
-                  {
-                      EnumerateServiceDirectoryFiles = () => [childFile]
-                  }
-                  select (missingParentKey, childKey, fileOperations, fixture with
-                  {
-                      IsValidationStrict = () => false,
-                      ParseResourceFile = async (file, _, _) =>
-                      {
-                          await ValueTask.CompletedTask;
-
-                          if (file.FullName == childFile.FullName)
-                          {
-                              return childKey;
-                          }
-                          else
-                          {
-                              return Option.None;
-                          }
-                      }
-                  });
+                  let resources = RelationshipTestData.ToResourceMap([childKey])
+                  select (missingParentKey, childKey, resources, Common.NoOpFileOperations, fixture);
 
         await gen.SampleAsync(async tuple =>
         {
             // Arrange
-            var (missingParentKey, childKey, fileOperations, fixture) = tuple;
-            var getRelationships = fixture.Resolve();
+            var (missingParentKey, childKey, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
 
             // Act
-            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
 
-            // Assert that the missing predecessor relationship is still returned
+            // Assert
             await Assert.That(relationships.Predecessors[childKey])
                         .Contains(missingParentKey);
         });
@@ -1088,38 +992,28 @@ internal sealed class GetRelationshipsTests
 
     private sealed record Fixture
     {
-        public required ParseResourceFile ParseResourceFile { get; init; }
         public required GetInformationFileDto GetInformationFileDto { get; init; }
         public required GetPolicyFileContents GetPolicyFileContents { get; init; }
         public required GetConfigurationOverride GetConfigurationOverride { get; init; }
-        public required IsValidationStrict IsValidationStrict { get; init; }
 
-        public GetRelationships Resolve()
+        public GetRelationshipPairs Resolve()
         {
-            var services = new ServiceCollection();
+            var builder = Host.CreateApplicationBuilder();
 
-            services.AddSingleton(ParseResourceFile)
-                    .AddSingleton(GetInformationFileDto)
-                    .AddSingleton(GetPolicyFileContents)
-                    .AddSingleton(GetConfigurationOverride)
-                    .AddSingleton(IsValidationStrict)
-                    .AddTestActivitySource()
-                    .AddNullLogger();
+            builder.Services.AddSingleton(GetInformationFileDto)
+                            .AddSingleton(GetPolicyFileContents)
+                            .AddSingleton(GetConfigurationOverride);
 
-            using var provider = services.BuildServiceProvider();
+            RelationshipsModule.ConfigureGetRelationshipPairs(builder);
 
-            return RelationshipsModule.ResolveGetRelationships(provider);
+            using var host = builder.Build();
+
+            return host.Services.GetRequiredService<GetRelationshipPairs>();
         }
 
         public static Gen<Fixture> Generate() =>
-            from isStrict in Gen.Bool
-            select new Fixture
+            Gen.Const(new Fixture
             {
-                ParseResourceFile = async (_, _, _) =>
-                {
-                    await ValueTask.CompletedTask;
-                    return Option<ResourceKey>.None();
-                },
                 GetInformationFileDto = async (_, _, _, _, _, _) =>
                 {
                     await ValueTask.CompletedTask;
@@ -1134,8 +1028,270 @@ internal sealed class GetRelationshipsTests
                 {
                     await ValueTask.CompletedTask;
                     return Option<JsonObject>.None();
-                },
-                IsValidationStrict = () => isStrict,
+                }
+            });
+    }
+}
+
+internal sealed class ValidateRelationshipGraphTests
+{
+    private static CancellationToken CancellationToken =>
+        TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None;
+
+    [Test]
+    public async Task Throws_when_a_predecessor_is_missing_and_validation_is_strict()
+    {
+        var gen = from childKey in Generator.GenerateResourceKey(resource => resource is IChildResource
+                                                                                and not IResourceWithReference
+                                                                                and not ICompositeResource
+                                                                                and not IPolicyResource)
+                  let parentResource = childKey.Parents.Last().Resource
+                  where parentResource is not (GroupResource or ApiOperationResource or WorkspaceResource or WorkspaceGroupResource or WorkspaceApiOperationResource)
+                  from fixture in Fixture.Generate()
+                  let childResource = (IChildResource)childKey.Resource
+                  let missingParentKey = new ResourceKey
+                  {
+                      Resource = childResource.Parent,
+                      Name = childKey.Parents.Last().Name,
+                      Parents = ParentChain.From(childKey.Parents.SkipLast(1))
+                  }
+                  let relationships = Relationships.From([(missingParentKey, childKey)], CancellationToken)
+                  let resources = RelationshipTestData.ToResourceMap([childKey])
+                  select (relationships, resources, fixture with
+                  {
+                      IsValidationStrict = () => true
+                  });
+
+        await gen.SampleAsync(async tuple =>
+        {
+            // Arrange
+            var (relationships, resources, fixture) = tuple;
+            var validateRelationshipGraph = fixture.Resolve();
+
+            // Assert that an exception is thrown
+            await Assert.That(() => validateRelationshipGraph(relationships, resources, CancellationToken))
+                        .Throws<InvalidOperationException>();
+        });
+    }
+
+    [Test]
+    public async Task Does_not_throw_when_a_predecessor_is_missing_and_validation_is_not_strict()
+    {
+        var gen = from childKey in Generator.GenerateResourceKey(resource => resource is IChildResource
+                                                                                and not IResourceWithReference
+                                                                                and not ICompositeResource
+                                                                                and not IPolicyResource)
+                  from fixture in Fixture.Generate()
+                  let childResource = (IChildResource)childKey.Resource
+                  let missingParentKey = new ResourceKey
+                  {
+                      Resource = childResource.Parent,
+                      Name = childKey.Parents.Last().Name,
+                      Parents = ParentChain.From(childKey.Parents.SkipLast(1))
+                  }
+                  let relationships = Relationships.From([(missingParentKey, childKey)], CancellationToken)
+                  let resources = RelationshipTestData.ToResourceMap([childKey])
+                  select (childKey, resources, relationships, fixture with
+                  {
+                      IsValidationStrict = () => false
+                  });
+
+        await gen.SampleAsync(async tuple =>
+        {
+            // Arrange
+            var (childKey, resources, relationships, fixture) = tuple;
+            var validateRelationshipGraph = fixture.Resolve();
+
+            // Act
+            validateRelationshipGraph(relationships, resources, CancellationToken);
+
+            // Assert
+            await Assert.That(resources[childKey.Resource])
+                        .Contains(childKey);
+        });
+    }
+
+    private sealed record Fixture
+    {
+        public required IsValidationStrict IsValidationStrict { get; init; }
+
+        public ValidateRelationshipGraph Resolve()
+        {
+            var builder = Host.CreateApplicationBuilder();
+
+            builder.Services.AddSingleton(IsValidationStrict)
+                            .AddNullLogger();
+
+            RelationshipsModule.ConfigureValidateRelationshipGraph(builder);
+
+            using var host = builder.Build();
+
+            return host.Services.GetRequiredService<ValidateRelationshipGraph>();
+        }
+
+        public static Gen<Fixture> Generate() =>
+            from isStrict in Gen.Bool
+            select new Fixture
+            {
+                IsValidationStrict = () => isStrict
             };
     }
+}
+
+internal sealed class GetRelationshipsTests
+{
+    private static CancellationToken CancellationToken =>
+        TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None;
+
+    [Test]
+    public async Task Returns_relationships_from_the_built_pairs_and_validates_them()
+    {
+        var gen = from expected in Common.GenerateRelationships()
+                  from fixture in Fixture.Generate()
+                  let fileOperations = Common.NoOpFileOperations
+                  let resources = RelationshipTestData.ToResourceMap(RelationshipTestData.GetNodes(expected))
+                  let pairs = RelationshipTestData.ToPairs(expected)
+                  select (expected, resources, pairs, fileOperations, fixture);
+
+        await gen.SampleAsync(async tuple =>
+        {
+            // Arrange
+            var (expected, resources, pairs, fileOperations, fixture) = tuple;
+            FileOperations? buildResourceMapFileOperations = null;
+            ImmutableDictionary<IResource, ImmutableHashSet<ResourceKey>>? getRelationshipPairsResources = null;
+            FileOperations? getRelationshipPairsFileOperations = null;
+            Relationships? validatedRelationships = null;
+            ImmutableDictionary<IResource, ImmutableHashSet<ResourceKey>>? validatedResources = null;
+
+            var getRelationships = (fixture with
+            {
+                BuildResourceMap = async (receivedFileOperations, cancellationToken) =>
+                {
+                    buildResourceMapFileOperations = receivedFileOperations;
+                    await ValueTask.CompletedTask;
+                    return resources;
+                },
+                GetRelationshipPairs = async (receivedResources, receivedFileOperations, cancellationToken) =>
+                {
+                    getRelationshipPairsResources = receivedResources;
+                    getRelationshipPairsFileOperations = receivedFileOperations;
+                    await ValueTask.CompletedTask;
+                    return pairs;
+                },
+                ValidateRelationshipGraph = (relationships, receivedResources, cancellationToken) =>
+                {
+                    validatedRelationships = relationships;
+                    validatedResources = receivedResources;
+                }
+            }).Resolve();
+
+            // Act
+            var relationships = await getRelationships(fileOperations, CancellationToken);
+            var actualPairs = RelationshipTestData.ToPairs(relationships);
+            var validatedPairs = validatedRelationships is null
+                                    ? ImmutableHashSet<(ResourceKey Predecessor, ResourceKey Successor)>.Empty
+                                    : RelationshipTestData.ToPairs(validatedRelationships);
+
+            // Assert
+            await Assert.That(actualPairs.Count)
+                        .IsEqualTo(pairs.Count);
+
+            await Assert.That(pairs)
+                        .All(pair => actualPairs.Contains(pair));
+
+            await Assert.That(buildResourceMapFileOperations)
+                        .IsEqualTo(fileOperations);
+
+            await Assert.That(getRelationshipPairsResources)
+                        .IsEqualTo(resources);
+
+            await Assert.That(getRelationshipPairsFileOperations)
+                        .IsEqualTo(fileOperations);
+
+            await Assert.That(validatedPairs.Count)
+                        .IsEqualTo(pairs.Count);
+
+            await Assert.That(pairs)
+                        .All(pair => validatedPairs.Contains(pair));
+
+            await Assert.That(validatedResources)
+                        .IsEqualTo(resources);
+        });
+    }
+
+    [Test]
+    public async Task Propagates_validation_failures()
+    {
+        var gen = from fixture in Fixture.Generate()
+                  select fixture with
+                  {
+                      ValidateRelationshipGraph = (relationships, resources, cancellationToken) =>
+                          throw new InvalidOperationException("validation failed")
+                  };
+
+        await gen.SampleAsync(async fixture =>
+        {
+            // Arrange
+            var getRelationships = fixture.Resolve();
+
+            // Assert that an exception is thrown
+            await Assert.That(async () => await getRelationships(Common.NoOpFileOperations, CancellationToken))
+                        .Throws<InvalidOperationException>();
+        });
+    }
+
+    private sealed record Fixture
+    {
+        public required BuildResourceMap BuildResourceMap { get; init; }
+        public required GetRelationshipPairs GetRelationshipPairs { get; init; }
+        public required ValidateRelationshipGraph ValidateRelationshipGraph { get; init; }
+
+        public GetRelationships Resolve()
+        {
+            var services = new ServiceCollection();
+
+            services.AddSingleton(BuildResourceMap)
+                    .AddSingleton(GetRelationshipPairs)
+                    .AddSingleton(ValidateRelationshipGraph);
+
+            using var provider = services.BuildServiceProvider();
+
+            return RelationshipsModule.ResolveGetRelationships(provider);
+        }
+
+        public static Gen<Fixture> Generate() =>
+            from relationships in Common.GenerateRelationships()
+            let resources = RelationshipTestData.ToResourceMap(RelationshipTestData.GetNodes(relationships))
+            let pairs = RelationshipTestData.ToPairs(relationships)
+            select new Fixture
+            {
+                BuildResourceMap = async (_, _) =>
+                {
+                    await ValueTask.CompletedTask;
+                    return resources;
+                },
+                GetRelationshipPairs = async (_, _, _) =>
+                {
+                    await ValueTask.CompletedTask;
+                    return pairs;
+                },
+                ValidateRelationshipGraph = (relationships, resources, cancellationToken) => { }
+            };
+    }
+}
+
+internal static class RelationshipTestData
+{
+    public static ImmutableHashSet<ResourceKey> GetNodes(Relationships relationships) =>
+        [.. relationships.Predecessors.Keys,
+          .. relationships.Predecessors.SelectMany(kvp => kvp.Value),
+          .. relationships.Successors.Keys,
+          .. relationships.Successors.SelectMany(kvp => kvp.Value)];
+
+    public static ImmutableHashSet<(ResourceKey Predecessor, ResourceKey Successor)> ToPairs(Relationships relationships) =>
+        [.. relationships.Predecessors.SelectMany(kvp => kvp.Value.Select(predecessor => (predecessor, kvp.Key)))];
+
+    public static ImmutableDictionary<IResource, ImmutableHashSet<ResourceKey>> ToResourceMap(IEnumerable<ResourceKey> keys) =>
+        [.. keys.GroupBy(key => key.Resource)
+                .Select(group => KeyValuePair.Create(group.Key, group.ToImmutableHashSet()))];
 }

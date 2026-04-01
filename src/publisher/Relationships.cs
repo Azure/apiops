@@ -199,6 +199,24 @@ internal static class RelationshipsModule
         builder.TryAddSingleton(ResolveGetRelationships);
     }
 
+    internal static GetRelationships ResolveGetRelationships(IServiceProvider provider)
+    {
+        var buildResourceMap = provider.GetRequiredService<BuildResourceMap>();
+        var getRelationshipPairs = provider.GetRequiredService<GetRelationshipPairs>();
+        var validateRelationshipGraph = provider.GetRequiredService<ValidateRelationshipGraph>();
+
+        return async (operations, cancellationToken) =>
+        {
+            var resources = await buildResourceMap(operations, cancellationToken);
+            var pairs = await getRelationshipPairs(resources, operations, cancellationToken);
+            var relationships = Relationships.From(pairs, cancellationToken);
+
+            validateRelationshipGraph(relationships, resources, cancellationToken);
+
+            return relationships;
+        };
+    }
+
     public static void ConfigureBuildResourceMap(IHostApplicationBuilder builder)
     {
         common.ResourceModule.ConfigureParseResourceFile(builder);
@@ -691,24 +709,6 @@ internal static class RelationshipsModule
                     WorkspaceApiOperationResource => false,
                     _ => true
                 };
-        };
-    }
-
-    internal static GetRelationships ResolveGetRelationships(IServiceProvider provider)
-    {
-        var buildResourceMap = provider.GetRequiredService<BuildResourceMap>();
-        var getRelationshipPairs = provider.GetRequiredService<GetRelationshipPairs>();
-        var validateRelationshipGraph = provider.GetRequiredService<ValidateRelationshipGraph>();
-
-        return async (operations, cancellationToken) =>
-        {
-            var resources = await buildResourceMap(operations, cancellationToken);
-            var pairs = await getRelationshipPairs(resources, operations, cancellationToken);
-            var relationships = Relationships.From(pairs, cancellationToken);
-
-            validateRelationshipGraph(relationships, resources, cancellationToken);
-
-            return relationships;
         };
     }
 
