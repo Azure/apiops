@@ -1,5 +1,7 @@
 using common;
-using DotNext.Collections.Generic;
+using common.tests;
+using CsCheck;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
@@ -11,271 +13,385 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using YamlDotNet.System.Text.Json;
 
 namespace integration.tests;
 
-internal delegate ValueTask RunExtractor(ExtractorOptions options, CancellationToken cancellationToken);
-internal delegate ValueTask ValidateExtractor(ResourceModels models, Option<ResourceModels> extractorSubset, ServiceDirectory serviceDirectory, CancellationToken cancellationToken);
+internal delegate ValueTask RunExtractor(ServiceDirectory serviceDirectory, Option<ExtractorFilter> filterOption, CancellationToken cancellationToken);
+internal delegate ValueTask ValidateExtractor(TestState testState, ServiceDirectory serviceDirectory, Option<ExtractorFilter> filterOption, CancellationToken cancellationToken);
 
-internal sealed record ExtractorOptions
+internal sealed record ExtractorFilter
 {
-    public required ServiceDirectory ServiceDirectory { get; init; }
-    public Option<ServiceName> ServiceName { get; init; } = Option.None;
-    public Option<ResourceModels> Models { get; init; } = Option.None;
+    public required ImmutableDictionary<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>> Resources { get; init; }
+
+    public bool ShouldExtract(ResourceKey resourceKey)
+    {
+        var normalizedResources =
+            Resources.GroupBy(kvp => normalizeParentChain(kvp.Key),
+                              kvp => kvp.Value)
+                     .ToImmutableDictionary(parentGroup => parentGroup.Key,
+                                            parentGroup =>
+                                                parentGroup
+                                                    .SelectMany(resourceNames => resourceNames)
+                                                    .GroupBy(kvp => kvp.Key, kvp => kvp.Value)
+                                                    .ToImmutableDictionary(resourceGroup => resourceGroup.Key,
+                                                                           resourceGroup => resourceGroup.SelectMany(names => names)
+                                                                                                         .Select(name => normalizeName(resourceGroup.Key, name))
+                                                                                                         .ToImmutableHashSet()));
+
+        return shouldExtract(resourceKey);
+
+        bool shouldExtract(ResourceKey resourceKey)
+        {
+            var normalizedKey = normalizeKey(resourceKey);
+
+            return normalizedKey.Parents.All(parent =>
+            {
+                var parentParents = ParentChain.From(normalizedKey.Parents.TakeWhile(ancestor => ancestor != parent));
+                var parentKey = ResourceKey.From(parent.Resource, parent.Name, parentParents);
+                return shouldExtract(parentKey);
+            })
+            && (normalizedResources.TryGetValue(normalizedKey.Parents, out var resourceDictionary) is false
+                || resourceDictionary.TryGetValue(normalizedKey.Resource, out var resourceNames) is false
+                || resourceNames.Contains(normalizedKey.Name));
+        }
+
+        static ResourceKey normalizeKey(ResourceKey key) =>
+            key with
+            {
+                Parents = normalizeParentChain(key.Parents),
+                Name = normalizeName(key.Resource, key.Name)
+            };
+
+        static ParentChain normalizeParentChain(ParentChain parentChain) =>
+            ParentChain.From(from tuple in parentChain
+                             let resource = tuple.Resource
+                             let normalizedName = normalizeName(resource, tuple.Name)
+                             select (resource, normalizedName));
+
+        static ResourceName normalizeName(IResource resource, ResourceName name) =>
+            resource switch
+            {
+                ApiResource or WorkspaceApiResource => ApiRevisionModule.GetRootName(name),
+                _ => name
+            };
+    }
+
+    public JsonObject Serialize()
+    {
+        var rootResources = Resources.Find(ParentChain.Empty)
+                                     .IfNone(() => []);
+
+        return [.. getResourceKvps(ParentChain.Empty, rootResources)];
+
+        IEnumerable<KeyValuePair<string, JsonNode?>> getResourceKvps(ParentChain parentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>> resources) =>
+            from kvp in resources
+            let jsonKey = kvp.Key.ConfigurationKey
+            let jsonValue = kvp.Value.Select(name =>
+            {
+                var parentChainWithResource = parentChain.Append(kvp.Key, name);
+
+                return Resources.Find(parentChainWithResource)
+                                .Map(children => new JsonObject
+                                {
+                                    [name.ToString()] = new JsonObject(getResourceKvps(parentChainWithResource, children))
+                                } as JsonNode)
+                                .IfNone(() => JsonValue.Create(name.ToString()));
+            }).ToJsonArray()
+            select KeyValuePair.Create(jsonKey, jsonValue as JsonNode);
+    }
+
+    public static Gen<ExtractorFilter> Generate(IEnumerable<ITestModel> models)
+    {
+        var resources = models.GroupBy(model => model.Key.Parents,
+                                       model => model.Key)
+                              .ToImmutableDictionary(group => group.Key,
+                                                     group => group.GroupBy(key => key.Resource, key => key.Name)
+                                                                   .ToImmutableDictionary(group => group.Key,
+                                                                                          group => group.ToImmutableHashSet()));
+
+        return from generatedResources in generateResources(ParentChain.Empty)
+               let normalizedResources = alwaysIncludeRootApis(generatedResources)
+               select new ExtractorFilter
+               {
+                   Resources = [.. normalizedResources]
+               };
+
+        Gen<ImmutableArray<KeyValuePair<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>>>> generateResources(ParentChain parentChain) =>
+            from children in generateParentChainImmediateChildren(parentChain)
+            from descendentsArray in Generator.Traverse(children,
+                                                        kvp => from descendent in Generator.Traverse(kvp.Value.Select(name => parentChain.Append(kvp.Key, name))
+                                                                                                              .Where(resources.ContainsKey),
+                                                                                                     generateResources)
+                                                               select descendent.SelectMany(array => array))
+            select ImmutableArray.CreateRange([KeyValuePair.Create(parentChain, children.ToImmutableDictionary()),
+                                               .. descendentsArray.SelectMany(array => array)]);
+
+        Gen<ImmutableArray<KeyValuePair<IResource, ImmutableHashSet<ResourceName>>>> generateParentChainImmediateChildren(ParentChain parentChain) =>
+            from children in Generator.SubSetOf(resources.Find(parentChain)
+                                                         .IfNone(() => []))
+            from resourceNames in Generator.Traverse(children,
+                                                     kvp => from names in Generator.SubSetOf(kvp.Value)
+                                                            select KeyValuePair.Create(kvp.Key, names))
+            select resourceNames;
+
+        IEnumerable<KeyValuePair<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>>> alwaysIncludeRootApis(IEnumerable<KeyValuePair<ParentChain, ImmutableDictionary<IResource, ImmutableHashSet<ResourceName>>>> resources) =>
+           from kvp in resources
+           let value = from kvp2 in kvp.Value
+                       let resource = kvp2.Key
+                       let names = kvp2.Value
+                       let rootNamesToAdd = names.Choose(name => resource switch
+                       {
+                           ApiResource or WorkspaceApiResource when ApiRevisionModule.IsRootName(name) is false => Option.Some(ApiRevisionModule.GetRootName(name)),
+                           _ => Option.None
+                       })
+                       let normalizedNames = names.Union(rootNamesToAdd)
+                       select KeyValuePair.Create(resource, normalizedNames)
+           select KeyValuePair.Create(kvp.Key, value.ToImmutableDictionary());
+    }
+
+    public override string ToString() =>
+        Serialize().ToJsonString();
 }
 
 internal static class ExtractorModule
 {
     public static void ConfigureRunExtractor(IHostApplicationBuilder builder)
     {
-        ResourceGraphModule.ConfigureResourceGraph(builder);
-
         builder.TryAddSingleton(ResolveRunExtractor);
     }
 
     private static RunExtractor ResolveRunExtractor(IServiceProvider provider)
     {
-        var graph = provider.GetRequiredService<ResourceGraph>();
+        var configuration = provider.GetRequiredService<IConfiguration>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        return async (options, cancellationToken) =>
+        return async (serviceDirectory, filterOption, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity("run.extractor");
+            using var activity = activitySource.StartActivity("extractor.run")
+                                              ?.SetTag("service.directory", serviceDirectory)
+                                              ?.SetTag("filter.option", filterOption);
 
-            await writeConfigurationYaml(options, cancellationToken);
+            await filterOption.IterTask(async filter => await writeConfigurationFile(serviceDirectory, filter, cancellationToken));
 
-            var arguments = getProgramArguments(options);
+            var arguments = getArguments(serviceDirectory, filterOption);
             await extractor.Program.Main([.. arguments]);
         };
 
-        async ValueTask writeConfigurationYaml(ExtractorOptions options, CancellationToken cancellationToken) =>
-            await options.Models
-                         .IterTask(async models =>
-                         {
-                             var file = getConfigurationFile(options);
-                             var json = resourceModelsToJson(models);
-                             var yaml = YamlConverter.Serialize(json);
-                             var content = BinaryData.FromString(yaml);
-                             await file.OverwriteWithBinaryData(content, cancellationToken);
-                         });
-
-        JsonObject resourceModelsToJson(ResourceModels models) =>
-            graph.ListTraversalRootResources()
-                 .Aggregate(new JsonObject(),
-                            (json, resource) =>
-                            {
-                                var nodes = getModelNodeSet(resource, models);
-
-                                return json.SetProperty(resource.ConfigurationKey,
-                                                        modelNodeSetToJson(nodes, models),
-                                                        mutateOriginal: true);
-                            });
-
-        ModelNodeSet getModelNodeSet(IResource resource, ResourceModels models) =>
-            models.Find(resource)
-                  .IfNone(() => ModelNodeSet.Empty);
-
-        JsonArray modelNodeSetToJson(ModelNodeSet hierarchy, ResourceModels models) =>
-            hierarchy
-                     // Do not write revisioned APIs. Only the root API name is supported.
-                     .Where(node => node.Model.AssociatedResource is not ApiResource || ApiRevisionModule.IsRootName(node.Model.Name))
-                     .Select(node => modelNodeToJson(node, models))
-                     .ToJsonArray();
-
-        JsonNode modelNodeToJson(ModelNode node, ResourceModels models)
+        static async ValueTask writeConfigurationFile(ServiceDirectory serviceDirectory, ExtractorFilter filter, CancellationToken cancellationToken)
         {
-            var name = node.Model.Name.ToString();
+            var file = getConfigurationFile(serviceDirectory);
 
-            var successors = from resource in graph.ListTraversalSuccessors(node.Model.AssociatedResource)
-                             let successorHierarchy = from successor in getModelNodeSet(resource, models)
-                                                      where successor.Predecessors.Contains(node)
-                                                      select successor
-                             select (Resource: resource, Hierarchy: successorHierarchy);
+            var json = filter.Serialize();
+            var yaml = YamlDotNet.System.Text.Json.YamlConverter.Serialize(json);
+            var binaryData = BinaryData.FromString(yaml);
 
-            // If there are no successors, we return the name as a simple JSON value (e.g. "api1");
-            // Otherwise, we return a JSON object with the name as a key and an array of successors grouped by their resource.
-            // (e.g. { "api1": { "operations": [...] , "policies": [...] } }).
-            return successors.ToArray() switch
-            {
-                [] => JsonValue.Create(name),
-                _ => new JsonObject
-                {
-                    [name] = successors.Aggregate(new JsonObject(),
-                                                  (current, successor) => current.MergeWith(new JsonObject
-                                                  {
-                                                      [successor.Resource.ConfigurationKey] = successor.Hierarchy
-                                                                                                 .Select(successor => modelNodeToJson(successor, models))
-                                                                                                 .ToJsonArray()
-                                                  }, mutateOriginal: true))
-                }
-            };
+            await file.OverwriteWithBinaryData(binaryData, cancellationToken);
         }
 
-        FileInfo getConfigurationFile(ExtractorOptions options) =>
-            options.ServiceDirectory
-                   .ToDirectoryInfo()
-                   .GetChildFile("configuration.extractor.yaml");
+        IEnumerable<string> getArguments(ServiceDirectory serviceDirectory, Option<ExtractorFilter> filterOption) =>
+            [
+                $"--API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH={serviceDirectory.ToDirectoryInfo().FullName}",
+                $"--API_MANAGEMENT_SERVICE_NAME={configuration.GetValueOrThrow("API_MANAGEMENT_SERVICE_NAME")}",
+                $"--AZURE_RESOURCE_GROUP_NAME={configuration.GetValueOrThrow("AZURE_RESOURCE_GROUP_NAME")}",
+                $"--AZURE_SUBSCRIPTION_ID={configuration.GetValueOrThrow("AZURE_SUBSCRIPTION_ID")}",
+                .. configuration.GetValue("AZURE_BEARER_TOKEN")
+                                .Map(token => ImmutableArray.Create($"--AZURE_BEARER_TOKEN={token}"))
+                                .IfNone(() => []),
+                .. configuration.GetValue("AZURE_CLOUD_ENVIRONMENT")
+                                .Map(environment => ImmutableArray.Create($"--AZURE_CLOUD_ENVIRONMENT={environment}"))
+                                .IfNone(() => []),
+                .. filterOption.Map(_ => getConfigurationFile(serviceDirectory))
+                               .Map(file => ImmutableArray.Create($"--{ConfigurationModule.YamlPath}={file.FullName}"))
+                               .IfNone(() => [])
+            ];
 
-        ImmutableArray<string> getProgramArguments(ExtractorOptions options)
-        {
-            var arguments = new List<string>();
-
-            arguments.AddRange(["--API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH", options.ServiceDirectory.ToDirectoryInfo().FullName]);
-            options.Models.Iter(_ => arguments.AddRange([$"--{ConfigurationModule.YamlPath}", getConfigurationFile(options).FullName]));
-            options.ServiceName.Iter(name => arguments.AddRange(["--API_MANAGEMENT_SERVICE_NAME", name.ToString()]));
-
-            return [.. arguments];
-        }
+        static FileInfo getConfigurationFile(ServiceDirectory serviceDirectory) =>
+            new(Path.Combine(serviceDirectory.ToDirectoryInfo().FullName, "configuration.extractor.yaml"));
     }
 
     public static void ConfigureValidateExtractor(IHostApplicationBuilder builder)
     {
-        ResourceModule.ConfigureGetInformationFileDto(builder);
-        ResourceModule.ConfigureGetPolicyFileContents(builder);
-        ResourceModule.ConfigureParseResourceFile(builder);
-        ServiceModule.ConfigureShouldSkipResource(builder);
-        common.FileSystemModule.ConfigureGetLocalFileOperations(builder);
+        ApimModule.ConfigureIsResourceKeySupported(builder);
 
         builder.TryAddSingleton(ResolveValidateExtractor);
     }
 
     private static ValidateExtractor ResolveValidateExtractor(IServiceProvider provider)
     {
-        var getInformationFileDto = provider.GetRequiredService<GetInformationFileDto>();
-        var getPolicyFileContents = provider.GetRequiredService<GetPolicyFileContents>();
-        var parseFile = provider.GetRequiredService<ParseResourceFile>();
-        var shouldSkipResource = provider.GetRequiredService<ShouldSkipResource>();
-        var getLocalFileOperations = provider.GetRequiredService<GetLocalFileOperations>();
+        var isResourceKeySupported = provider.GetRequiredService<IsResourceKeySupported>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
 
-        var fileOperations = getLocalFileOperations();
-
-        return async (models, extractorSubset, serviceDirectory, cancellationToken) =>
+        return async (testState, serviceDirectory, filterOption, cancellationToken) =>
         {
-            using var _ = activitySource.StartActivity("validate.extractor");
+            using var activity = activitySource.StartActivity("extractor.validate")
+                                              ?.SetTag("test.state", testState)
+                                              ?.SetTag("service.directory", serviceDirectory)
+                                              ?.SetTag("filter.option", filterOption);
 
-            var modelsToValidate = extractorSubset.IfNone(() => models);
-            await validateResourceModelsWereExtracted(modelsToValidate, serviceDirectory, cancellationToken);
-            await validateOnlyResourceModelsWereExtracted(modelsToValidate, serviceDirectory, cancellationToken);
+            using var provider = getLocalDependenciesProvider(serviceDirectory);
+            var getInformationFileDto = provider.GetRequiredService<GetInformationFileDto>();
+            var getPolicyFileContents = provider.GetRequiredService<GetPolicyFileContents>();
+            var getApiSpecificationFromFile = provider.GetRequiredService<GetApiSpecificationFromFile>();
+            var parseResourceFile = provider.GetRequiredService<ParseResourceFile>();
+            var getLocalFileOperations = provider.GetRequiredService<GetLocalFileOperations>();
+            var fileOperations = getLocalFileOperations();
+
+            var expectedModels = getExpectedModels(testState, filterOption);
+
+            var result = await validateModelsWereExtracted(expectedModels, getInformationFileDto, getPolicyFileContents, getApiSpecificationFromFile, fileOperations, cancellationToken);
+            result.IfErrorThrow();
+
+            result = await validateOnlyModelsWereExtracted(expectedModels, parseResourceFile, getInformationFileDto, fileOperations, cancellationToken);
+            result.IfErrorThrow();
         };
 
-        async ValueTask validateResourceModelsWereExtracted(ResourceModels models, ServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-            await models.SelectMany(kvp => from node in kvp.Value
-                                           select (Resource: kvp.Key, node.Model, Ancestors: node.GetResourceParentChain()))
-                        .IterTaskParallel(async x =>
+        static ServiceProvider getLocalDependenciesProvider(ServiceDirectory serviceDirectory)
+        {
+            var builder = Host.CreateEmptyApplicationBuilder(new());
+
+            builder.AddServiceDirectoryToConfiguration(serviceDirectory);
+            ResourceModule.ConfigureGetInformationFileDto(builder);
+            ResourceModule.ConfigureGetPolicyFileContents(builder);
+            ResourceModule.ConfigureGetApiSpecificationFromFile(builder);
+            ResourceModule.ConfigureParseResourceFile(builder);
+            FileSystemModule.ConfigureGetLocalFileOperations(builder);
+
+            return builder.Services.BuildServiceProvider();
+        }
+
+        static ImmutableArray<ITestModel> getExpectedModels(TestState testState, Option<ExtractorFilter> filterOption) =>
+            filterOption.Map(filter => testState.Models
+                                                .Where(model => filter.ShouldExtract(model.Key))
+                                                .ToImmutableArray())
+                         .IfNone(() => testState.Models);
+
+        async ValueTask<Result<Unit>> validateModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, GetInformationFileDto getInformationFileDto, GetPolicyFileContents getPolicyFileContents, GetApiSpecificationFromFile getApiSpecificationFromFile, FileOperations fileOperations, CancellationToken cancellationToken)
+        {
+            var result =
+                await expectedModels
+                        .ToAsyncEnumerable()
+                        .Where(async (model, cancellationToken) => await isResourceKeySupported(model.Key, cancellationToken))
+                        .Traverse(async model =>
                         {
-                            var (resource, model, ancestors) = x;
-                            var name = model.Name;
-                            var resourceKey = ResourceKey.From(resource, name, ancestors);
+                            var (resource, name, parents) = (model.Key.Resource, model.Key.Name, model.Key.Parents);
 
-                            if (await shouldSkipResource(resourceKey, cancellationToken))
+                            if (resource is ApiResource apiResource && model is ApiModel apiModel)
                             {
-                                return;
+                                var dtoOption = await getInformationFileDto(apiResource, name, parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
+                                var dtoResult = dtoOption.ToResult(() => Error.From($"Could not find extracted file for {model.Key}."));
+
+                                var specificationOption = await getApiSpecificationFromFile(model.Key, fileOperations.ReadFile, cancellationToken);
+                                var specificationResult = (specificationOption.IfNoneNullable(), apiModel.Specification.IfNoneNull(), apiModel.OperationNames.IfNoneNull()) switch
+                                {
+                                    // No extracted specification file found
+                                    (null, null, _) => Result.Success(Unit.Instance),
+                                    (null, not null, _) when apiModel.Type is ApiType.Wsdl => Result.Success(Unit.Instance), // SOAP APIs should never have specifications extracted.
+                                    (null, not null, _) => Error.From($"Could not find extracted specification file for {model.Key}."),
+                                    // Extracted specification file found
+                                    (not null, null, _) => Error.From($"Found specification file for '{model.Key}', but model has no specification."),
+                                    (not null, _, _) when apiModel.Type is ApiType.Wsdl => Error.From($"Found specification file for SOAP API '{model.Key}'."), // SOAP APIs should never have specifications extracted.
+                                    (not null, not null, null) => Result.Success(Unit.Instance),
+                                    (not null, not null, not null) when apiModel.Type is ApiType.Wsdl or ApiType.Wadl => Result.Success(Unit.Instance), // APIM randomly generates operation names for SOAP and WADL APIs, so we cannot reliably validate them.
+                                    (var (_, contents), _, var operationNames) => operationNames.Traverse(name => contents.ToString().Contains($"{name}", StringComparison.OrdinalIgnoreCase)
+                                                                                                                    ? Result.Success(Unit.Instance)
+                                                                                                                    : Error.From($"Specification file for {model.Key} does not contain operation {name}."),
+                                                                                                          cancellationToken)
+                                                                                                .Map(_ => Unit.Instance)
+                                };
+
+                                var validationResult = from _ in dtoResult
+                                                       from __ in specificationResult
+                                                       select Unit.Instance;
+
+                                return validationResult.MapError(error => Error.From($"Validation failed for {model.Key}. {error}"));
                             }
 
-                            if (model is not IDtoTestModel dtoTestModel)
+                            if (resource is PolicyFragmentResource policyFragmentResource)
                             {
-                                return;
+                                var informationFileDtoOption = await getInformationFileDto(policyFragmentResource, name, parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
+                                var informationFileResult = informationFileDtoOption.ToResult(() => Error.From($"Could not find extracted information file for {model.Key}."));
+
+                                var policyContentsOption = await getPolicyFileContents(policyFragmentResource, name, parents, fileOperations.ReadFile, cancellationToken);
+                                var policyContentsResult = policyContentsOption.Map(PolicyContentsToDto)
+                                                                               .ToResult(() => Error.From($"Could not find extracted policy file for {model.Key}."));
+
+                                return from informationFileDto in informationFileResult
+                                       from policyContentsDto in policyContentsResult
+                                       let mergedDto = informationFileDto.MergeWith(policyContentsDto)
+                                       from validationResult in model.ValidateDto(mergedDto)
+                                                                     .MapError(error => Error.From($"Validation failed for {model.Key}. {error}"))
+                                       select validationResult;
                             }
 
-                            var contentsOption = Option<JsonObject>.None();
-                            switch (resource)
+                            if (resource is IResourceWithInformationFile resourceWithInformationFile)
                             {
-                                case PolicyFragmentResource policyFragmentResource:
-                                    var informationFileOption = await getInformationFileDto(policyFragmentResource, name, ancestors, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
-                                    var policyFileOption = from policyContents in await getPolicyFileContents(policyFragmentResource, name, ancestors, fileOperations.ReadFile, cancellationToken)
-                                                           select new JsonObject
-                                                           {
-                                                               ["properties"] = new JsonObject
-                                                               {
-                                                                   ["format"] = "rawxml",
-                                                                   ["value"] = policyContents.ToString()
-                                                               }
-                                                           };
+                                var dtoOption = await getInformationFileDto(resourceWithInformationFile, name, parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
+                                var dtoResult = dtoOption.ToResult(() => Error.From($"Could not find extracted file for {model.Key}."));
 
-                                    contentsOption = (informationFileOption.IfNoneNull(), policyFileOption.IfNoneNull()) switch
+                                return dtoResult.Bind(model.ValidateDto);
+                            }
+
+                            if (resource is IPolicyResource policyResource)
+                            {
+                                var contentsOption = await getPolicyFileContents(policyResource, name, parents, fileOperations.ReadFile, cancellationToken);
+                                var contentsResult = contentsOption.Map(PolicyContentsToDto)
+                                                                   .ToResult(() => Error.From($"Could not find extracted policy file for {model.Key}."));
+
+                                return contentsResult.Bind(dto => model.ValidateDto(dto)
+                                                                       .MapError(error => Error.From($"Validation failed for {model.Key}. {error}")));
+                            }
+
+                            return Unit.Instance;
+                        }, cancellationToken);
+
+            return result.Map(_ => Unit.Instance);
+        }
+
+        static JsonObject PolicyContentsToDto(BinaryData contents) =>
+            new()
+            {
+                ["properties"] = new JsonObject
+                {
+                    ["value"] = contents.ToString()
+                }
+            };
+
+        async ValueTask<Result<Unit>> validateOnlyModelsWereExtracted(ImmutableArray<ITestModel> expectedModels, ParseResourceFile parseResourceFile, GetInformationFileDto getInformationFileDto, FileOperations fileOperations, CancellationToken cancellationToken)
+        {
+            var modelKeys = expectedModels
+                                .Select(model => model.Key)
+                                .ToImmutableHashSet();
+
+            var result =
+                await fileOperations.EnumerateServiceDirectoryFiles()
+                                    .ToAsyncEnumerable()
+                                    .Choose(async file => await parseResourceFile(file, fileOperations.ReadFile, cancellationToken))
+                                    .Where(async (key, cancellationToken) => await isResourceKeySupported(key, cancellationToken))
+                                    // Skip composites where the secondary resource is a non-current API revision
+                                    .Where(async (key, cancellationToken) =>
                                     {
-                                        (null, null) => contentsOption,
-                                        (JsonObject informationFile, null) => informationFile,
-                                        (null, JsonObject policyFile) => policyFile,
-                                        (JsonObject informationFile, JsonObject policyFile) => informationFile.MergeWith(policyFile)
-                                    };
+                                        if (key.Resource is not ICompositeResource compositeResource
+                                            || compositeResource.Secondary is not (ApiResource or WorkspaceApiResource))
+                                        {
+                                            return true;
+                                        }
 
-                                    break;
-                                case IResourceWithInformationFile resourceWithInformationFile:
-                                    contentsOption = await getInformationFileDto(resourceWithInformationFile, name, ancestors, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken);
-                                    break;
-                                case IPolicyResource policyResource:
-                                    contentsOption = from policyContents in await getPolicyFileContents(policyResource, name, ancestors, fileOperations.ReadFile, cancellationToken)
-                                                     select new JsonObject
-                                                     {
-                                                         ["properties"] = new JsonObject
-                                                         {
-                                                             ["format"] = "rawxml",
-                                                             ["value"] = policyContents.ToString()
-                                                         }
-                                                     };
-                                    break;
-                                default:
-                                    break;
-                            }
+                                        var apiNameOption = compositeResource switch
+                                        {
+                                            ILinkResource linkResource => from dto in await getInformationFileDto(compositeResource, key.Name, key.Parents, fileOperations.ReadFile, fileOperations.GetSubDirectories, cancellationToken)
+                                                                          from apiName in ResourceModule.GetSecondaryResourceName(linkResource, dto)
+                                                                          select apiName,
+                                            _ => key.Name
+                                        };
 
-                            var contents = contentsOption.IfNoneThrow(() => new InvalidOperationException($"Could not find DTO for {resourceKey}."));
+                                        return apiNameOption.Map(ApiRevisionModule.IsRootName)
+                                                            .IfNone(() => true);
+                                    })
+                                    .Traverse(async key => modelKeys.Contains(key)
+                                                            ? Result.Success(Unit.Instance)
+                                                            : Error.From($"Resource '{key}' was extracted but has no corresponding model."), cancellationToken);
 
-                            bool matchesDto = dtoTestModel.MatchesDto(contents, overrideJson: Option.None);
-                            if (matchesDto is false)
-                            {
-                                throw new InvalidOperationException($"DTO for {resourceKey} does not match the expected DTO.");
-                            }
-                        }, maxDegreeOfParallelism: Option.None, cancellationToken);
-
-        async ValueTask validateOnlyResourceModelsWereExtracted(ResourceModels models, ServiceDirectory serviceDirectory, CancellationToken cancellationToken) =>
-            await serviceDirectory.ToDirectoryInfo()
-                                  // Get all files in the service directory
-                                  .EnumerateFiles("*", SearchOption.AllDirectories)
-                                  // Get the resource associated with the file
-                                  .Choose(async file => await parseFile(file, fileOperations.ReadFile, cancellationToken))
-                                  .IterTaskParallel(async resourceKey =>
-                                  {
-                                      var exception = new InvalidOperationException($"Resource {resourceKey} was extracted but not found in the models.");
-
-                                      var (resource, name, ancestors) = (resourceKey.Resource, resourceKey.Name, resourceKey.Parents);
-
-                                      switch (resource)
-                                      {
-                                          case ApiResource:
-                                              // For APIs, we validate that the root name is in the models, regardless of the revisions
-                                              var rootName = ApiRevisionModule.GetRootName(name);
-
-                                              models.Find(resource)
-                                                    .Where(apis => apis.Any(node => ApiRevisionModule.GetRootName(node.Model.Name) == rootName && ancestors == node.GetResourceParentChain()))
-                                                    .IfNone(() => throw exception);
-
-                                              break;
-                                          case IChildResource childResource when childResource.Parent is ApiResource:
-                                              // For API child resources, we validate that the parent API (or its root) is in the models
-                                              models.Find(resource, name, ancestors)
-                                                    .IfNone(() =>
-                                                    {
-                                                        var api = ancestors.Last();
-                                                        var rootName = ApiRevisionModule.GetRootName(api.Name);
-                                                        var ancestorsWithRootApi = ParentChain.From([.. ancestors.SkipLast(1)])
-                                                                                                    .Append(api.Resource, rootName);
-
-                                                        return models.Find(resource, name, ancestorsWithRootApi);
-                                                    })
-                                                    .IfNone(() => throw exception);
-
-                                              break;
-                                          default:
-                                              models.Find(resource, name, ancestors)
-                                                    .IfNone(() => throw exception);
-
-                                              break;
-                                      }
-
-                                      await ValueTask.CompletedTask;
-                                  }, maxDegreeOfParallelism: Option.None, cancellationToken);
+            return result.Map(_ => Unit.Instance);
+        }
     }
 }

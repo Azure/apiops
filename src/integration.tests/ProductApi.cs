@@ -1,49 +1,54 @@
 using common;
+using common.tests;
 using CsCheck;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
+using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record ProductApiModel : ILinkResourceTestModel<ProductApiModel>
+internal sealed record ProductApiModel : ITestModel<ProductApiModel>
 {
-    public required ResourceName PrimaryResourceName { get; init; }
-    public required ResourceName SecondaryResourceName { get; init; }
+    public required ResourceKey Key { get; init; }
 
-    public static ILinkResource AssociatedResource { get; } = ProductApiResource.Instance;
+    public required ResourceKey ApiKey { get; init; }
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public JsonObject ToDto() =>
+        new JsonObject();
+
+    public Result<Unit> ValidateDto(JsonObject dto) =>
+        Unit.Instance;
+
+    public static Gen<ImmutableHashSet<ProductApiModel>> GenerateSet(IEnumerable<ITestModel> models)
     {
-        var option = from predecessorsGen in Generator.GeneratePredecessors<ProductApiModel>(baseline)
-                     let newGenerator = from predecessors in predecessorsGen
-                                        let productName = predecessors.PickNameOrThrow<ProductResource>()
-                                        let apiName = predecessors.PickNameOrThrow<ApiResource>()
-                                        let model = new ProductApiModel
-                                        {
-                                            PrimaryResourceName = productName,
-                                            SecondaryResourceName = apiName
-                                        }
-                                        select (model, predecessors)
-                     select Generator.GenerateNodes(baseline, Gen.Const, newGenerator)
-                                     .Where(setIsValid);
+        var modelsArray = models.ToImmutableArray();
+        var products = modelsArray.OfType<ProductModel>();
+        var currentRevisionApis = modelsArray.OfType<ApiModel>()
+                                             .Where(api => api.Key.Name == api.RootName);
 
-        return option.IfNone(() => Gen.Const(ModelNodeSet.Empty));
+        var productApis = from product in products
+                          from api in currentRevisionApis
+                          select (product, api);
 
-        // APIs can only be linked to a single product
-        bool setIsValid(ModelNodeSet set)
-        {
-            var names = new HashSet<ResourceName>();
-
-            foreach (var node in set)
-            {
-                if (node.Model is ProductApiModel model
-                    && names.Add(model.SecondaryResourceName) is false)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
+        return from productApiSubSet in Generator.SubSetOf([.. productApis])
+               let productApiModels = productApiSubSet.Select(tuple => new ProductApiModel
+               {
+                   Key = new ResourceKey
+                   {
+                       Resource = ProductApiResource.Instance,
+                       Name = tuple.api.Key.Name,
+                       Parents = tuple.product.Key.AsParentChain()
+                   },
+                   ApiKey = tuple.api.Key
+               })
+               select productApiModels.ToImmutableHashSet();
     }
+
+    public static Gen<ImmutableHashSet<ProductApiModel>> GenerateUpdates(IEnumerable<ProductApiModel> models, IEnumerable<ITestModel> allModels) =>
+        // Composite resources have nothing to update.
+        Gen.Const(ImmutableHashSet<ProductApiModel>.Empty);
+
+    public static Gen<ImmutableHashSet<ProductApiModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
+        GenerateSet(accumulatedNextModels);
 }

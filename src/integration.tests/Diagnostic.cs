@@ -1,88 +1,94 @@
 using common;
+using common.tests;
 using CsCheck;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record DiagnosticModel : IResourceWithReferenceTestModel<DiagnosticModel>
+internal sealed record DiagnosticModel : ITestModel<DiagnosticModel>
 {
-    public required ResourceName Name { get; init; }
-    public required ResourceName LoggerName { get; init; }
-    public required float SamplingPercentage { get; init; }
+    public required string Verbosity { get; init; }
 
-    public static IResourceWithReference AssociatedResource { get; } = DiagnosticResource.Instance;
+    public required bool LogClientIp { get; init; }
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public required ResourceKey LoggerKey { get; init; }
+
+    public required ResourceKey Key { get; init; }
+
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["loggerId"] = $"/{LoggerKey}",
+                ["verbosity"] = Verbosity,
+                ["logClientIp"] = LogClientIp
+            }
+        };
+
+    public Result<Unit> ValidateDto(JsonObject dto)
     {
-        var option = from predecessorsGen in Generator.GeneratePredecessors<DiagnosticModel>(baseline)
-                     let newGenerator = from predecessors in predecessorsGen
-                                        let loggerName = predecessors.PickNameOrThrow<LoggerResource>()
-                                        from model in Generate(loggerName)
-                                        select (model, predecessors)
-                     select Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
+        return from _ in validateVerbosity()
+               from __ in validateLogClientIp()
+               select Unit.Instance;
 
-        return option.IfNone(() => Gen.Const(ModelNodeSet.Empty));
+        Result<Unit> validateVerbosity() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from verbosity in properties.GetStringProperty("verbosity")
+            from unit in verbosity == Verbosity
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has verbosity '{verbosity}' instead of '{Verbosity}'.")
+            select unit;
+
+        Result<Unit> validateLogClientIp() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from logClientIp in properties.GetBoolProperty("logClientIp")
+            from unit in logClientIp == LogClientIp
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has logClientIp '{logClientIp}' instead of '{LogClientIp}'.")
+            select unit;
     }
 
-    private static Gen<float> GenerateSamplingPercentage() =>
-        from percentage in Gen.Int[0, 100]
-        select (float)percentage;
+    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from loggerModels in Generator.SubSetOf([.. models.OfType<LoggerModel>()])
+        from diagnosticModels in Generator.Traverse(loggerModels, Generate)
+        select ToSet(diagnosticModels);
 
-    private static Gen<DiagnosticModel> Generate(ResourceName loggerName) =>
-        from samplingPercentage in GenerateSamplingPercentage()
+    private static Gen<DiagnosticModel> Generate(LoggerModel logger) =>
+        from verbosity in GenerateVerbosity()
+        from logClientIp in Gen.Bool
         select new DiagnosticModel
         {
-            Name = loggerName,
-            LoggerName = loggerName,
-            SamplingPercentage = samplingPercentage
+            Key = ResourceKey.From(DiagnosticResource.Instance, logger.Key.Name),
+            LoggerKey = logger.Key,
+            Verbosity = verbosity,
+            LogClientIp = logClientIp
         };
+
+    private static ImmutableHashSet<DiagnosticModel> ToSet(IEnumerable<DiagnosticModel> models) =>
+        [.. models.DistinctBy(model => model.Key)];
+
+    private static Gen<string> GenerateVerbosity() =>
+        Gen.OneOfConst("information", "verbose", "error");
+
+    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateUpdates(IEnumerable<DiagnosticModel> diagnosticModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(diagnosticModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<DiagnosticModel> GenerateUpdate(DiagnosticModel model) =>
-        from samplingPercentage in GenerateSamplingPercentage().OrConst(model.SamplingPercentage)
+        from verbosity in GenerateVerbosity()
+        from logClientIp in Gen.Bool
         select model with
         {
-            SamplingPercentage = samplingPercentage
+            Verbosity = verbosity,
+            LogClientIp = logClientIp
         };
 
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new DiagnosticDto()
-        {
-            Properties = new DiagnosticDto.DiagnosticContract
-            {
-                LoggerId = predecessors.First(node => node.Model.AssociatedResource is LoggerResource
-                                                      && node.Model.Name == LoggerName)
-                                       .ToResourceId(),
-                Sampling = new DiagnosticDto.SamplingSettings
-                {
-                    SamplingType = "fixed",
-                    Percentage = SamplingPercentage
-                }
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
-    {
-        var jsonDto = JsonNodeModule.To<DiagnosticDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
-
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<DiagnosticDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            LoggerName = overrideDto?.Properties?.LoggerId?.Split('/')?.LastOrDefault() ?? LoggerName.ToString(),
-            SamplingPercentage = overrideDto?.Properties?.Sampling?.Percentage ?? SamplingPercentage
-        };
-
-        var right = new
-        {
-            LoggerName = jsonDto?.Properties?.LoggerId?.Split('/')?.LastOrDefault(),
-            SamplingPercentage = jsonDto?.Properties?.Sampling?.Percentage
-        };
-
-        return left.LoggerName.FuzzyEquals(right.LoggerName)
-                && left.SamplingPercentage.FuzzyEquals(right.SamplingPercentage);
-    }
+    public static Gen<ImmutableHashSet<DiagnosticModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
+        GenerateSet(accumulatedNextModels);
 }

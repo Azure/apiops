@@ -1,74 +1,99 @@
 using common;
+using common.tests;
 using CsCheck;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record GroupModel : IDtoTestModel<GroupModel>
+internal sealed record GroupModel : ITestModel<GroupModel>
 {
-    public required ResourceName Name { get; init; }
-    public required Option<string> Description { get; init; }
+    public required string DisplayName { get; init; }
 
-    public static IResourceWithDto AssociatedResource { get; } = GroupResource.Instance;
+    public required string Description { get; init; }
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public required ResourceKey Key { get; init; }
+
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["displayName"] = DisplayName,
+                ["description"] = Description
+            }
+        };
+
+    public Result<Unit> ValidateDto(JsonObject dto)
     {
-        var newGenerator = from model in Generate()
-                           select (model, ModelNodeSet.Empty);
+        return from _ in validateDisplayName()
+               from __ in validateDescription()
+               select Unit.Instance;
 
-        return Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
+        Result<Unit> validateDisplayName() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from displayName in properties.GetStringProperty("displayName")
+            from unit in displayName == DisplayName
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has displayName '{displayName}' instead of '{DisplayName}'.")
+            select unit;
+
+        Result<Unit> validateDescription() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from description in properties.GetStringProperty("description")
+            from unit in description == Description
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has description '{description}' instead of '{Description}'.")
+            select unit;
     }
+
+    public static Gen<ImmutableHashSet<GroupModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
 
     private static Gen<GroupModel> Generate() =>
         from name in Generator.ResourceName
-        from description in GenerateDescription().OptionOf()
+        from displayName in CommonModule.GenerateDisplayName(name)
+        from description in CommonModule.GenerateDescription(name)
         select new GroupModel
         {
-            Name = name,
+            Key = ResourceKey.From(GroupResource.Instance, name),
+            DisplayName = displayName,
             Description = description
         };
 
-    private static Gen<string> GenerateDescription() =>
-        from lorem in Generator.Lorem
-        select lorem.Paragraph();
+    private static ImmutableHashSet<GroupModel> ToSet(IEnumerable<GroupModel> models) =>
+        [.. models.DistinctBy(model => model.Key)
+                  .DistinctBy(model => model.DisplayName)];
+
+    public static Gen<ImmutableHashSet<GroupModel>> GenerateUpdates(IEnumerable<GroupModel> groupModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(groupModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<GroupModel> GenerateUpdate(GroupModel model) =>
-        from description in GenerateDescription().OptionOf().OrConst(model.Description)
+        from displayName in CommonModule.GenerateDisplayName(model.Key.Name, model.DisplayName)
+        from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
         select model with
         {
+            DisplayName = displayName,
             Description = description
         };
 
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new GroupDto()
-        {
-            Properties = new GroupDto.GroupContract
-            {
-                DisplayName = Name.ToString(),
-                Description = Description.IfNoneNull()
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
+    public static Gen<ImmutableHashSet<GroupModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
     {
-        var jsonDto = JsonNodeModule.To<GroupDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
+        var currentModels = previousModels.OfType<GroupModel>();
 
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<GroupDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            Description = overrideDto?.Properties?.Description ?? Description
-        };
-
-        var right = new
-        {
-            Description = jsonDto?.Properties?.Description
-        };
-
-        return left.Description.FuzzyEquals(right.Description);
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
+               from added in GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
     }
 }

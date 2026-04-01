@@ -1,58 +1,88 @@
 using common;
+using common.tests;
 using CsCheck;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record ApiPolicyModel : IPolicyResourceTestModel<ApiPolicyModel>
+internal sealed record ApiPolicyModel : ITestModel<ApiPolicyModel>
 {
+    public required ResourceKey Key { get; init; }
+
     public required string Content { get; init; }
 
-    public static IPolicyResource AssociatedResource { get; } = ApiPolicyResource.Instance;
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["format"] = "rawxml",
+                ["value"] = Content
+            }
+        };
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public Result<Unit> ValidateDto(JsonObject dto)
     {
-        var predecessorsGenOption = from set in baseline.Find(ApiResource.Instance)
-                                    let apis = set.Where(node => node.Model is ApiModel apiModel && apiModel.Type is not ApiType.WebSocket)
-                                                  .ToImmutableArray()
-                                    where apis.Length > 0
-                                    select from api in Gen.OneOfConst([.. apis])
-                                           select ModelNodeSet.From([api]);
-
-        var option = from predecessorsGen in predecessorsGenOption
-                     let newGenerator = from predecessors in predecessorsGen
-                                        from model in Generate()
-                                        select (model, predecessors)
-                     select Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
-
-        return option.IfNone(() => Gen.Const(ModelNodeSet.Empty));
+        return from properties in dto.GetJsonObjectProperty("properties")
+               from value in properties.GetStringProperty("value")
+               from unit in PolicyModule.FuzzyEquals(value, Content)
+                           ? Result.Success(Unit.Instance)
+                           : Error.From($"Resource '{Key}' has policy content that doesn't match expected content.")
+               select unit;
     }
 
-    private static Gen<ApiPolicyModel> Generate() =>
-        from content in GenerateContent()
+    public static Gen<ImmutableHashSet<ApiPolicyModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from apiModels in Generator.SubSetOf([.. models.OfType<ApiModel>()])
+        from policyModels in Generator.Traverse(apiModels,
+                                                apiModel => Generate(apiModel, models))
+        select policyModels.ToImmutableHashSet();
+
+    private static Gen<ApiPolicyModel> Generate(ApiModel apiModel, IEnumerable<ITestModel> models) =>
+        from content in GenerateContent(models)
         select new ApiPolicyModel
+        {
+            Key = new ResourceKey
+            {
+                Resource = ApiPolicyResource.Instance,
+                Name = PolicyModule.ResourceName,
+                Parents = apiModel.Key.AsParentChain()
+            },
+            Content = content
+        };
+
+    private static Gen<string> GenerateContent(IEnumerable<ITestModel> models)
+    {
+        var namedValues = models.OfType<NamedValueModel>();
+        var fragments = models.OfType<PolicyFragmentModel>();
+
+        return from inboundSnippet in PolicyModule.GenerateInboundSnippet(namedValues, fragments)
+               from outboundSnippet in PolicyModule.GenerateOutboundSnippet(namedValues, fragments)
+               select $"""
+                       <policies>
+                           {inboundSnippet}
+                           <backend>
+                               <forward-request />
+                           </backend>
+                           {outboundSnippet}
+                       </policies>
+                       """;
+    }
+
+    public static Gen<ImmutableHashSet<ApiPolicyModel>> GenerateUpdates(IEnumerable<ApiPolicyModel> apiPolicyModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(apiPolicyModels,
+                                                 model => GenerateUpdate(model, allModels))
+        select updatedModels.ToImmutableHashSet();
+
+    private static Gen<ApiPolicyModel> GenerateUpdate(ApiPolicyModel model, IEnumerable<ITestModel> allModels) =>
+        from content in GenerateContent(allModels)
+        select model with
         {
             Content = content
         };
 
-    private static Gen<string> GenerateContent() =>
-        from inboundSnippet in Generator.InboundPolicySnippet
-        from outboundSnippet in Generator.OutboundPolicySnippet
-        select $"""
-                <policies>
-                    {inboundSnippet}
-                    <backend>
-                        <forward-request />
-                    </backend>
-                    {outboundSnippet}
-                    <on-error>
-                        <base />
-                    </on-error>
-                </policies>
-                """;
-
-    private static Gen<ApiPolicyModel> GenerateUpdate(ApiPolicyModel model) =>
-        from content in GenerateContent()
-        select model with { Content = content };
+    public static Gen<ImmutableHashSet<ApiPolicyModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
+        GenerateSet(accumulatedNextModels);
 }

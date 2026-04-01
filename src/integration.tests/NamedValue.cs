@@ -1,106 +1,114 @@
-﻿using common;
+using common;
+using common.tests;
 using CsCheck;
-using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record NamedValueModel : IDtoTestModel<NamedValueModel>
+internal sealed record NamedValueModel : ITestModel<NamedValueModel>
 {
-    public required ResourceName Name { get; init; }
+    public required string DisplayName { get; init; }
+
     public required string Value { get; init; }
-    public required ImmutableHashSet<string> Tags { get; init; }
-    public required bool IsSecret { get; init; }
 
-    public static IResourceWithDto AssociatedResource { get; } = NamedValueResource.Instance;
+    public required bool Secret { get; init; }
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public required ResourceKey Key { get; init; }
+
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["displayName"] = DisplayName,
+                ["value"] = Value,
+                ["secret"] = Secret
+            }
+        };
+
+    public Result<Unit> ValidateDto(JsonObject dto)
     {
-        var newGenerator = from model in Generate()
-                           select (model, ModelNodeSet.Empty);
+        return from _ in validateDisplayName()
+               from __ in validateSecret()
+               from ___ in validateValue()
+               select Unit.Instance;
 
-        return Generator.GenerateNodes<NamedValueModel>(baseline, GenerateUpdate, newGenerator);
+        Result<Unit> validateDisplayName() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from displayName in properties.GetStringProperty("displayName")
+            from unit in displayName == DisplayName
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has displayName '{displayName}' instead of '{DisplayName}'.")
+            select unit;
+
+        Result<Unit> validateSecret() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from secret in properties.GetBoolProperty("secret")
+            from unit in secret == Secret
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has secret '{secret}' instead of '{Secret}'.")
+            select unit;
+
+        Result<Unit> validateValue() =>
+            Secret
+                // Secret values are not returned by APIM, so we skip validation
+                ? Result.Success(Unit.Instance)
+                : from properties in dto.GetJsonObjectProperty("properties")
+                  from value in properties.GetStringProperty("value")
+                  from unit in value == Value
+                              ? Result.Success(Unit.Instance)
+                              : Error.From($"Resource '{Key}' has value '{value}' instead of '{Value}'.")
+                  select unit;
     }
+
+    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
 
     private static Gen<NamedValueModel> Generate() =>
         from name in Generator.ResourceName
-        from value in GenerateValue()
-        from tags in GenerateTags()
-        from isSecret in Gen.Bool
+        from displayName in CommonModule.GenerateDisplayName(name)
+        from secret in Gen.Bool
+        from value in Generator.AlphanumericWord
         select new NamedValueModel
         {
-            Name = name,
+            Key = ResourceKey.From(NamedValueResource.Instance, name),
+            DisplayName = displayName,
             Value = value,
-            Tags = tags,
-            IsSecret = isSecret
+            Secret = secret
         };
 
-    private static Gen<string> GenerateValue() =>
-        from value in Gen.String.AlphaNumeric
-        where value.Length is >= 1 and <= 4096
-        select value;
+    private static ImmutableHashSet<NamedValueModel> ToSet(IEnumerable<NamedValueModel> models) =>
+        [.. models.DistinctBy(model => model.Key)
+                  .DistinctBy(model => model.DisplayName)];
 
-    private static Gen<ImmutableHashSet<string>> GenerateTags()
-    {
-        var tagGenerator = from tag in Gen.String.AlphaNumeric
-                           where tag.Length > 0
-                           select tag[..Math.Min(tag.Length, 20)];
-
-        return tagGenerator.HashSetOf();
-    }
+    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateUpdates(IEnumerable<NamedValueModel> namedValueModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(namedValueModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<NamedValueModel> GenerateUpdate(NamedValueModel model) =>
-        from value in GenerateValue().OrConst(model.Value)
-        from tags in GenerateTags().OrConst(model.Tags)
-        from isSecret in Gen.Bool.OrConst(model.IsSecret)
+        from value in Generator.AlphanumericWord
         select model with
         {
-            Value = value,
-            Tags = tags,
-            IsSecret = isSecret
+            Value = value
         };
 
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new NamedValueDto()
-        {
-            Properties = new NamedValueDto.NamedValueContract
-            {
-                DisplayName = Name.ToString(),
-                Value = Value,
-                Tags = [.. Tags],
-                Secret = IsSecret
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
+    public static Gen<ImmutableHashSet<NamedValueModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
     {
-        var jsonDto = JsonNodeModule.To<NamedValueDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
+        var currentModels = previousModels.OfType<NamedValueModel>();
 
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<NamedValueDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            IsSecret = overrideDto?.Properties?.Secret ?? IsSecret,
-            Tags = overrideDto?.Properties?.Tags?.ToImmutableHashSet() ?? Tags,
-            Value = overrideDto?.Properties?.Secret ?? IsSecret // Skip value comparison for secrets
-                    ? string.Empty
-                    : overrideDto?.Properties?.Value ?? Value
-        };
-
-        var right = new
-        {
-            IsSecret = jsonDto?.Properties?.Secret ?? false,
-            Tags = jsonDto?.Properties?.Tags?.ToImmutableHashSet() ?? [],
-            Value = jsonDto?.Properties?.Value ?? string.Empty
-        };
-
-        return left.IsSecret.FuzzyEquals(right.IsSecret)
-               && left.Tags.FuzzyEquals(right.Tags)
-               && left.Value.FuzzyEquals(right.Value);
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
+               from added in GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
     }
 }

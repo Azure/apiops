@@ -3,7 +3,8 @@
     "version": "1.0.0",
     "name": "github",
     "dependsOn": {
-        "ghcr.io/devcontainers/features/github-cli:1": {}
+        "ghcr.io/devcontainers/features/github-cli:1": {},
+        "ghcr.io/devcontainers/features/copilot-cli:1": {}
     },
     "customizations": {
         "vscode": {
@@ -20,5 +21,12 @@
                 }
             }
         }
-    }
+    },
+    "mounts": [
+        {
+            "source": "${localEnv:HOME}${localEnv:USERPROFILE}/.copilot",
+            "target": "/home/vscode/.copilot",
+            "type": "bind"
+        }
+    ]
 }

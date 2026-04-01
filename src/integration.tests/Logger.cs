@@ -1,72 +1,111 @@
 using common;
+using common.tests;
 using CsCheck;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record LoggerModel : IDtoTestModel<LoggerModel>
+internal sealed record LoggerModel : ITestModel<LoggerModel>
 {
-    public ResourceName Name { get; } = ResourceName.From("azuremonitor").IfErrorThrow();
+    private static readonly ResourceName azureMonitorName =
+        ResourceName.From("azuremonitor").IfErrorThrow();
 
     public required string Description { get; init; }
 
-    public static IResourceWithDto AssociatedResource { get; } = LoggerResource.Instance;
+    public required bool IsBuffered { get; init; }
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public ResourceKey Key { get; init; } = new ResourceKey
     {
-        var newGenerator = from model in Generate()
-                           select (model, ModelNodeSet.Empty);
+        Resource = LoggerResource.Instance,
+        Name = azureMonitorName,
+        Parents = ParentChain.Empty
+    };
 
-        return Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["loggerType"] = "azureMonitor",
+                ["description"] = Description,
+                ["isBuffered"] = IsBuffered
+            }
+        };
+
+    public Result<Unit> ValidateDto(JsonObject dto)
+    {
+        return from _ in validateDescription()
+               from __ in validateIsBuffered()
+               select Unit.Instance;
+
+        Result<Unit> validateDescription() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from description in properties.GetStringProperty("description")
+            from unit in description == Description
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has description '{description}' instead of '{Description}'.")
+            select unit;
+
+        Result<Unit> validateIsBuffered() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from isBuffered in properties.GetBoolProperty("isBuffered")
+            from unit in isBuffered == IsBuffered
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has isBuffered '{isBuffered}' instead of '{IsBuffered}'.")
+            select unit;
     }
 
+    public static Gen<ImmutableHashSet<LoggerModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Gen.Frequency((1, EmptySetGenerator),
+                                  (5, Generate().HashSetOf(1)))
+        select ToSet(set);
+
+    private static Gen<ImmutableHashSet<LoggerModel>> EmptySetGenerator { get; } =
+        Gen.Const(ImmutableHashSet<LoggerModel>.Empty);
+
     private static Gen<LoggerModel> Generate() =>
-        from description in GenerateDescription()
+        from description in CommonModule.GenerateDescription(azureMonitorName)
+        from isBuffered in Gen.Bool
         select new LoggerModel
         {
-            Description = description
+            Description = description,
+            IsBuffered = isBuffered
         };
 
-    private static Gen<string> GenerateDescription() =>
-        from lorem in Generator.Lorem
-        select lorem.Sentence();
+    private static ImmutableHashSet<LoggerModel> ToSet(IEnumerable<LoggerModel> models) =>
+        [.. models.DistinctBy(model => model.Key)];
+
+    public static Gen<ImmutableHashSet<LoggerModel>> GenerateUpdates(IEnumerable<LoggerModel> loggerModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(loggerModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<LoggerModel> GenerateUpdate(LoggerModel model) =>
-        from description in GenerateDescription().OrConst(model.Description)
+        from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
+        from isBuffered in Gen.Bool
         select model with
         {
-            Description = description
+            Description = description,
+            IsBuffered = isBuffered
         };
 
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new LoggerDto()
-        {
-            Properties = new LoggerDto.LoggerContract
-            {
-                LoggerType = "azuremonitor",
-                Description = Description
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
+    public static Gen<ImmutableHashSet<LoggerModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
     {
-        var jsonDto = JsonNodeModule.To<LoggerDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
+        var currentModels = previousModels.OfType<LoggerModel>();
 
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<LoggerDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            Description = overrideDto?.Properties?.Description ?? Description
-        };
-
-        var right = new
-        {
-            Description = jsonDto?.Properties?.Description
-        };
-
-        return left.Description.FuzzyEquals(right.Description);
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
+               from added in kept.Any()
+                                ? EmptySetGenerator
+                                : GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
     }
 }

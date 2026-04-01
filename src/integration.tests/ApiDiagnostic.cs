@@ -1,88 +1,106 @@
 using common;
+using common.tests;
 using CsCheck;
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record ApiDiagnosticModel : IResourceWithReferenceTestModel<ApiDiagnosticModel>
+internal sealed record ApiDiagnosticModel : ITestModel<ApiDiagnosticModel>
 {
-    public required ResourceName Name { get; init; }
-    public required ResourceName LoggerName { get; init; }
-    public required float SamplingPercentage { get; init; }
+    public required ResourceKey Key { get; init; }
 
-    public static IResourceWithReference AssociatedResource { get; } = ApiDiagnosticResource.Instance;
+    public required ResourceKey LoggerKey { get; init; }
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
-    {
-        var option = from predecessorsGen in Generator.GeneratePredecessors<ApiDiagnosticModel>(baseline)
-                     let newGenerator = from predecessors in predecessorsGen
-                                        let loggerName = predecessors.PickNameOrThrow<LoggerResource>()
-                                        from model in Generate(loggerName)
-                                        select (model, predecessors)
-                     select Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
+    public required string Verbosity { get; init; }
 
-        return option.IfNone(() => Gen.Const(ModelNodeSet.Empty));
-    }
+    public required bool LogClientIp { get; init; }
 
-    private static Gen<ApiDiagnosticModel> GenerateUpdate(ApiDiagnosticModel model) =>
-        from samplingPercentage in GenerateSamplingPercentage().OrConst(model.SamplingPercentage)
-        select model with
+    public JsonObject ToDto() =>
+        new()
         {
-            SamplingPercentage = samplingPercentage
+            ["properties"] = new JsonObject
+            {
+                ["loggerId"] = $"/{LoggerKey}",
+                ["verbosity"] = Verbosity,
+                ["logClientIp"] = LogClientIp
+            }
         };
 
-    private static Gen<float> GenerateSamplingPercentage() =>
-        from percentage in Gen.Int[0, 100]
-        select (float)percentage;
+    public Result<Unit> ValidateDto(JsonObject dto)
+    {
+        return from _ in validateVerbosity()
+               from __ in validateLogClientIp()
+               select Unit.Instance;
 
-    private static Gen<ApiDiagnosticModel> Generate(ResourceName loggerName) =>
-        from samplingPercentage in GenerateSamplingPercentage()
+        Result<Unit> validateVerbosity() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from verbosity in properties.GetStringProperty("verbosity")
+            from unit in verbosity.Equals(Verbosity, StringComparison.OrdinalIgnoreCase)
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has verbosity '{verbosity}' instead of '{Verbosity}'.")
+            select unit;
+
+        Result<Unit> validateLogClientIp() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from logClientIp in properties.GetBoolProperty("logClientIp")
+            from unit in logClientIp == LogClientIp
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has logClientIp '{logClientIp}' instead of '{LogClientIp}'.")
+            select unit;
+    }
+
+    public static Gen<ImmutableHashSet<ApiDiagnosticModel>> GenerateSet(IEnumerable<ITestModel> models)
+    {
+        var modelArray = models.ToImmutableArray();
+        var apis = modelArray.OfType<ApiModel>();
+        var loggers = modelArray.OfType<LoggerModel>();
+
+        var apiLoggers = from api in apis
+                         from logger in loggers
+                         select (api, logger);
+
+        return from apiLoggersSubSet in Generator.SubSetOf([.. apiLoggers])
+               from diagnostics in Generator.Traverse(apiLoggersSubSet,
+                                                      tuple => Generate(tuple.api, tuple.logger))
+               select diagnostics.ToImmutableHashSet();
+    }
+
+    private static Gen<ApiDiagnosticModel> Generate(ApiModel apiModel, LoggerModel loggerModel) =>
+        from verbosity in GenerateVerbosity()
+        from logClientIp in Gen.Bool
         select new ApiDiagnosticModel
         {
-            Name = loggerName,
-            LoggerName = loggerName,
-            SamplingPercentage = samplingPercentage
-        };
-
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new ApiDiagnosticDto()
-        {
-            Properties = new ApiDiagnosticDto.DiagnosticContract
+            Key = new ResourceKey
             {
-                LoggerId = predecessors.First(node => node.Model.AssociatedResource is LoggerResource
-                                                      && node.Model.Name == LoggerName)
-                                       .ToResourceId(),
-                Sampling = new ApiDiagnosticDto.SamplingSettings
-                {
-                    SamplingType = "fixed",
-                    Percentage = SamplingPercentage
-                }
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
-    {
-        var jsonDto = JsonNodeModule.To<ApiDiagnosticDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
-
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<ApiDiagnosticDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            LoggerName = overrideDto?.Properties?.LoggerId?.Split('/')?.LastOrDefault() ?? LoggerName.ToString(),
-            SamplingPercentage = overrideDto?.Properties?.Sampling?.Percentage ?? SamplingPercentage
+                Resource = ApiDiagnosticResource.Instance,
+                Name = loggerModel.Key.Name,
+                Parents = apiModel.Key.AsParentChain()
+            },
+            LoggerKey = loggerModel.Key,
+            Verbosity = verbosity,
+            LogClientIp = logClientIp
         };
 
-        var right = new
+    private static Gen<string> GenerateVerbosity() =>
+        Gen.OneOfConst("information", "verbose", "error");
+
+    public static Gen<ImmutableHashSet<ApiDiagnosticModel>> GenerateUpdates(IEnumerable<ApiDiagnosticModel> apiDiagnosticModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(apiDiagnosticModels, GenerateUpdate)
+        select updatedModels.ToImmutableHashSet();
+
+    private static Gen<ApiDiagnosticModel> GenerateUpdate(ApiDiagnosticModel model) =>
+        from verbosity in GenerateVerbosity()
+        from logClientIp in Gen.Bool
+        select model with
         {
-            LoggerName = jsonDto?.Properties?.LoggerId?.Split('/')?.LastOrDefault(),
-            SamplingPercentage = jsonDto?.Properties?.Sampling?.Percentage
+            Verbosity = verbosity,
+            LogClientIp = logClientIp
         };
 
-        return left.LoggerName.FuzzyEquals(right.LoggerName)
-                && left.SamplingPercentage.FuzzyEquals(right.SamplingPercentage);
-    }
+    public static Gen<ImmutableHashSet<ApiDiagnosticModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
+        GenerateSet(accumulatedNextModels);
 }

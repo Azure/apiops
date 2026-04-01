@@ -7,7 +7,7 @@
             "version": "10.0"
         }
     },
-    "postStartCommand": "dotnet tool install --global dotnet-outdated-tool",
+    "postStartCommand": "dotnet tool update --global dotnet-outdated-tool || dotnet tool install --global dotnet-outdated-tool",
     "customizations": {
         "vscode": {
             "extensions": [

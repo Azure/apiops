@@ -1,43 +1,82 @@
 using common;
+using common.tests;
 using CsCheck;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record TagModel : IDtoTestModel<TagModel>
+internal sealed record TagModel : ITestModel<TagModel>
 {
-    public required ResourceName Name { get; init; }
+    public required string DisplayName { get; init; }
 
-    public static IResourceWithDto AssociatedResource { get; } = TagResource.Instance;
+    public required ResourceKey Key { get; init; }
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["displayName"] = DisplayName,
+            }
+        };
+
+    public Result<Unit> ValidateDto(JsonObject dto)
     {
-        var newGenerator = from model in Generate()
-                           select (model, ModelNodeSet.Empty);
+        return validateDisplayName();
 
-        return Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
+        Result<Unit> validateDisplayName() =>
+         from properties in dto.GetJsonObjectProperty("properties")
+         from displayName in properties.GetStringProperty("displayName")
+         from unit in displayName == DisplayName
+                     ? Result.Success(Unit.Instance)
+                     : Error.From($"Resource '{Key}' has displayName '{displayName}' instead of '{DisplayName}'.")
+         select unit;
     }
+
+    public static Gen<ImmutableHashSet<TagModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
 
     private static Gen<TagModel> Generate() =>
         from name in Generator.ResourceName
+        from displayName in CommonModule.GenerateDisplayName(name)
         select new TagModel
         {
-            Name = name
+            Key = ResourceKey.From(TagResource.Instance, name),
+            DisplayName = displayName
         };
 
+    private static ImmutableHashSet<TagModel> ToSet(IEnumerable<TagModel> models) =>
+        [.. models.DistinctBy(model => model.Key)
+                  .DistinctBy(model => model.DisplayName)];
+
+    public static Gen<ImmutableHashSet<TagModel>> GenerateUpdates(IEnumerable<TagModel> tagModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(tagModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
+
     private static Gen<TagModel> GenerateUpdate(TagModel model) =>
-        Gen.Const(model);
-
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new TagDto()
+        from displayName in CommonModule.GenerateDisplayName(model.Key.Name, model.DisplayName)
+        select model with
         {
-            Properties = new TagDto.TagContract
-            {
-                DisplayName = Name.ToString()
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
+            DisplayName = displayName
+        };
 
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson) =>
-        true;
+    public static Gen<ImmutableHashSet<TagModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
+    {
+        var currentModels = previousModels.OfType<TagModel>();
+
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
+               from added in GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
+    }
 }

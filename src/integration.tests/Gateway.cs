@@ -1,116 +1,91 @@
-﻿using common;
+using common;
+using common.tests;
 using CsCheck;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record GatewayModel : IDtoTestModel<GatewayModel>
+internal sealed record GatewayModel : ITestModel<GatewayModel>
 {
-    public required ResourceName Name { get; init; }
+    public required string Description { get; init; }
 
-    public Option<string> Description { get; init; } = Option.None;
-    public required string LocationName { get; init; }
-    public Option<string> City { get; init; } = Option.None;
-    public Option<string> Country { get; init; } = Option.None;
+    public required ResourceKey Key { get; init; }
 
-    public static IResourceWithDto AssociatedResource { get; } = GatewayResource.Instance;
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["description"] = Description,
+                ["locationData"] = new JsonObject
+                {
+                    ["name"] = "test"
+                }
+            }
+        };
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public Result<Unit> ValidateDto(JsonObject dto)
     {
-        var newGenerator = from model in Generate()
-                           select (model, ModelNodeSet.Empty);
+        return validateDescription();
 
-        return Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
+        Result<Unit> validateDescription() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from description in properties.GetStringProperty("description")
+            from unit in description == Description
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has description '{description}' instead of '{Description}'.")
+            select unit;
     }
+
+    private static Gen<ImmutableHashSet<GatewayModel>> EmptySetGenerator { get; } =
+        Gen.Const(ImmutableHashSet<GatewayModel>.Empty);
+
+    // Creating gateways currently fails on the Developer SKU.
+    // APIM gives an error message saying the SKU limit has been reached and points to https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/azure-subscription-service-limits#limits---api-management-classic-tiers.
+    // Revisit after we have clarity on gateway SKU limits
+    public static Gen<ImmutableHashSet<GatewayModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0)
+        select ToSet(set);
 
     private static Gen<GatewayModel> Generate() =>
         from name in Generator.ResourceName
-        from locationName in GenerateLocationName()
-        from description in GenerateDescription().OptionOf()
-        from city in GenerateCity().OptionOf()
-        from country in GenerateCountry().OptionOf()
+        from description in CommonModule.GenerateDescription(name)
         select new GatewayModel
         {
-            Name = name,
-            LocationName = locationName,
-            Description = description,
-            City = city,
-            Country = country
+            Key = ResourceKey.From(GatewayResource.Instance, name),
+            Description = description
         };
 
-    private static Gen<string> GenerateLocationName() =>
-        from lorem in Generator.Lorem
-        select lorem.Word();
+    private static ImmutableHashSet<GatewayModel> ToSet(IEnumerable<GatewayModel> models) =>
+        [.. models.DistinctBy(model => model.Key)];
 
-    private static Gen<string> GenerateDescription() =>
-        from lorem in Generator.Lorem
-        select lorem.Paragraph();
-
-    private static Gen<string> GenerateCity() =>
-        from address in Generator.Address
-        select address.City();
-
-    private static Gen<string> GenerateCountry() =>
-        from address in Generator.Address
-        select address.Country();
+    public static Gen<ImmutableHashSet<GatewayModel>> GenerateUpdates(IEnumerable<GatewayModel> gatewayModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(gatewayModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<GatewayModel> GenerateUpdate(GatewayModel model) =>
-        from locationName in GenerateLocationName().OrConst(model.LocationName)
-        from description in GenerateDescription().OptionOf().OrConst(model.Description)
-        from city in GenerateCity().OptionOf().OrConst(model.City)
-        from country in GenerateCountry().OptionOf().OrConst(model.Country)
+        from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
         select model with
         {
-            LocationName = locationName,
-            Description = description,
-            City = city,
-            Country = country
+            Description = description
         };
 
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new GatewayDto()
-        {
-            Properties = new GatewayDto.GatewayContract
-            {
-                Description = Description.IfNoneNull(),
-                LocationData = new GatewayDto.ResourceLocationDataContract
-                {
-                    Name = LocationName,
-                    City = City.IfNoneNull(),
-                    CountryOrRegion = Country.IfNoneNull()
-                }
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
+    public static Gen<ImmutableHashSet<GatewayModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
     {
-        var jsonDto = JsonNodeModule.To<GatewayDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
+        var currentModels = previousModels.OfType<GatewayModel>();
 
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<GatewayDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            Description = overrideDto?.Properties?.Description ?? Description,
-            LocationName = overrideDto?.Properties?.LocationData?.Name ?? LocationName,
-            City = overrideDto?.Properties?.LocationData?.City ?? City,
-            Country = overrideDto?.Properties?.LocationData?.CountryOrRegion ?? Country
-        };
-
-        var right = new
-        {
-            Description = jsonDto?.Properties?.Description,
-            LocationName = jsonDto?.Properties?.LocationData?.Name,
-            City = jsonDto?.Properties?.LocationData?.City,
-            Country = jsonDto?.Properties?.LocationData?.CountryOrRegion
-        };
-
-        return left.Description.FuzzyEquals(right.Description)
-               && left.LocationName.FuzzyEquals(right.LocationName)
-               && left.City.FuzzyEquals(right.City)
-               && left.Country.FuzzyEquals(right.Country);
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
+               from added in GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
     }
 }

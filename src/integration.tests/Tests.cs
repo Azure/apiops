@@ -1,246 +1,180 @@
 using common;
 using CsCheck;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace integration.tests;
 
-internal delegate ValueTask RunIntegrationTests(CancellationToken cancellationToken);
+internal delegate ValueTask RunTests(CancellationToken cancellationToken);
 
-internal static class IntegrationTestsModule
+internal static class TestsModule
 {
-    public static void ConfigureRunIntegrationTests(IHostApplicationBuilder builder)
+    public static void ConfigureRunTests(IHostApplicationBuilder builder)
     {
-        ServiceModule.ConfigureEmptyService(builder);
-        ServiceModule.ConfigurePopulateService(builder);
-        ResourceGraphModule.ConfigureResourceGraph(builder);
+        TestStateModule.ConfigureGenerateTestState(builder);
+        TestStateModule.ConfigureGenerateUpdatedSubsetOfTestState(builder);
+        TestStateModule.ConfigureGenerateNextTestState(builder);
+        ApimModule.ConfigureWipeApim(builder);
+        ApimModule.ConfigurePopulateApim(builder);
         ExtractorModule.ConfigureRunExtractor(builder);
         ExtractorModule.ConfigureValidateExtractor(builder);
         PublisherModule.ConfigureRunPublisher(builder);
-        PublisherModule.ConfigureValidatePublisherWithoutCommit(builder);
-        PublisherModule.ConfigureValidatePublisherWithCommit(builder);
-        FileSystemModule.ConfigureWriteGitCommits(builder);
-        ManagementServiceModule.ConfigureServiceDirectory(builder);
+        PublisherModule.ConfigureValidatePublisher(builder);
+        PublisherModule.ConfigureWriteGitCommit(builder);
+        PublisherModule.ConfigureValidatePublisherStateTransition(builder);
 
-        builder.TryAddSingleton(ResolveRunIntegrationTests);
+        builder.TryAddSingleton(ResolveRunTests);
     }
 
-    private static RunIntegrationTests ResolveRunIntegrationTests(IServiceProvider provider)
+    private static RunTests ResolveRunTests(IServiceProvider provider)
     {
-        var emptyService = provider.GetRequiredService<EmptyService>();
-        var populateService = provider.GetRequiredService<PopulateService>();
-        var graph = provider.GetRequiredService<ResourceGraph>();
+        var wipeApim = provider.GetRequiredService<WipeApim>();
+        var populateApim = provider.GetRequiredService<PopulateApim>();
         var runExtractor = provider.GetRequiredService<RunExtractor>();
         var validateExtractor = provider.GetRequiredService<ValidateExtractor>();
         var runPublisher = provider.GetRequiredService<RunPublisher>();
-        var validatePublisherWithoutCommit = provider.GetRequiredService<ValidatePublisherWithoutCommit>();
-        var validatePublisherWithCommit = provider.GetRequiredService<ValidatePublisherWithCommit>();
-        var writeGitCommits = provider.GetRequiredService<WriteGitCommits>();
-        var serviceDirectory = provider.GetRequiredService<ServiceDirectory>();
-
+        var validatePublisher = provider.GetRequiredService<ValidatePublisher>();
+        var writeGitCommit = provider.GetRequiredService<WriteGitCommit>();
+        var validateStateTransition = provider.GetRequiredService<ValidatePublisherStateTransition>();
+        var generateTestState = provider.GetRequiredService<GenerateTestState>();
+        var generateUpdatedSubsetOfTestState = provider.GetRequiredService<GenerateUpdatedSubsetOfTestState>();
+        var generateNextTestState = provider.GetRequiredService<GenerateNextTestState>();
+        var configuration = provider.GetRequiredService<IConfiguration>();
         var activitySource = provider.GetRequiredService<ActivitySource>();
-        var logger = provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger>();
 
         return async cancellationToken =>
         {
-            using var activity = activitySource.StartActivity("run.integration.tests");
+            using var activity = activitySource.StartActivity("run.tests");
 
-            //var seedOption = Option.Some("000dPf54ST01"); // Uncomment and update to replay a specific seed
-            var seedOption = Option<string>.None();
+            var gen = from testState in generateTestState()
+                      from serviceDirectory in generateServiceDirectory()
+                      from extractorFilter in generateExtractorFilter(testState)
+                      from publisherOverride in generatePublisherOverride(testState)
+                      from nextState in generateNextTestState(testState)
+                      select (testState, serviceDirectory, extractorFilter, publisherOverride, nextState);
 
-            var gen = TestParameters.Generate(graph);
-            await gen.SampleAsync(async parameters =>
+            var seed = configuration.GetValue("SEED")
+                                    .IfNoneNull();
+
+            await gen.SampleAsync(async tuple =>
             {
-                logger.LogInformation("{Parameters}", parameters.Serialize().ToJsonString());
+                var (testState, serviceDirectory, extractorFilter, publisherOverride, nextState) = tuple;
 
-                await cleanUp(parameters, cancellationToken);
+                // Test filtered extraction                
+                await wipeApim(cancellationToken);
+                await populateApim(testState, cancellationToken);
+                await runExtractor(serviceDirectory, extractorFilter, cancellationToken);
+                await validateExtractor(testState, serviceDirectory, extractorFilter, cancellationToken);
+                cleanupDirectory(serviceDirectory);
 
-                logger.LogInformation("Testing extractor...");
-                await testExtractor(parameters, cancellationToken);
+                // Test unfiltered extraction
+                await runExtractor(serviceDirectory, filterOption: Option.None, cancellationToken);
+                await validateExtractor(testState, serviceDirectory, filterOption: Option.None, cancellationToken);
 
-                logger.LogInformation("Testing publisher with extracted artifacts...");
-                await testPublisherWithExtractedArtifacts(parameters, cancellationToken);
+                // Test publishing extracted artifacts without overrides
+                await wipeApim(cancellationToken);
+                await runPublisher(serviceDirectory, overrideOption: Option.None, commitIdOption: Option.None, cancellationToken);
+                await validatePublisher(testState, serviceDirectory, overrideOption: Option.None, cancellationToken);
 
-                logger.LogInformation("Testing publisher with commits...");
-                await testPublisherWithCommits(parameters, cancellationToken);
+                // Test publishing with overrides
+                await runPublisher(serviceDirectory, publisherOverride, commitIdOption: Option.None, cancellationToken);
+                await validatePublisher(testState, serviceDirectory, publisherOverride, cancellationToken);
 
-                logger.LogInformation("Cleaning up...");
-                await cleanUp(parameters, cancellationToken);
-            }, iter: 1, threads: 1, seed: seedOption.IfNoneNull());
+                // Test commit-based publish
+                await wipeApim(cancellationToken);
+                await populateApim(testState, cancellationToken);
+                var commitId = await setupGitCommit(serviceDirectory, testState, nextState, cancellationToken);
+                await runPublisher(serviceDirectory, overrideOption: Option.None, commitId, cancellationToken);
+                await validateStateTransition(testState, nextState, cancellationToken);
+
+                // Final cleanup
+                await wipeApim(cancellationToken);
+                cleanupDirectory(serviceDirectory);
+            }, seed: seed, iter: 1, threads: 1);
+
+            return;
+
+            static Gen<ServiceDirectory> generateServiceDirectory() =>
+                from folderName in Gen.String.AlphaNumeric
+                where folderName.Length > 8
+                where folderName.Length < 15
+                let path = Path.Combine(Path.GetTempPath(), "apiops-integration-tests", folderName)
+                select ServiceDirectory.FromPath(path);
+
+            static Gen<ExtractorFilter> generateExtractorFilter(TestState testState) =>
+                from extractorFilter in ExtractorFilter.Generate(testState.Models)
+                let filterResourceNames = from parentDictionary in extractorFilter.Resources
+                                          from resourceDictionary in parentDictionary.Value
+                                          from resourceNames in resourceDictionary.Value
+                                          select resourceNames
+                where filterResourceNames.Any()
+                select extractorFilter;
+
+            Gen<PublisherOverride> generatePublisherOverride(TestState testState) =>
+                from updatedSubset in generateUpdatedSubsetOfTestState(testState)
+                let modelDictionary = updatedSubset.Models.ToImmutableDictionary(model => model.Key)
+                select new PublisherOverride
+                {
+                    Updates = modelDictionary
+                };
         };
 
-        async ValueTask testExtractor(TestParameters parameters, CancellationToken cancellationToken)
+        static void cleanupDirectory(ServiceDirectory directory) =>
+            directory.ToDirectoryInfo()
+                     .DeleteIfExists();
+
+        async ValueTask<CommitId> setupGitCommit(ServiceDirectory serviceDirectory, TestState initialState, TestState nextState, CancellationToken cancellationToken)
         {
-            await cleanUp(parameters, cancellationToken);
+            cleanupDirectory(serviceDirectory);
 
-            var extractorModels = parameters.ExtractorParameters.Models;
-            await populateService(extractorModels, cancellationToken);
+            // Write initial commit
+            await writeGitCommit(serviceDirectory, initialState, cancellationToken);
 
-            var extractorSubset = parameters.ExtractorParameters.SubsetToExtract;
-            var extractorOptions = new ExtractorOptions
-            {
-                ServiceDirectory = serviceDirectory,
-                Models = extractorSubset
-            };
-            await runExtractor(extractorOptions, cancellationToken);
+            // Write next commit and capture its ID
+            var targetCommitId = await writeGitCommit(serviceDirectory, nextState, cancellationToken);
 
-            await validateExtractor(extractorModels, extractorSubset, serviceDirectory, cancellationToken);
-        }
+            // Write initial commit again. This ensures that the publisher works even if the commit ID is not the latest one.
+            await writeGitCommit(serviceDirectory, initialState, cancellationToken);
 
-        async ValueTask cleanUp(TestParameters parameters, CancellationToken cancellationToken)
-        {
-            serviceDirectory.ToDirectoryInfo().DeleteIfExists();
-            await emptyService(cancellationToken);
-        }
-
-        async ValueTask testPublisherWithExtractedArtifacts(TestParameters parameters, CancellationToken cancellationToken)
-        {
-            await emptyService(cancellationToken);
-
-            var extractorOverrides = parameters.PublisherParameters.ExtractorOverrides;
-            var publisherOptions = new PublisherOptions
-            {
-                ServiceDirectory = serviceDirectory,
-                JsonOverrides = extractorOverrides
-            };
-            await runPublisher(publisherOptions, cancellationToken);
-
-            await validatePublisherWithoutCommit(parameters.PublisherParameters.ExtractorModels, extractorOverrides, cancellationToken);
-        }
-
-        async ValueTask testPublisherWithCommits(TestParameters parameters, CancellationToken cancellationToken)
-        {
-            await cleanUp(parameters, cancellationToken);
-
-            // Write Git commits
-            var publisherParameters = parameters.PublisherParameters;
-            var commitIds = await writeGitCommits(publisherParameters.ModelChain, serviceDirectory, cancellationToken);
-
-            var testCount = publisherParameters.TestCount;
-            var tests = from index in Enumerable.Range(0, testCount)
-                        select new
-                        {
-                            CommitId = commitIds[index],
-                            Models = publisherParameters.ModelChain[index],
-                            Overrides = index == testCount - 1
-                                            ? publisherParameters.LastTestOverrides
-                                            : Option<JsonObject>.None(),
-                            PreviousModels = index == 0
-                                                ? Option<ResourceModels>.None()
-                                                : publisherParameters.ModelChain[index - 1]
-                        };
-
-            await tests.IterTask(async test => await testPublisherWithCommit(serviceDirectory, test.CommitId, test.Overrides, test.Models, test.PreviousModels, cancellationToken), cancellationToken);
-        }
-
-        async ValueTask testPublisherWithCommit(ServiceDirectory serviceDirectory, CommitId commitId, Option<JsonObject> testOverrides, ResourceModels testModels, Option<ResourceModels> previousModels, CancellationToken cancellationToken)
-        {
-            var publisherOptions = new PublisherOptions
-            {
-                ServiceDirectory = serviceDirectory,
-                CommitId = commitId,
-                JsonOverrides = testOverrides
-            };
-
-            await runPublisher(publisherOptions, cancellationToken);
-            await validatePublisherWithCommit(testModels, testOverrides, previousModels, cancellationToken);
+            return targetCommitId;
         }
     }
-}
 
-file sealed record ExtractorParameters
-{
-    public required ResourceModels Models { get; init; }
-    public Option<ResourceModels> SubsetToExtract { get; init; } = Option.None;
-
-    public static Gen<ExtractorParameters> Generate(ResourceGraph graph) =>
-        from models in Generator.GenerateResourceModels(graph)
-        from subset in Generator.GenerateSubSetOf(models).OptionOf()
-        select new ExtractorParameters
+    public static ImmutableDictionary<IResource, Type> ResourceModels { get; } =
+        new Dictionary<IResource, Type>
         {
-            Models = models,
-            SubsetToExtract = subset
-        };
+            [ApiResource.Instance] = typeof(ApiModel),
+            [ApiDiagnosticResource.Instance] = typeof(ApiDiagnosticModel),
+            [ApiPolicyResource.Instance] = typeof(ApiPolicyModel),
+            [ApiOperationPolicyResource.Instance] = typeof(ApiOperationPolicyModel),
+            [SubscriptionResource.Instance] = typeof(SubscriptionModel),
+            [TagResource.Instance] = typeof(TagModel),
+            [NamedValueResource.Instance] = typeof(NamedValueModel),
+            [LoggerResource.Instance] = typeof(LoggerModel),
+            [DiagnosticResource.Instance] = typeof(DiagnosticModel),
+            [ProductResource.Instance] = typeof(ProductModel),
+            [ProductApiResource.Instance] = typeof(ProductApiModel),
+            [TagApiResource.Instance] = typeof(TagApiModel),
+            [TagProductResource.Instance] = typeof(TagProductModel),
+            [ProductPolicyResource.Instance] = typeof(ProductPolicyModel),
+            [GroupResource.Instance] = typeof(GroupModel),
+            [ProductGroupResource.Instance] = typeof(ProductGroupModel),
+            [VersionSetResource.Instance] = typeof(VersionSetModel),
+            [BackendResource.Instance] = typeof(BackendModel),
+            [GatewayResource.Instance] = typeof(GatewayModel),
+            [ServicePolicyResource.Instance] = typeof(ServicePolicyModel),
+            [PolicyFragmentResource.Instance] = typeof(PolicyFragmentModel)
+        }.ToImmutableDictionary();
 
-    public JsonObject Serialize() =>
-        new()
-        {
-            ["models"] = Models.Serialize(),
-            ["subsetToExtract"] = SubsetToExtract.Map(models => models.Serialize())
-                                                 .IfNoneNull()
-        };
-}
-
-file sealed record PublisherParameters
-{
-    public required ResourceModels ExtractorModels { get; init; }
-    public Option<JsonObject> ExtractorOverrides { get; init; } = Option.None;
-    public required int TestCount { get; init; }
-    public required ImmutableArray<ResourceModels> ModelChain { get; init; }
-    public required Option<JsonObject> LastTestOverrides { get; init; }
-
-    public static Gen<PublisherParameters> Generate(ResourceModels extractorModels, ResourceGraph graph) =>
-        from extractorOverrides in Generator.GeneratePublisherOverrides(extractorModels, graph).OptionOf()
-        let testCount = 2
-        from chainLength in Gen.Int[testCount, 10]
-        from chain in Enumerable.Range(0, chainLength - 1)
-                                .Aggregate(from models in Generator.GenerateResourceModels(graph)
-                                           select ImmutableArray.Create(models),
-                                           (previousGen, _) => from previous in previousGen
-                                                               let last = previous.Last()
-                                                               from updatedModel in Generator.GenerateUpdatedResourceModels(last, graph)
-                                                               select previous.Add(updatedModel))
-        from lastTestOverrides in Generator.GeneratePublisherOverrides(chain[testCount - 1], graph).OptionOf()
-        select new PublisherParameters
-        {
-            ExtractorModels = extractorModels,
-            ExtractorOverrides = extractorOverrides,
-            TestCount = testCount,
-            ModelChain = chain,
-            LastTestOverrides = lastTestOverrides
-        };
-
-    public JsonObject Serialize() =>
-        new()
-        {
-            ["extractorOverrides"] = ExtractorOverrides.IfNoneNull(),
-            ["firstCommitModels"] = ModelChain[0].Serialize(),
-            ["secondCommitModels"] = ModelChain[1].Serialize(),
-            ["lastTestOverrides"] = LastTestOverrides.IfNoneNull()
-        };
-}
-
-file sealed record TestParameters
-{
-    //public required ServiceDirectory ServiceDirectory { get; init; }
-    public required ExtractorParameters ExtractorParameters { get; init; }
-    public required PublisherParameters PublisherParameters { get; init; }
-
-    public static Gen<TestParameters> Generate(ResourceGraph graph) =>
-        //from serviceDirectory in Generator.ServiceDirectory
-        from extractorParameters in ExtractorParameters.Generate(graph)
-        let publisherExtractorParameters = extractorParameters.SubsetToExtract.IfNone(() => extractorParameters.Models)
-        from publisherParameters in PublisherParameters.Generate(publisherExtractorParameters, graph)
-        select new TestParameters
-        {
-            //ServiceDirectory = serviceDirectory,
-            ExtractorParameters = extractorParameters,
-            PublisherParameters = publisherParameters
-        };
-
-    public JsonObject Serialize() =>
-        new JsonObject
-        {
-            //["serviceDirectory"] = ServiceDirectory.ToDirectoryInfo().FullName,
-            ["extractorParameters"] = ExtractorParameters.Serialize(),
-            ["publisherParameters"] = PublisherParameters.Serialize()
-        };
+    public static ImmutableHashSet<IResource> Resources { get; } =
+        [.. ResourceModels.Keys];
 }

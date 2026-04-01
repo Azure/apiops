@@ -1,49 +1,54 @@
 using common;
+using common.tests;
 using CsCheck;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
+using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record TagApiModel : ILinkResourceTestModel<TagApiModel>
+internal sealed record TagApiModel : ITestModel<TagApiModel>
 {
-    public required ResourceName PrimaryResourceName { get; init; }
-    public required ResourceName SecondaryResourceName { get; init; }
+    public required ResourceKey Key { get; init; }
 
-    public static ILinkResource AssociatedResource { get; } = TagApiResource.Instance;
+    public required ResourceKey ApiKey { get; init; }
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public JsonObject ToDto() =>
+        new JsonObject();
+
+    public Result<Unit> ValidateDto(JsonObject dto) =>
+        Unit.Instance;
+
+    public static Gen<ImmutableHashSet<TagApiModel>> GenerateSet(IEnumerable<ITestModel> models)
     {
-        var option = from predecessorsGen in Generator.GeneratePredecessors<TagApiModel>(baseline)
-                     let newGenerator = from predecessors in predecessorsGen
-                                        let tagName = predecessors.PickNameOrThrow<TagResource>()
-                                        let apiName = predecessors.PickNameOrThrow<ApiResource>()
-                                        let model = new TagApiModel
-                                        {
-                                            PrimaryResourceName = tagName,
-                                            SecondaryResourceName = apiName
-                                        }
-                                        select (model, predecessors)
-                     select Generator.GenerateNodes(baseline, Gen.Const, newGenerator)
-                                     .Where(setIsValid);
+        var modelsArray = models.ToImmutableArray();
+        var tags = modelsArray.OfType<TagModel>();
+        var currentRevisionApis = modelsArray.OfType<ApiModel>()
+                                             .Where(api => api.Key.Name == api.RootName);
 
-        return option.IfNone(() => Gen.Const(ModelNodeSet.Empty));
+        var tagApis = from tag in tags
+                      from api in currentRevisionApis
+                      select (tag, api);
 
-        // APIs can only be linked to a single tag
-        bool setIsValid(ModelNodeSet set)
-        {
-            var names = new HashSet<ResourceName>();
-
-            foreach (var node in set)
-            {
-                if (node.Model is TagApiModel model
-                    && names.Add(model.SecondaryResourceName) is false)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
+        return from tagApiSubSet in Generator.SubSetOf([.. tagApis])
+               let tagApiModels = tagApiSubSet.Select(tuple => new TagApiModel
+               {
+                   Key = new ResourceKey
+                   {
+                       Resource = TagApiResource.Instance,
+                       Name = tuple.api.Key.Name,
+                       Parents = tuple.tag.Key.AsParentChain()
+                   },
+                   ApiKey = tuple.api.Key
+               })
+               select tagApiModels.ToImmutableHashSet();
     }
+
+    public static Gen<ImmutableHashSet<TagApiModel>> GenerateUpdates(IEnumerable<TagApiModel> models, IEnumerable<ITestModel> allModels) =>
+        // Composite resources have nothing to update.
+        Gen.Const(ImmutableHashSet<TagApiModel>.Empty);
+
+    public static Gen<ImmutableHashSet<TagApiModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels) =>
+        GenerateSet(accumulatedNextModels);
 }

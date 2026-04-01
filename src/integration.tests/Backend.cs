@@ -1,101 +1,99 @@
 using common;
+using common.tests;
 using CsCheck;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record BackendModel : IDtoTestModel<BackendModel>
+internal sealed record BackendModel : ITestModel<BackendModel>
 {
-    public required ResourceName Name { get; init; }
+    public required string Description { get; init; }
+
     public required string Url { get; init; }
 
-    public Option<string> Description { get; init; } = Option.None;
-    public Option<string> Title { get; init; } = Option.None;
+    public required ResourceKey Key { get; init; }
 
-    public static IResourceWithDto AssociatedResource { get; } = BackendResource.Instance;
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["description"] = Description,
+                ["url"] = Url,
+                ["protocol"] = "http"
+            }
+        };
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public Result<Unit> ValidateDto(JsonObject dto)
     {
-        var newGenerator = from model in Generate()
-                           select (model, ModelNodeSet.Empty);
+        return from _ in validateDescription()
+               from __ in validateUrl()
+               select Unit.Instance;
 
-        return Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
+        Result<Unit> validateDescription() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from description in properties.GetStringProperty("description")
+            from unit in description == Description
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has description '{description}' instead of '{Description}'.")
+            select unit;
+
+        Result<Unit> validateUrl() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from url in properties.GetStringProperty("url")
+            from unit in url == Url
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has url '{url}' instead of '{Url}'.")
+            select unit;
     }
+
+    public static Gen<ImmutableHashSet<BackendModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
 
     private static Gen<BackendModel> Generate() =>
         from name in Generator.ResourceName
-        from description in GenerateDescription().OptionOf()
-        from title in GenerateTitle().OptionOf()
-        from url in GenerateUrl()
+        from description in CommonModule.GenerateDescription(name)
+        from uri in Generator.AbsoluteUri
         select new BackendModel
         {
-            Name = name,
+            Key = ResourceKey.From(BackendResource.Instance, name),
             Description = description,
-            Title = title,
-            Url = url
+            Url = uri.ToString()
         };
 
-    private static Gen<string> GenerateDescription() =>
-        from lorem in Generator.Lorem
-        select lorem.Paragraph();
+    private static ImmutableHashSet<BackendModel> ToSet(IEnumerable<BackendModel> models) =>
+        [.. models.DistinctBy(model => model.Key)];
 
-    private static Gen<string> GenerateTitle() =>
-        from lorem in Generator.Lorem
-        select lorem.Sentence();
-
-    private static Gen<string> GenerateUrl() =>
-        from uri in Generator.Uri
-        select uri.ToString();
+    public static Gen<ImmutableHashSet<BackendModel>> GenerateUpdates(IEnumerable<BackendModel> backendModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(backendModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<BackendModel> GenerateUpdate(BackendModel model) =>
-        from description in GenerateDescription().OptionOf().OrConst(model.Description)
-        from title in GenerateTitle().OptionOf().OrConst(model.Title)
-        from url in GenerateUrl().OrConst(model.Url)
+        from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
+        from uri in Generator.AbsoluteUri
         select model with
         {
             Description = description,
-            Title = title,
-            Url = url
+            Url = uri.ToString()
         };
 
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new BackendDto()
-        {
-            Properties = new BackendDto.BackendContract
-            {
-                Description = Description.IfNoneNull(),
-                Protocol = "http",
-                Title = Title.IfNoneNull(),
-                Url = Url
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
+    public static Gen<ImmutableHashSet<BackendModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
     {
-        var jsonDto = JsonNodeModule.To<BackendDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
+        var currentModels = previousModels.OfType<BackendModel>();
 
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<BackendDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            Description = overrideDto?.Properties?.Description ?? Description,
-            Title = overrideDto?.Properties?.Title ?? Title,
-            Url = overrideDto?.Properties?.Url ?? Url
-        };
-
-        var right = new
-        {
-            Description = jsonDto?.Properties?.Description,
-            Title = jsonDto?.Properties?.Title,
-            Url = jsonDto?.Properties?.Url
-        };
-
-        return left.Description.FuzzyEquals(right.Description)
-               && left.Title.FuzzyEquals(right.Title)
-               && left.Url.FuzzyEquals(right.Url);
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
+               from added in GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
     }
 }

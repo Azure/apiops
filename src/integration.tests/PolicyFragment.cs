@@ -1,94 +1,110 @@
 using common;
+using common.tests;
 using CsCheck;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal sealed record PolicyFragmentModel : IPolicyResourceTestModel<PolicyFragmentModel>
+internal sealed record PolicyFragmentModel : ITestModel<PolicyFragmentModel>
 {
-    public required ResourceName Name { get; init; }
+    public required string Description { get; init; }
+
     public required string Content { get; init; }
 
-    public Option<string> Description { get; init; } = Option.None;
+    public required ResourceKey Key { get; init; }
 
-    public static IPolicyResource AssociatedResource { get; } = PolicyFragmentResource.Instance;
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["description"] = Description,
+                ["format"] = "rawxml",
+                ["value"] = Content
+            }
+        };
 
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
+    public Result<Unit> ValidateDto(JsonObject dto)
     {
-        var newGenerator = from model in Generate()
-                           select (model, ModelNodeSet.Empty);
+        return from _ in validateDescription()
+               from __ in validateContent()
+               select Unit.Instance;
 
-        return Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
+        Result<Unit> validateDescription() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from description in properties.GetStringProperty("description")
+            from unit in description == Description
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has description '{description}' instead of '{Description}'.")
+            select unit;
+
+        Result<Unit> validateContent() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from value in properties.GetStringProperty("value")
+            from unit in PolicyModule.FuzzyEquals(value, Content)
+                            ? Result.Success(Unit.Instance)
+                            : Error.From($"Resource '{Key}' has policy content that doesn't match expected content.")
+            select unit;
     }
 
-    private static Gen<PolicyFragmentModel> Generate() =>
+    public static Gen<ImmutableHashSet<PolicyFragmentModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate(models).HashSetOf(0, 5)
+        select ToSet(set);
+
+    private static Gen<PolicyFragmentModel> Generate(IEnumerable<ITestModel> models) =>
         from name in Generator.ResourceName
-        from content in GenerateContent()
-        from description in GenerateDescription().OptionOf()
+        from description in CommonModule.GenerateDescription(name)
+        from content in GenerateContent(models)
         select new PolicyFragmentModel
         {
-            Name = name,
-            Content = content,
-            Description = description
+            Key = ResourceKey.From(PolicyFragmentResource.Instance, name),
+            Description = description,
+            Content = content
         };
 
-    private static Gen<string> GenerateDescription() =>
-        from lorem in Generator.Lorem
-        select lorem.Paragraph();
+    private static Gen<string> GenerateContent(IEnumerable<ITestModel> models)
+    {
+        var namedValues = models.OfType<NamedValueModel>();
 
-    private static Gen<string> GenerateContent() =>
-        from policy in Gen.OneOf(Generator.IpFilterPolicySnippet,
-                                 Generator.SetHeaderPolicySnippet)
-        select $"""
-                <fragment>
-                    {policy}
-                </fragment>
-                """;
+        return from setVariableSnippet in PolicyModule.GenerateSetVariableSnippet(namedValues)
+               select $"""
+                       <fragment>
+                           {setVariableSnippet}
+                       </fragment>
+                       """;
+    }
 
+    private static ImmutableHashSet<PolicyFragmentModel> ToSet(IEnumerable<PolicyFragmentModel> models) =>
+        [.. models.DistinctBy(model => model.Key)];
 
-    private static Gen<PolicyFragmentModel> GenerateUpdate(PolicyFragmentModel model) =>
-        from content in GenerateContent().OrConst(model.Content)
-        from description in GenerateDescription().OptionOf().OrConst(model.Description)
+    public static Gen<ImmutableHashSet<PolicyFragmentModel>> GenerateUpdates(IEnumerable<PolicyFragmentModel> policyFragmentModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(policyFragmentModels,
+                                                 model => GenerateUpdate(model, allModels))
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
+
+    private static Gen<PolicyFragmentModel> GenerateUpdate(PolicyFragmentModel model, IEnumerable<ITestModel> allModels) =>
+        from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
+        from content in GenerateContent(allModels)
         select model with
         {
-            Content = content,
-            Description = description
+            Description = description,
+            Content = content
         };
 
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new PolicyDto()
-        {
-            Properties = new PolicyDto.PolicyContract
-            {
-                Description = Description.IfNoneNull(),
-                Format = "rawxml",
-                Value = Content
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
+    public static Gen<ImmutableHashSet<PolicyFragmentModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
     {
-        var jsonDto = JsonNodeModule.To<PolicyDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
+        var currentModels = previousModels.OfType<PolicyFragmentModel>();
 
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<PolicyDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            Description = overrideDto?.Properties?.Description ?? Description,
-            Contents = overrideDto?.Properties?.Value ?? Content
-        };
-
-        var right = new
-        {
-            Description = jsonDto?.Properties?.Description,
-            Contents = jsonDto?.Properties?.Value
-        };
-
-        return left.Description.FuzzyEquals(right.Description)
-               && left.Contents.FuzzyEqualsPolicy(right.Contents);
+        return from changed in
+                   from modelsToUpdate in Generator.SubSetOf([.. currentModels])
+                   from changed in Generator.Traverse(modelsToUpdate, model => GenerateUpdate(model, accumulatedNextModels))
+                   select changed
+               from added in GenerateSet(accumulatedNextModels)
+               select ImmutableHashSet.CreateRange([.. changed, .. added]);
     }
 }

@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\extractor\extractor.csproj" />
-    <ProjectReference Include="..\integration.tests2\integration.tests.csproj" />
+    <ProjectReference Include="..\integration.tests\integration.tests.csproj" />
     <ProjectReference Include="..\publisher\publisher.csproj" />
   </ItemGroup>
 

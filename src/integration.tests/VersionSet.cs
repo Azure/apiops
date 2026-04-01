@@ -1,143 +1,100 @@
 using common;
+using common.tests;
 using CsCheck;
-using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Nodes;
 
 namespace integration.tests;
 
-internal abstract record VersioningScheme
+internal sealed record VersionSetModel : ITestModel<VersionSetModel>
 {
-    internal sealed record Header : VersioningScheme
-    {
-        public required string HeaderName { get; init; }
+    public required string DisplayName { get; init; }
 
-        public new static Gen<Header> Generate() =>
-            from name in Generator.AlphanumericWord
-            select new Header { HeaderName = name };
+    public required string Description { get; init; }
+
+    public required ResourceKey Key { get; init; }
+
+    public JsonObject ToDto() =>
+        new()
+        {
+            ["properties"] = new JsonObject
+            {
+                ["displayName"] = DisplayName,
+                ["description"] = Description,
+                ["versioningScheme"] = "Segment"
+            }
+        };
+
+    public Result<Unit> ValidateDto(JsonObject dto)
+    {
+        return from _ in validateDisplayName()
+               from __ in validateDescription()
+               select Unit.Instance;
+
+        Result<Unit> validateDisplayName() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from displayName in properties.GetStringProperty("displayName")
+            from unit in displayName == DisplayName
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has displayName '{displayName}' instead of '{DisplayName}'.")
+            select unit;
+
+        Result<Unit> validateDescription() =>
+            from properties in dto.GetJsonObjectProperty("properties")
+            from description in properties.GetStringProperty("description")
+            from unit in description == Description
+                        ? Result.Success(Unit.Instance)
+                        : Error.From($"Resource '{Key}' has description '{description}' instead of '{Description}'.")
+            select unit;
     }
 
-    internal sealed record Query : VersioningScheme
-    {
-        public required string QueryName { get; init; }
-
-        public new static Gen<Query> Generate() =>
-            from name in Generator.AlphanumericWord
-            select new Query { QueryName = name };
-    }
-
-    internal sealed record Segment : VersioningScheme
-    {
-        public new static Gen<Segment> Generate() =>
-            Gen.Const(new Segment());
-    }
-
-    public static Gen<VersioningScheme> Generate() =>
-        Gen.OneOf<VersioningScheme>(Header.Generate(), Query.Generate(), Segment.Generate());
-}
-
-internal sealed record VersionSetModel : IDtoTestModel<VersionSetModel>
-{
-    public required ResourceName Name { get; init; }
-    public required VersioningScheme Scheme { get; init; }
-
-    public Option<string> Description { get; init; } = Option.None;
-
-    public static IResourceWithDto AssociatedResource { get; } = VersionSetResource.Instance;
-
-    public static Gen<ModelNodeSet> GenerateNodes(ResourceModels baseline)
-    {
-        var newGenerator = from model in Generate()
-                           select (model, ModelNodeSet.Empty);
-
-        return Generator.GenerateNodes(baseline, GenerateUpdate, newGenerator);
-    }
+    public static Gen<ImmutableHashSet<VersionSetModel>> GenerateSet(IEnumerable<ITestModel> models) =>
+        from set in Generate().HashSetOf(0, 5)
+        select ToSet(set);
 
     private static Gen<VersionSetModel> Generate() =>
         from name in Generator.ResourceName
-        from scheme in VersioningScheme.Generate()
-        from description in GenerateDescription().OptionOf()
+        from displayName in CommonModule.GenerateDisplayName(name)
+        from description in CommonModule.GenerateDescription(name)
         select new VersionSetModel
         {
-            Name = name,
-            Scheme = scheme,
+            Key = ResourceKey.From(VersionSetResource.Instance, name),
+            DisplayName = displayName,
             Description = description
         };
 
-    private static Gen<string> GenerateDescription() =>
-        from lorem in Generator.Lorem
-        select lorem.Paragraph();
+    private static ImmutableHashSet<VersionSetModel> ToSet(IEnumerable<VersionSetModel> models) =>
+        [.. models.DistinctBy(model => model.Key)
+                  .DistinctBy(model => model.DisplayName)];
+
+    public static Gen<ImmutableHashSet<VersionSetModel>> GenerateUpdates(IEnumerable<VersionSetModel> versionSetModels, IEnumerable<ITestModel> allModels) =>
+        from updatedModels in Generator.Traverse(versionSetModels, GenerateUpdate)
+        let updatedSet = ToSet(updatedModels)
+        where updatedSet.Count == updatedModels.Length
+        select updatedSet;
 
     private static Gen<VersionSetModel> GenerateUpdate(VersionSetModel model) =>
-        from scheme in VersioningScheme.Generate().OrConst(model.Scheme)
-        from description in GenerateDescription().OptionOf().OrConst(model.Description)
+        from displayName in CommonModule.GenerateDisplayName(model.Key.Name, model.DisplayName)
+        from description in CommonModule.GenerateDescription(model.Key.Name, model.Description)
         select model with
         {
-            Scheme = scheme,
+            DisplayName = displayName,
             Description = description
         };
 
-    public JsonObject SerializeDto(ModelNodeSet predecessors) =>
-        JsonObjectModule.From(new VersionSetDto()
-        {
-            Properties = new VersionSetDto.VersionSetContract
-            {
-                Description = Description.IfNoneNull(),
-                DisplayName = Name.ToString(),
-                VersioningScheme = Scheme switch
-                {
-                    VersioningScheme.Header => "header",
-                    VersioningScheme.Query => "query",
-                    VersioningScheme.Segment => "segment",
-                    _ => throw new InvalidOperationException("Unknown versioning scheme")
-                },
-                VersionHeaderName = Scheme is VersioningScheme.Header header ? header.HeaderName : null,
-                VersionQueryName = Scheme is VersioningScheme.Query query ? query.QueryName : null
-            }
-        }, AssociatedResource.SerializerOptions).IfErrorThrow();
-
-    public bool MatchesDto(JsonObject json, Option<JsonObject> overrideJson)
+    public static Gen<ImmutableHashSet<VersionSetModel>> GenerateNextState(IEnumerable<ITestModel> previousModels, IEnumerable<ITestModel> accumulatedNextModels)
     {
-        var jsonDto = JsonNodeModule.To<VersionSetDto>(json, AssociatedResource.SerializerOptions)
-                                    .IfErrorNull();
+        var currentModels = previousModels.OfType<VersionSetModel>();
 
-        var overrideDto = overrideJson.Bind(json => JsonNodeModule.To<VersionSetDto>(json, AssociatedResource.SerializerOptions)
-                                                                  .ToOption())
-                                      .IfNoneNull();
-
-        var left = new
-        {
-            Description = overrideDto?.Properties?.Description ?? Description,
-            VersioningScheme = overrideDto?.Properties?.VersioningScheme ?? Scheme switch
-            {
-                VersioningScheme.Header => "header",
-                VersioningScheme.Query => "query",
-                VersioningScheme.Segment => "segment",
-                _ => throw new InvalidOperationException("Unknown versioning scheme")
-            },
-            VersionHeaderName = overrideDto?.Properties?.VersionHeaderName ?? Scheme switch
-            {
-                VersioningScheme.Header header => header.HeaderName,
-                _ => null
-            },
-            VersionQueryName = overrideDto?.Properties?.VersionQueryName ?? Scheme switch
-            {
-                VersioningScheme.Query query => query.QueryName,
-                _ => null
-            }
-        };
-
-        var right = new
-        {
-            Description = jsonDto?.Properties?.Description,
-            VersioningScheme = jsonDto?.Properties?.VersioningScheme,
-            VersionHeaderName = jsonDto?.Properties?.VersionHeaderName,
-            VersionQueryName = jsonDto?.Properties?.VersionQueryName
-        };
-
-        return left.Description.FuzzyEquals(right.Description)
-               && left.VersioningScheme.FuzzyEquals(right.VersioningScheme)
-               && left.VersionHeaderName.FuzzyEquals(right.VersionHeaderName)
-               && left.VersionQueryName.FuzzyEquals(right.VersionQueryName);
+        return from shuffled in Gen.Shuffle(currentModels.ToArray())
+               from keptCount in Gen.Int[0, shuffled.Length]
+               let kept = shuffled.Take(keptCount).ToImmutableArray()
+               from unchangedCount in Gen.Int[0, kept.Length]
+               let unchanged = kept.Take(unchangedCount)
+               from changed in GenerateUpdates(kept.Skip(unchangedCount), accumulatedNextModels)
+               from added in GenerateSet(accumulatedNextModels)
+               select ToSet([.. unchanged, .. changed, .. added]);
     }
 }
