@@ -98,6 +98,13 @@ internal static class PublisherModule
 
             async ValueTask processDelete()
             {
+                // Skip if not actually being deleted this run (e.g. WorkspaceResource has no artifact file).
+                // Cascading to successors here would deadlock with their processPut tasks.
+                if (resourceSet.Contains(resourceKey) is false)
+                {
+                    return;
+                }
+
                 // Process successors first
                 var successors = previousRelationships.Successors
                                                       .Find(resourceKey)
@@ -108,10 +115,7 @@ internal static class PublisherModule
                                                   cancellationToken);
 
                 // Delete resource
-                if (resourceSet.Contains(resourceKey))
-                {
-                    await deleteResource(resourceKey, cancellationToken);
-                }
+                await deleteResource(resourceKey, cancellationToken);
             }
         }
     }
