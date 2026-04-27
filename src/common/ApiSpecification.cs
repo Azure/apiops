@@ -120,7 +120,7 @@ public static partial class ResourceModule
         {
             var (resource, name, parents) = (resourceKey.Resource, resourceKey.Name, resourceKey.Parents);
 
-            if (resource is not ApiResource && resource is not WorkspaceApiResource)
+            if (resource is not ApiResource and not WorkspaceApiResource)
             {
                 return Option.None;
             }
@@ -401,7 +401,7 @@ public static partial class ResourceModule
             return await contentsOption.BindTask(async contents => Path.GetExtension(file.FullName)
                                                                        .ToLowerInvariant() switch
             {
-                ".json" or ".yaml" or ".yml" => from specification in await GetOpenApiSpecification(contents, cancellationToken)
+                ".json" or ".yaml" or ".yml" => from specification in await GetOpenApiSpecification(contents, file, cancellationToken)
                                                 select ((ApiSpecification)specification, contents),
                 ".graphql" => (ApiSpecification.GraphQl.Instance, contents),
                 ".wadl" => (ApiSpecification.Wadl.Instance, contents),
@@ -443,7 +443,7 @@ public static partial class ResourceModule
             _ => throw new InvalidOperationException($"Specification {specification} is not supported.")
         }}";
 
-    private static async ValueTask<Option<ApiSpecification.OpenApi>> GetOpenApiSpecification(BinaryData contents, CancellationToken cancellationToken)
+    private static async ValueTask<Option<ApiSpecification.OpenApi>> GetOpenApiSpecification(BinaryData contents, FileInfo file, CancellationToken cancellationToken)
     {
         using var stream = contents.ToStream();
         var settings = GetOpenApiReaderSettings();
@@ -453,43 +453,58 @@ public static partial class ResourceModule
         {
             (_, diagnostic) = await OpenApiDocument.LoadAsync(stream, settings: settings, cancellationToken: cancellationToken);
         }
-#pragma warning disable CA1031 // Do not catch general exception types
-        catch
-#pragma warning restore CA1031 // Do not catch general exception types            
+        catch (Exception exception) when (exception is InvalidOperationException or NotSupportedException)
         {
+            throw new InvalidOperationException($"Loading specification file '{file.FullName}' failed with error '{exception.Message}'.", exception);
         }
 
-        if (diagnostic is null || diagnostic.Errors.Count > 0)
+        return diagnostic switch
         {
-            return Option.None;
-        }
+            null => Option.None,
+            { Errors: [] } =>
+                from format in diagnostic.Format switch
+                {
+                    "json" => Option<OpenApiFormat>.Some(OpenApiFormat.Json.Instance),
+                    "yaml" => OpenApiFormat.Yaml.Instance,
+                    _ => Option.None
+                }
+                from version in diagnostic.SpecificationVersion switch
+                {
+                    OpenApiSpecVersion.OpenApi2_0 => Option<OpenApiVersion>.Some(OpenApiVersion.V2.Instance),
+                    OpenApiSpecVersion.OpenApi3_1 => OpenApiVersion.V3.Instance,
+                    OpenApiSpecVersion.OpenApi3_0 => OpenApiVersion.V3.Instance,
+                    _ => Option.None
+                }
+                select new ApiSpecification.OpenApi
+                {
+                    Format = format,
+                    Version = version
+                },
+            { Errors: var errors } =>
+                throw new InvalidOperationException($"Specification file '{file.FullName}' is not a valid OpenAPI document.",
+                                                    errors switch
+                                                    {
+                                                        [var singleError] => openApiErrorToException(singleError),
+                                                        var multipleErrors => new AggregateException(multipleErrors.Select(openApiErrorToException))
+                                                    })
+        };
 
-        return
-            from format in diagnostic.Format switch
-            {
-                "json" => Option<OpenApiFormat>.Some(OpenApiFormat.Json.Instance),
-                "yaml" => OpenApiFormat.Yaml.Instance,
-                _ => Option.None
-            }
-            from version in diagnostic.SpecificationVersion switch
-            {
-                OpenApiSpecVersion.OpenApi2_0 => Option<OpenApiVersion>.Some(OpenApiVersion.V2.Instance),
-                OpenApiSpecVersion.OpenApi3_1 => OpenApiVersion.V3.Instance,
-                OpenApiSpecVersion.OpenApi3_0 => OpenApiVersion.V3.Instance,
-                _ => Option.None
-            }
-            select new ApiSpecification.OpenApi
-            {
-                Format = format,
-                Version = version
-            };
+        static InvalidOperationException openApiErrorToException(OpenApiError error) =>
+            string.IsNullOrWhiteSpace(error.Pointer)
+                ? new InvalidOperationException(error.Message)
+                : new InvalidOperationException($"Pointer: '{error.Pointer}'. Message: '{error.Message}'");
     }
 
     private static OpenApiReaderSettings GetOpenApiReaderSettings()
     {
-        var settings = new OpenApiReaderSettings();
+        var settings = new OpenApiReaderSettings
+        {
+            RuleSet = ValidationRuleSet.GetEmptyRuleSet()
+        };
+
         settings.AddJsonReader();
         settings.AddYamlReader();
+
         return settings;
     }
 
@@ -534,7 +549,7 @@ public static partial class ResourceModule
 
         return async (resourceKey, specification, contents, cancellationToken) =>
         {
-            if (resourceKey.Resource is not ApiResource && resourceKey.Resource is not WorkspaceApiResource)
+            if (resourceKey.Resource is not ApiResource and not WorkspaceApiResource)
             {
                 throw new InvalidOperationException($"Resource '{resourceKey.Resource}' does not support API specifications.");
             }
