@@ -5,6 +5,7 @@
 		"./features/aspire": {},
 		"./features/azure": {},
 		"./features/dotnet": {},
-		"./features/github": {}
+		"./features/github": {},
+		"./features/playwright": {}
 	}
 }
