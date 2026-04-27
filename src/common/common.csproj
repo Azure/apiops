@@ -10,21 +10,21 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Core" Version="1.51.1" />
-		<PackageReference Include="Azure.Identity" Version="1.17.1" />
+		<PackageReference Include="Azure.Core" Version="1.54.0" />
+		<PackageReference Include="Azure.Identity" Version="1.21.0" />
 		<PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.4.0" />
-		<PackageReference Include="Azure.ResourceManager" Version="1.14.0-beta.1" />
-		<PackageReference Include="DotNext.Threading" Version="5.26.3" />
+		<PackageReference Include="Azure.ResourceManager" Version="1.14.0" />
+		<PackageReference Include="DotNext.Threading" Version="6.1.0" />
 		<PackageReference Include="Flurl" Version="4.0.0" />
 		<PackageReference Include="LibGit2Sharp" Version="0.31.0" />
-		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
-		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.16.0" />
-		<PackageReference Include="Microsoft.OpenApi.YamlReader" Version="3.3.1" />
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
+		<PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.17.0" />
+		<PackageReference Include="Microsoft.OpenApi.YamlReader" Version="3.5.3" />
 		<PackageReference Include="NetEscapades.Configuration.Yaml" Version="3.1.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
-		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.0" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.0" />
-		<PackageReference Include="Polly" Version="8.6.5" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+		<PackageReference Include="Polly" Version="8.6.6" />
 		<PackageReference Include="YamlDotNet.System.Text.Json" Version="1.7.1" />
 	</ItemGroup>
 
