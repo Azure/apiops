@@ -95,18 +95,28 @@ internal static class PolicyModule
                          .Select(model => Gen.Const($$$"""{{{{{model.DisplayName}}}}}"""))
                          .Append(Generator.AlphanumericWord)]);
 
-    public static Gen<string> GenerateInboundSnippet(IEnumerable<NamedValueModel> namedValues, IEnumerable<PolicyFragmentModel> fragments) =>
+    public static Gen<string> GenerateInboundSnippet(IEnumerable<NamedValueModel> namedValues, IEnumerable<PolicyFragmentModel> fragments, IEnumerable<BackendModel> backends) =>
         from snippetGens in Generator.SubSetOf([GenerateSetVariableSnippet(namedValues),
                                                 GenerateIpFilterSnippet(),
                                                 GenerateFindAndReplaceSnippet(namedValues),
                                                 GenerateSetHeaderSnippet(namedValues),
-                                                GenerateIncludeFragmentSnippet(fragments)])
+                                                GenerateIncludeFragmentSnippet(fragments),
+                                                GenerateSetBackendServiceSnippet(backends)])
         from snippets in Generator.Traverse(snippetGens, gen => gen)
         select $"""
                 <inbound>
                     {string.Join(Environment.NewLine, snippets)}
                 </inbound>
                 """;
+
+    private static Gen<string> GenerateSetBackendServiceSnippet(IEnumerable<BackendModel> backends) =>
+        backends.ToImmutableArray() switch
+        {
+            [] => from url in Generator.AbsoluteUri
+                  select $"""<set-backend-service base-url="{url}" />""",
+            var nonEmptyBackends => from backend in Gen.OneOfConst([.. nonEmptyBackends])
+                                    select $"""<set-backend-service backend-id="{backend.Key.Name}" />"""
+        };
 
     private static Gen<string> GenerateIpFilterSnippet() =>
         from last3 in Gen.Int[0, 255].Array[3]

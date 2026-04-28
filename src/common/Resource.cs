@@ -308,6 +308,12 @@ public static class ResourceExtensions
             {
                 list.Add(PolicyFragmentResource.Instance);
             }
+
+            // Policies can reference backends
+            var isWorkspacePolicy = resource.GetTraversalPredecessorHierarchy()
+                                            .Contains(WorkspaceResource.Instance);
+
+            list.Add(isWorkspacePolicy ? WorkspaceBackendResource.Instance : BackendResource.Instance);
         }
 
         return [.. list];

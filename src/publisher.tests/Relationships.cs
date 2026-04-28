@@ -957,6 +957,98 @@ internal sealed class GetRelationshipPairsTests
     }
 
     [Test]
+    public async Task Returns_policy_to_backend_relationships()
+    {
+        var gen = from fixture in Fixture.Generate()
+                  from backendKey in Generator.GenerateResourceKey(resource => resource is BackendResource)
+                  from policyKey in Generator.GenerateResourceKey(resource => resource is IPolicyResource
+                                                                          and not PolicyFragmentResource
+                                                                          and not WorkspacePolicyFragmentResource)
+                  let policyContent = $"<policies><inbound><set-backend-service backend-id=\"{backendKey.Name}\" /><base /></inbound></policies>"
+                  let resources = RelationshipTestData.ToResourceMap([policyKey, backendKey])
+                  select (backendKey, policyKey, policyContent, resources, Common.NoOpFileOperations, fixture with
+                  {
+                      GetPolicyFileContents = async (resource, name, parents, readFile, cancellationToken) =>
+                      {
+                          await ValueTask.CompletedTask;
+
+                          var key = ResourceKey.From(resource, name, parents);
+
+                          return key == policyKey
+                                    ? BinaryData.FromString(policyContent)
+                                    : Option.None;
+                      }
+                  });
+
+        await gen.SampleAsync(async tuple =>
+        {
+            // Arrange
+            var (backendKey, policyKey, policyContent, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
+
+            // Act
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
+
+            // Assert that the backend is a predecessor of the policy
+            await Assert.That(relationships.Predecessors[policyKey])
+                        .Contains(backendKey);
+        });
+    }
+
+    [Test]
+    public async Task Returns_workspace_policy_to_workspace_backend_relationships()
+    {
+        var gen = from fixture in Fixture.Generate()
+                  from workspaceKey in Generator.GenerateResourceKey(resource => resource is WorkspaceResource)
+                  let setWorkspace = new Func<ResourceKey, ResourceKey>(key => key with
+                  {
+                      Parents = ParentChain.From([.. from pair in key.Parents
+                                                     select pair.Resource is WorkspaceResource
+                                                         ? (WorkspaceResource.Instance, workspaceKey.Name)
+                                                         : pair])
+                  })
+                  from backendKey in
+                      from backendKey in Generator.GenerateResourceKey(resource => resource is WorkspaceBackendResource)
+                      select setWorkspace(backendKey)
+                  from policyKey in
+                      from policyKey in Generator.GenerateResourceKey(resource => resource is IPolicyResource and not WorkspacePolicyFragmentResource
+                                                                                  && resource.GetTraversalPredecessorHierarchy()
+                                                                                             .Contains(WorkspaceResource.Instance))
+                      select setWorkspace(policyKey)
+                  let policyContent = $"<policies><inbound><set-backend-service backend-id=\"{backendKey.Name}\" /><base /></inbound></policies>"
+                  let resources = RelationshipTestData.ToResourceMap([policyKey, backendKey])
+                  select (backendKey, policyKey, policyContent, resources, Common.NoOpFileOperations, fixture with
+                  {
+                      GetPolicyFileContents = async (resource, name, parents, readFile, cancellationToken) =>
+                      {
+                          await ValueTask.CompletedTask;
+
+                          var key = ResourceKey.From(resource, name, parents);
+
+                          return key == policyKey
+                                    ? BinaryData.FromString(policyContent)
+                                    : Option.None;
+                      }
+                  });
+
+        await gen.SampleAsync(async tuple =>
+        {
+            // Arrange
+            var (backendKey, policyKey, policyContent, resources, fileOperations, fixture) = tuple;
+            var getRelationshipPairs = fixture.Resolve();
+
+            // Act
+            var pairs = await getRelationshipPairs(resources, fileOperations, CancellationToken);
+            var relationships = Relationships.From(pairs, CancellationToken);
+
+            // Assert that the workspace backend is a predecessor of the policy
+            await Assert.That(relationships.Predecessors[policyKey])
+                        .Contains(backendKey);
+        });
+    }
+
+    [Test]
     public async Task Returns_a_missing_parent_relationship_for_a_child_resource()
     {
         var gen = from childKey in Generator.GenerateResourceKey(resource => resource is IChildResource
