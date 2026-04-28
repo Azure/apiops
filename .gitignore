@@ -223,6 +223,7 @@ _pkginfo.txt
 # Visual Studio cache files
 # files ending in .cache can be ignored
 *.[Cc]ache
+*.lscache
 # but keep track of directories ending in .cache
 !?*.[Cc]ache/
 
@@ -356,6 +357,9 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
+# Aspire
+.aspire/settings.json
+
 # VSCode
 #.vscode/*
 appsettings.json
@@ -365,3 +369,4 @@ appsettings.json
 # These files are your personal settings - don't commit them to source control.
 tools/code/.env.publisher
 tools/code/.env.extractor
+src/integration.tests2/error.txt

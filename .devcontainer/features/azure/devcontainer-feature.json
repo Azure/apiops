@@ -1,0 +1,8 @@
+{
+    "id": "azure",
+    "version": "1.0.0",
+    "name": "azure",
+    "dependsOn": {
+        "ghcr.io/devcontainers/features/azure-cli:1": {}
+    }
+}

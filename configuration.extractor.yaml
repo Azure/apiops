@@ -1,38 +1,78 @@
-# Note: With the introduction of workspaces we recommend using workspaces with APIOps when possible to limit what can be extracted whenever possible. 
-# More information about workspaces can be found here https://learn.microsoft.com/en-us/azure/api-management/workspaces-overview
-
- apiNames:
+apis:
   - apiName1
-  - apiName2
+  - apiName2:
+      operations: []
+      diagnostics:
+        - diagnosticName1
+        - diagnosticName2
+      schemas: []
+      releases:
+        - releaseName1
 
- backendNames:
+backends:
   - backendName1
   - backendName2
 
- diagnosticNames:
- - diagnosticName1
- - diagnosticName2
+gateways:
+  - gatewayName1
 
- loggerNames:
+diagnostics:
+  - diagnosticName1
+  - diagnosticName2
+
+groups:
+  - groupName1
+
+loggers:
   - loggerName1
   - loggerName2
 
- namedValueNames:
+namedValues:
   - namedValueName1
   - namedValueName2
 
- productNames:
+products:
   - productName1
   - productName2
 
- subscriptionNames:
- - subscriptionName1
- - subscriptionName2
+subscriptions:
+  - subscriptionName1
+  - subscriptionName2
 
- tagNames:
+tags:
   - tagName1
   - tagName2
-  
- policyFragmentNames:
+
+policyFragments:
   - policyFragment1
   - policyFragment2
+
+versionSets:
+  - versionSetName1
+
+workspaces:
+  - workspaceName1:
+      apis:
+        - workspaceApiName1:
+            operations: []
+            diagnostics: []
+            schemas: []
+            releases:
+              - workspaceReleaseName1
+      backends:
+        - workspaceBackendName1
+      diagnostics: []
+      groups: []
+      loggers:
+        - workspaceLoggerName1
+      namedValues:
+        - workspaceNamedValueName1
+      policyFragments:
+        - workspacePolicyFragmentName1
+      products:
+        - workspaceProductName1
+      subscriptions: []
+      tags:
+        - workspaceTagName1
+      versionSets:
+        - workspaceVersionSetName1

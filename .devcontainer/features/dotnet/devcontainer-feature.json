@@ -1,0 +1,28 @@
+{
+    "id": "dotnet",
+    "version": "1.0.0",
+    "name": "dotnet",
+    "dependsOn": {
+        "ghcr.io/devcontainers/features/dotnet:2": {
+            "version": "11.0",
+            "additionalVersions": "lts"
+        }
+    },
+    "postStartCommand": "dotnet tool update --global dotnet-outdated-tool || dotnet tool install --global dotnet-outdated-tool",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-dotnettools.csdevkit@prerelease",
+                "ms-dotnettools.csharp@prerelease"
+            ],
+            "mcp": {
+                "servers": {
+                    "microsoft.docs.mcp": {
+                        "type": "http",
+                        "url": "https://learn.microsoft.com/api/mcp"
+                    }
+                }
+            }
+        }
+    }
+}

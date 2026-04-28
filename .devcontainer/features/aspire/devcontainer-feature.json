@@ -1,0 +1,23 @@
+{
+    "id": "aspire",
+    "version": "1.0.0",
+    "name": "aspire",
+    "dependsOn": {
+        "./features/dotnet": {},
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {
+            "version": "latest",
+            "enableNonRootDocker": true,
+            "moby": true
+        }
+    },
+    "onCreateCommand": "curl -sSL https://aspire.dev/install.sh | bash",
+    // "postStartCommand": "dotnet dev-certs https --trust",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-azuretools.vscode-docker",
+                "microsoft-aspire.aspire-vscode"
+            ]
+        }
+    }
+}
