@@ -1,0 +1,17 @@
+<policies>
+	<inbound>
+		<ip-filter action="allow">
+			<address>10.0.0.1</address>
+		</ip-filter>
+		<set-header name="X-Product" exists-action="override">
+			<value>product2</value>
+		</set-header>
+	</inbound>
+	<backend>
+		<forward-request />
+	</backend>
+	<outbound>
+		<find-and-replace from="{{rewrite-search-term}}" to="product-two" />
+	</outbound>
+	<on-error />
+</policies>

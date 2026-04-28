@@ -1,0 +1,7 @@
+{
+  "properties": {
+    "description": "Postman Echo backend for scenario APIs.",
+    "protocol": "http",
+    "url": "https://postman-echo.com"
+  }
+}

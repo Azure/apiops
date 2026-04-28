@@ -1,0 +1,15 @@
+{
+  "properties": {
+    "path": "graphql-api",
+    "apiRevision": "1",
+    "type": "graphql",
+    "authenticationSettings": {},
+    "description": "GraphQL API using specification.graphql.",
+    "displayName": "graphql-api",
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://httpbin.org",
+    "subscriptionRequired": false
+  }
+}

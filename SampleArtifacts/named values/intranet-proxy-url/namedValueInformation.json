@@ -1,0 +1,10 @@
+{
+  "properties": {
+    "displayName": "intranet-proxy-url",
+    "secret": false,
+    "tags": [
+      "routing"
+    ],
+    "value": "https://httpbin.org"
+  }
+}

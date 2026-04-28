@@ -1,0 +1,22 @@
+openapi: 3.0.1
+info:
+  title: revisioned-api
+  description: Revisioned API with multiple revisions.
+  version: '2.0'
+servers:
+  - url: https://example.azure-api.net/revisioned-api
+paths:
+  /revision:
+    get:
+      summary: Get revision v2
+      operationId: get-revision-v2
+      responses:
+        '200':
+          description: Revision 2 returned.
+  /revision/details:
+    get:
+      summary: Get revision details
+      operationId: get-revision-details
+      responses:
+        '200':
+          description: Revision details returned.

@@ -1,0 +1,13 @@
+<policies>
+	<inbound>
+		<find-and-replace from="{{rewrite-search-term}}" to="revision-two" />
+		<set-header name="X-Revision" exists-action="override">
+			<value>2</value>
+		</set-header>
+	</inbound>
+	<backend>
+		<forward-request />
+	</backend>
+	<outbound />
+	<on-error />
+</policies>

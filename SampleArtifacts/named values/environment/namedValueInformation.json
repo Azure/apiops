@@ -1,8 +1,0 @@
-{
-  "properties": {
-    "displayName": "environment",
-    "secret": false,
-    "tags": [],
-    "value": "https://www.bing.com"
-  }
-}

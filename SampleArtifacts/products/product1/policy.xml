@@ -1,0 +1,13 @@
+<policies>
+	<inbound>
+		<set-variable name="productEnvironment" value="{{environment-name}}" />
+		<set-header name="X-Product" exists-action="override">
+			<value>product1</value>
+		</set-header>
+	</inbound>
+	<backend>
+		<forward-request />
+	</backend>
+	<outbound />
+	<on-error />
+</policies>

@@ -1,0 +1,7 @@
+<fragment>
+	<find-and-replace from="{{rewrite-search-term}}" to="modern" />
+	<set-variable name="intranetProxyUrl" value="{{intranet-proxy-url}}" />
+	<set-header name="X-Sample-Policy" exists-action="override">
+		<value>policyFragment2</value>
+	</set-header>
+</fragment>

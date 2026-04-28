@@ -1,28 +1,21 @@
-<!--
-    IMPORTANT:
-    - Policy elements can appear only within the <inbound>, <outbound>, <backend> section elements.
-    - Only the <forward-request> policy element can appear within the <backend> section element.
-    - To apply a policy to the incoming request (before it is forwarded to the backend service), place a corresponding policy element within the <inbound> section element.
-    - To apply a policy to the outgoing response (before it is sent back to the caller), place a corresponding policy element within the <outbound> section element.
-    - To add a policy position the cursor at the desired insertion point and click on the round button associated with the policy.
-    - To remove a policy, delete the corresponding policy statement from the policy document.
-    - Policies are applied in the order of their appearance, from the top down.
--->
 <policies>
 	<inbound>
-		<cors allow-credentials="false">
-			<allowed-origins>
-				<origin>{{environment}}</origin>
-			</allowed-origins>
-			<allowed-methods>
-				<method>GET</method>
-				<method>POST</method>
-			</allowed-methods>
-		</cors>
+		<set-variable name="environmentName" value="{{environment-name}}" />
+		<ip-filter action="allow">
+			<address>10.0.0.1</address>
+		</ip-filter>
+		<set-header name="X-Sample-Environment" exists-action="override">
+			<value>{{environment-name}}</value>
+		</set-header>
+		<include-fragment fragment-id="policyFragment1" />
 	</inbound>
 	<backend>
 		<forward-request />
 	</backend>
-	<outbound />
+	<outbound>
+		<set-header name="X-Response-Source" exists-action="append">
+			<value>{{environment-name}}</value>
+		</set-header>
+	</outbound>
 	<on-error />
 </policies>

@@ -1,5 +1,0 @@
-{
-  "properties": {
-    "description": "This fragment contains a set-header policy configuration to forward context information to a backend service. This fragment would be included in an inbound policy section. The policy expressions in this example access the built-in context variable."
-  }
-}

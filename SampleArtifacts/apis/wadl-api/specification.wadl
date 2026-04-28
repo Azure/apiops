@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<application xmlns="http://wadl.dev.java.net/2009/02">
+  <doc title="wadl-api">HTTP API using specification.wadl.</doc>
+  <resources base="https://example.com/wadl">
+    <resource path="/status">
+      <method id="get-wadl-status" name="GET">
+        <response status="200">
+          <representation mediaType="application/json" />
+        </response>
+      </method>
+    </resource>
+  </resources>
+</application>

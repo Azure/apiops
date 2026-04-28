@@ -1,0 +1,8 @@
+{
+  "properties": {
+    "displayName": "subscription2",
+    "scope": "/apis/basic-api",
+    "allowTracing": true,
+    "state": "active"
+  }
+}

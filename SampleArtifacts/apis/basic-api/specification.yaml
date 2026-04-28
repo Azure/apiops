@@ -1,0 +1,26 @@
+openapi: 3.0.1
+info:
+  title: basic-api
+  description: Basic OpenAPI YAML API with operation policies.
+  version: '1.0'
+servers:
+  - url: https://example.azure-api.net/basic-api
+paths:
+  /items:
+    get:
+      summary: Get items
+      operationId: get-items
+      responses:
+        '200':
+          description: Items returned.
+    post:
+      summary: Create item
+      operationId: create-item
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Item created.

@@ -1,0 +1,15 @@
+{
+  "properties": {
+    "path": "soap-api",
+    "apiRevision": "1",
+    "type": "soap",
+    "authenticationSettings": {},
+    "description": "SOAP API",
+    "displayName": "SoapApiService",
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://example.com/soap",
+    "subscriptionRequired": false
+  }
+}
