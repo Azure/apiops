@@ -1,6 +1,6 @@
 <policies>
 	<inbound>
-		<set-backend-service base-url="{{intranet-proxy-url}}" />
+		<set-backend-service backend-id="backend1" />
 		<set-header name="X-Api" exists-action="override">
 			<value>basic-api</value>
 		</set-header>

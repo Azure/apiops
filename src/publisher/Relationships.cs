@@ -256,6 +256,7 @@ internal static class RelationshipsModule
 
         var namedValueTokenRegex = new Regex("{{\\s*(.*?)\\s*}}", RegexOptions.CultureInvariant);
         var includeFragmentRegex = new Regex("<include-fragment\\s+fragment-id=\"([^\"]+)\"\\s*/>", RegexOptions.CultureInvariant);
+        var policyBackendIdRegex = new Regex("<set-backend-service\\b[^>]*\\bbackend-id\\s*=\\s*[\"']([^\"']+)[\"'][^>]*/?>", RegexOptions.CultureInvariant);
 
         return async (resources, operations, cancellationToken) =>
         {
@@ -350,6 +351,12 @@ internal static class RelationshipsModule
                                {
                                    var policyFragments = await getPolicyFragments(policyResourceForFragments, key.Name, key.Parents, operations.ReadFile, resources, cancellationToken);
                                    policyFragments.Iter(fragment => pairs.Add((fragment, key)), cancellationToken);
+                               }
+
+                               if (key.Resource is IPolicyResource policyResourceForBackends)
+                               {
+                                   var policyBackends = await getPolicyBackends(policyResourceForBackends, key.Name, key.Parents, operations.ReadFile, resources, cancellationToken);
+                                   policyBackends.Iter(backend => pairs.Add((backend, key)), cancellationToken);
                                }
 
                                dtoJsonOption.Iter(dtoJson =>
@@ -462,6 +469,15 @@ internal static class RelationshipsModule
                 return getPolicyFragmentsFromContent(contents, parents, resources);
             }
 
+            async ValueTask<ImmutableHashSet<ResourceKey>> getPolicyBackends(IPolicyResource resource, ResourceName name, ParentChain parents, ReadFile readFile, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources, CancellationToken cancellationToken)
+            {
+                var contentsOption = await getEffectivePolicyContents(resource, name, parents, readFile, cancellationToken);
+
+                var contents = contentsOption.IfNoneNull() ?? string.Empty;
+
+                return getPolicyBackendsFromContent(contents, parents, resources);
+            }
+
             ImmutableHashSet<ResourceKey> getNamedValuesFromContent(string content, ParentChain parents)
             {
                 if (string.IsNullOrWhiteSpace(content))
@@ -505,11 +521,37 @@ internal static class RelationshipsModule
             Option<ResourceKey> findPolicyFragment(ResourceName name, Option<(IResource, ResourceName)> workspaceOption, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources) =>
                 workspaceOption.Bind(workspace => from fragments in resources.Find(WorkspacePolicyFragmentResource.Instance)
                                                   from fragment in fragments.Head(key => key.Name == name
-                                                                                         && key.Parents.Any(parent => parent == workspace))
+                                                                                          && key.Parents.Any(parent => parent == workspace))
                                                   select fragment)
                                .IfNone(() => from fragments in resources.Find(PolicyFragmentResource.Instance)
                                              from fragment in fragments.Head(key => key.Name == name)
                                              select fragment);
+
+            ImmutableHashSet<ResourceKey> getPolicyBackendsFromContent(string content, ParentChain parents, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources)
+            {
+                if (string.IsNullOrWhiteSpace(content))
+                {
+                    return [];
+                }
+
+                var workspaceOption = parents.Head(tuple => tuple.Resource is WorkspaceResource);
+
+                var referencedBackends = policyBackendIdRegex.Matches(content)
+                                                             .Select(match => match.Groups[1].Value.Trim())
+                                                             .Choose(nameString => ResourceName.From(nameString).ToOption())
+                                                             .Choose(name => findBackend(name, workspaceOption, resources));
+
+                return [.. referencedBackends];
+            }
+
+            Option<ResourceKey> findBackend(ResourceName name, Option<(IResource, ResourceName)> workspaceOption, IDictionary<IResource, ImmutableHashSet<ResourceKey>> resources) =>
+                workspaceOption.Bind(workspace => from backends in resources.Find(WorkspaceBackendResource.Instance)
+                                                  from backend in backends.Head(key => key.Name == name
+                                                                                       && key.Parents.Any(parent => parent == workspace))
+                                                  select backend)
+                               .IfNone(() => from backends in resources.Find(BackendResource.Instance)
+                                             from backend in backends.Head(key => key.Name == name)
+                                             select backend);
 
             ResourceKey getParent(IChildResource resource, ResourceName name, ParentChain parents) =>
                 parents.LastOrDefault() switch

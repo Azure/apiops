@@ -57,8 +57,9 @@ internal sealed record ApiPolicyModel : ITestModel<ApiPolicyModel>
     {
         var namedValues = models.OfType<NamedValueModel>();
         var fragments = models.OfType<PolicyFragmentModel>();
+        var backends = models.OfType<BackendModel>();
 
-        return from inboundSnippet in PolicyModule.GenerateInboundSnippet(namedValues, fragments)
+        return from inboundSnippet in PolicyModule.GenerateInboundSnippet(namedValues, fragments, backends)
                from outboundSnippet in PolicyModule.GenerateOutboundSnippet(namedValues, fragments)
                select $"""
                        <policies>
