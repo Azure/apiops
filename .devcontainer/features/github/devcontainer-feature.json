@@ -10,6 +10,7 @@
         "vscode": {
             "extensions": [
                 "GitHub.vscode-github-actions",
+                "GitHub.vscode-pull-request-github",
                 "redhat.vscode-yaml"
             ],
             "mcp": {
