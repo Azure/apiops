@@ -1,0 +1,14 @@
+{
+  "properties": {
+    "path": "wadl-api",
+    "apiRevision": "1",
+    "authenticationSettings": {},
+    "description": "HTTP API using specification.wadl.",
+    "displayName": "wadl-api",
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://example.com/wadl",
+    "subscriptionRequired": false
+  }
+}

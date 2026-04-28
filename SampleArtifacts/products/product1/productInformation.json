@@ -1,0 +1,11 @@
+{
+  "properties": {
+    "displayName": "product1",
+    "description": "Product for HTTP-style scenario APIs.",
+    "state": "published",
+    "subscriptionRequired": true,
+    "approvalRequired": false,
+    "subscriptionsLimit": 10,
+    "terms": "Sample terms for product1."
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "properties": {
+    "displayName": "product2",
+    "description": "Product for alternate specification formats.",
+    "state": "published",
+    "subscriptionRequired": false,
+    "terms": "Sample terms for product2."
+  }
+}

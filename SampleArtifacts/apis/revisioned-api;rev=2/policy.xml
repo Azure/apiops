@@ -1,0 +1,14 @@
+<policies>
+	<inbound>
+		<set-backend-service base-url="{{intranet-proxy-url}}" />
+		<set-variable name="revisionBackend" value="{{intranet-proxy-url}}" />
+		<set-header name="X-Api-Revision" exists-action="override">
+			<value>2</value>
+		</set-header>
+	</inbound>
+	<backend>
+		<forward-request />
+	</backend>
+	<outbound />
+	<on-error />
+</policies>

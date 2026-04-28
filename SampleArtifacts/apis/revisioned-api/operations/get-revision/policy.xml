@@ -1,0 +1,12 @@
+<policies>
+	<inbound>
+		<set-header name="X-Revision" exists-action="override">
+			<value>1</value>
+		</set-header>
+	</inbound>
+	<backend>
+		<forward-request />
+	</backend>
+	<outbound />
+	<on-error />
+</policies>

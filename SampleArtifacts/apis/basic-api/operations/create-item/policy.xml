@@ -1,0 +1,13 @@
+<policies>
+	<inbound>
+		<find-and-replace from="{{rewrite-search-term}}" to="created" />
+		<set-header name="X-Operation" exists-action="override">
+			<value>create-item</value>
+		</set-header>
+	</inbound>
+	<backend>
+		<forward-request />
+	</backend>
+	<outbound />
+	<on-error />
+</policies>

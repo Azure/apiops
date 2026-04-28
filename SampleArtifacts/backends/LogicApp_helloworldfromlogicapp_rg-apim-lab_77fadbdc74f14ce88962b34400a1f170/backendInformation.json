@@ -1,8 +1,0 @@
-{
-  "properties": {
-    "description": "helloworldfromlogicapp",
-    "protocol": "http",
-    "resourceId": "https://management.azure.com/subscriptions/[subscription id]/resourceGroups/rg-apim-lab/providers/Microsoft.Logic/workflows/helloworldfromlogicapp",
-    "url": "[url]]/workflows/fd2f52f2c1e74e2c86a5124b504ccf52/triggers"
-  }
-}

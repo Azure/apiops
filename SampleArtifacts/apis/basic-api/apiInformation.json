@@ -1,0 +1,14 @@
+{
+  "properties": {
+    "path": "basic-api",
+    "apiRevision": "1",
+    "authenticationSettings": {},
+    "description": "Basic OpenAPI YAML API with operation policies.",
+    "displayName": "basic-api",
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://httpbin.org",
+    "subscriptionRequired": true
+  }
+}

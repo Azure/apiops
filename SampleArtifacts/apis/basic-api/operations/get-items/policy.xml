@@ -1,0 +1,13 @@
+<policies>
+	<inbound>
+		<set-query-parameter name="source" exists-action="override">
+			<value>get-items</value>
+		</set-query-parameter>
+		<set-variable name="allowedClient" value="{{allowed-ip-address}}" />
+	</inbound>
+	<backend>
+		<forward-request />
+	</backend>
+	<outbound />
+	<on-error />
+</policies>

@@ -1,0 +1,7 @@
+{
+  "properties": {
+    "description": "HTTPBin backend for scenario APIs.",
+    "protocol": "http",
+    "url": "https://httpbin.org"
+  }
+}

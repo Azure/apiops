@@ -1,0 +1,7 @@
+{
+  "properties": {
+    "loggerType": "azureMonitor",
+    "description": "Azure Monitor logger. The resource name must remain azuremonitor.",
+    "isBuffered": false
+  }
+}

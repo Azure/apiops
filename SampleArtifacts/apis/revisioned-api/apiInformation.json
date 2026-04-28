@@ -1,0 +1,16 @@
+{
+  "properties": {
+    "path": "revisioned-api",
+    "apiRevision": "1",
+    "apiRevisionDescription": "Initial revision.",
+    "authenticationSettings": {},
+    "description": "Revisioned API with multiple revisions.",
+    "displayName": "revisioned-api",
+    "isCurrent": true,
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://httpbin.org",
+    "subscriptionRequired": true
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "properties": {
+    "path": "versioned-api/v1",
+    "apiRevision": "1",
+    "apiVersion": "v1",
+    "apiVersionSetId": "/apiVersionSets/versionSet1",
+    "authenticationSettings": {},
+    "description": "Version 1 of a versioned API.",
+    "displayName": "versioned-api-v1",
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://httpbin.org",
+    "subscriptionRequired": true
+  }
+}

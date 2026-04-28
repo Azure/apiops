@@ -1,0 +1,7 @@
+{
+  "properties": {
+    "loggerId": "/loggers/azuremonitor",
+    "logClientIp": true,
+    "verbosity": "information"
+  }
+}

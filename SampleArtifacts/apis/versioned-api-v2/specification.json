@@ -1,0 +1,26 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "versioned-api-v2",
+    "description": "Version 2 of a versioned API using OpenAPI JSON.",
+    "version": "v2"
+  },
+  "servers": [
+    {
+      "url": "https://example.azure-api.net/versioned-api/v2"
+    }
+  ],
+  "paths": {
+    "/version": {
+      "get": {
+        "summary": "Get version",
+        "operationId": "get-version-v2",
+        "responses": {
+          "200": {
+            "description": "Version 2 returned."
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "properties": {
+    "path": "versioned-api/v2",
+    "apiRevision": "1",
+    "apiVersion": "v2",
+    "apiVersionSetId": "/apiVersionSets/versionSet1",
+    "authenticationSettings": {},
+    "description": "Version 2 of a versioned API using OpenAPI JSON.",
+    "displayName": "versioned-api-v2",
+    "protocols": [
+      "https"
+    ],
+    "serviceUrl": "https://httpbin.org",
+    "subscriptionRequired": true
+  }
+}
