@@ -40,6 +40,7 @@ stages:
               API_MANAGEMENT_SERVICE_NAME : $(APIM_NAME)
               ENVIRONMENT: "Dev"
               COMMIT_ID: ${{ parameters.COMMIT_ID }}
+              SERVICE_CONNECTION_NAME: $(SERVICE_CONNECTION_NAME)
   - stage: push_changes_to_Prod_APIM
     displayName: Push changes to Prod APIM
     jobs:
@@ -64,4 +65,5 @@ stages:
                      CONFIGURATION_YAML_PATH:  $(Build.SourcesDirectory)/configuration.prod.yaml
                      ENVIRONMENT: "Prod"
                      COMMIT_ID: ${{ parameters.COMMIT_ID }}
+                     SERVICE_CONNECTION_NAME: $(SERVICE_CONNECTION_NAME)
               
