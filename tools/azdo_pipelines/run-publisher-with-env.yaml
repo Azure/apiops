@@ -19,6 +19,8 @@ parameters:
   - name: COMMIT_ID
     type: string
     default: publish-artifacts-in-last-commit
+  - name: SERVICE_CONNECTION_NAME
+    type: string
 
 steps:
   - script: echo Provided configuration was ${{ parameters.CONFIGURATION_YAML_PATH }}
@@ -32,7 +34,7 @@ steps:
   - task: AzureCLI@2
     displayName: Set publishing variables
     inputs:
-      azureSubscription: "$(SERVICE_CONNECTION_NAME)"
+      azureSubscription: "${{ parameters.SERVICE_CONNECTION_NAME }}"
       scriptType: pscore
       scriptLocation: inlineScript
       inlineScript: |
