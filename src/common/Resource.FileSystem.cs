@@ -222,6 +222,10 @@ public static partial class ResourceModule
             (WorkspaceProductResource, WorkspaceGroupResource) => dto,
             // Workspace product APIs don't support relative IDs
             (WorkspaceProductResource, WorkspaceApiResource) => dto,
+            // Workspace tag APIs don't support relative IDs
+            (WorkspaceTagResource, WorkspaceApiResource) => dto,
+            // Workspace tag products don't support relative IDs
+            (WorkspaceTagResource, WorkspaceProductResource) => dto,
             _ => SetAbsoluteToRelativeId(dto, resource.DtoPropertyNameForLinkedResource)
         };
 
