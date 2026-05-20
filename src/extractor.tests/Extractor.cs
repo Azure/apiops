@@ -423,6 +423,61 @@ internal sealed class ShouldExtractTests
         });
     }
 
+    [Test]
+    public async Task Composite_resources_with_skipped_secondaries_are_skipped()
+    {
+        var gen = from resourceKey in Generator.GenerateResourceKey(resource => resource is ICompositeResource)
+                  let resource = resourceKey.Resource
+                  let secondaryResource = ((ICompositeResource)resource).Secondary
+                  from secondaryResourceKey in
+                      from secondaryResourceKey in Generator.GenerateResourceKey(resource => resource == secondaryResource)
+                      select secondaryResourceKey with
+                      {
+                          Name = resource is ILinkResource
+                                    ? secondaryResourceKey.Name
+                                    : resourceKey.Name,
+                          Parents = ParentChain.From(resourceKey.Parents
+                                                                .Take(secondaryResource.GetTraversalPredecessorHierarchy().Length))
+                      }
+                  let dto = resource switch
+                  {
+                      ILinkResource linkResource => new JsonObject
+                      {
+                          ["properties"] = new JsonObject
+                          {
+                              [linkResource.DtoPropertyNameForLinkedResource] = secondaryResourceKey.ToString()
+                          }
+                      },
+                      _ => []
+                  }
+                  let dtoOption = Option.Some(dto)
+                  from fixture in Fixture.Generate()
+                  let updatedFixture = fixture with
+                  {
+                      ResourceIsInConfiguration = async (key, cancellationToken) =>
+                      {
+                          await ValueTask.CompletedTask;
+
+                          // Always skip the secondary resource key
+                          return key != secondaryResourceKey;
+                      }
+                  }
+                  select (resourceKey, dtoOption, updatedFixture);
+
+        await gen.SampleAsync(async tuple =>
+        {
+            // Arrange
+            var (resourceKey, dtoOption, fixture) = tuple;
+            var shouldExtract = fixture.Resolve();
+
+            // Act
+            var extract = await shouldExtract(resourceKey, dtoOption, CancellationToken);
+
+            // Assert
+            await Assert.That(extract).IsFalse();
+        });
+    }
+
     private sealed record Fixture
     {
         public required ResourceIsInConfiguration ResourceIsInConfiguration { get; init; }

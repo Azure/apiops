@@ -186,7 +186,45 @@ internal static class ExtractorModule
                 }
             }
 
-            // Skip resources based on configuration
+            // Skip composite resources whose secondary is excluded in configuration.
+            if (resource is ICompositeResource compositeResource2)
+            {
+                bool skipResource = false;
+
+                var secondaryResourceKeyOption =
+                    from secondaryName in compositeResource2 switch
+                    {
+                        ILinkResource linkResource => from dto in dtoOption
+                                                      from secondaryResourceName in linkResource.GetSecondaryResourceName(dto)
+                                                      select secondaryResourceName,
+                        _ => Option.Some(name)
+                    }
+                    let secondaryPredecessorCount = compositeResource2.Secondary.GetTraversalPredecessorHierarchy().Length
+                    let secondaryParents = ParentChain.From(resourceKey.Parents.Take(secondaryPredecessorCount))
+                    let secondaryResourceKey = ResourceKey.From(compositeResource2.Secondary, secondaryName, secondaryParents)
+                    select secondaryResourceKey;
+
+                await secondaryResourceKeyOption.IterTask(async secondaryResourceKey =>
+                {
+                    var isInConfigurationOption = await resourceIsInConfiguration(secondaryResourceKey, cancellationToken);
+
+                    isInConfigurationOption.Iter(isInConfiguration =>
+                    {
+                        if (isInConfiguration is false)
+                        {
+                            skipResource = true;
+                            logger.LogWarning("Skipping composite resource '{ResourceKey}' because its secondary resource '{SecondaryResourceKey}' is not in configuration...", resourceKey, secondaryResourceKey);
+                        }
+                    });
+                });
+
+                if (skipResource)
+                {
+                    return false;
+                }
+            }
+
+            // Skip resources that are excluded in configuration.
             var isInConfigurationOption = await resourceIsInConfiguration(resourceKey, cancellationToken);
             var isInConfiguration = isInConfigurationOption.IfNone(() => true);
             if (isInConfiguration is false)
