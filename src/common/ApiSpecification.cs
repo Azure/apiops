@@ -519,7 +519,7 @@ public static partial class ResourceModule
     {
         var serviceDirectory = provider.GetRequiredService<ServiceDirectory>();
 
-        return async (resourceKey, baseDto, specification, contents, cancellationToken) =>
+        return async (resourceKey, specification, contents, cancellationToken) =>
         {
             var fileOption = GetSpecificationFile(resourceKey, specification, serviceDirectory);
 
