@@ -231,7 +231,7 @@ internal static class ApimModule
                              await specificationOption.IterTask(async tuple =>
                              {
                                  var (specification, contents) = tuple;
-                                 await putApiSpecification(model.Key, specification, contents, cancellationToken);
+                                 await putApiSpecification(model.Key, model.ToDto(), specification, contents, cancellationToken);
                              });
                          }, maxDegreeOfParallelism: Option.None, cancellationToken), cancellationToken),
                 IResourceWithDto resourceWithDto =>

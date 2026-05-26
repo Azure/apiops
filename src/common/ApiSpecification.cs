@@ -20,7 +20,7 @@ namespace common;
 public delegate ValueTask<Option<(ApiSpecification Specification, BinaryData Contents)>> GetApiSpecificationFromApim(ResourceKey resourceKey, JsonObject dto, CancellationToken cancellationToken);
 public delegate ValueTask<Option<(ApiSpecification Specification, BinaryData Contents)>> GetApiSpecificationFromFile(ResourceKey resourceKey, ReadFile readFile, CancellationToken cancellationToken);
 public delegate ValueTask WriteApiSpecificationFile(ResourceKey resourceKey, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken);
-public delegate ValueTask PutApiSpecificationInApim(ResourceKey resourceKey, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken);
+public delegate ValueTask PutApiSpecificationInApim(ResourceKey resourceKey, JsonObject baseDto, ApiSpecification specification, BinaryData contents, CancellationToken cancellationToken);
 
 public abstract record ApiSpecification
 {
@@ -519,7 +519,7 @@ public static partial class ResourceModule
     {
         var serviceDirectory = provider.GetRequiredService<ServiceDirectory>();
 
-        return async (resourceKey, specification, contents, cancellationToken) =>
+        return async (resourceKey, baseDto, specification, contents, cancellationToken) =>
         {
             var fileOption = GetSpecificationFile(resourceKey, specification, serviceDirectory);
 
@@ -547,7 +547,7 @@ public static partial class ResourceModule
         var resource = ApiResource.Instance;
         var ancestors = ParentChain.Empty;
 
-        return async (resourceKey, specification, contents, cancellationToken) =>
+        return async (resourceKey, baseDto, specification, contents, cancellationToken) =>
         {
             if (resourceKey.Resource is not ApiResource and not WorkspaceApiResource)
             {
@@ -556,7 +556,7 @@ public static partial class ResourceModule
 
             await (specification switch
             {
-                ApiSpecification.OpenApi openApiSpecification => putOpenApiSpecification(resourceKey, openApiSpecification, contents, cancellationToken),
+                ApiSpecification.OpenApi openApiSpecification => putOpenApiSpecification(resourceKey, baseDto, openApiSpecification, contents, cancellationToken),
                 ApiSpecification.Wadl wadlSpecification => putWadlSpecification(resourceKey, wadlSpecification, contents, cancellationToken),
                 ApiSpecification.Wsdl wsdlSpecification => putWsdlSpecification(resourceKey, wsdlSpecification, contents, cancellationToken),
                 ApiSpecification.GraphQl graphQlSpecification => putGraphQlSpecification(resourceKey, graphQlSpecification, contents, cancellationToken),
@@ -564,10 +564,9 @@ public static partial class ResourceModule
             });
         };
 
-        async ValueTask putOpenApiSpecification(ResourceKey resourceKey, ApiSpecification.OpenApi specification, BinaryData contents, CancellationToken cancellationToken)
+        async ValueTask putOpenApiSpecification(ResourceKey resourceKey, JsonObject baseDto, ApiSpecification.OpenApi specification, BinaryData contents, CancellationToken cancellationToken)
         {
-            var resource = (IResourceWithDto)resourceKey.Resource;
-            var dto = await getDto(resource, resourceKey.Name, resourceKey.Parents, cancellationToken);
+            var dto = baseDto.DeepClone().AsObject();
 
             dto = dto.MergeWith(new JsonObject
             {
