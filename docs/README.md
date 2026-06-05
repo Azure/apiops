@@ -1,3 +1,8 @@
+> 🔄 **Evolution of APIOps Tools**
+> 
+> We are currently entering a transitional period for `apiops-cli`. Moving forward, active development and new features are shifting to our updated platform.
+> 
+> Please explore the new repository and begin planning your transition here: **[github.com/Azure/apiops-cli](https://github.com/Azure/apiops-cli)**
 <img src="assets/images/apim-logo-transparent.png">
 
 #  Code Of Conduct
