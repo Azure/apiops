@@ -261,11 +261,11 @@ stages:
                 Write-Information "Synchronizing artifacts..."
                 $extractorArtifactsFolderPath = Join-Path "$(Pipeline.Workspace)" "artifacts-from-portal" ${{ parameters.API_MANAGEMENT_SERVICE_OUTPUT_FOLDER_PATH }}
                 if ("$(Agent.OS)" -like "*win*") {
-                    & robocopy "$extractorArtifactsFolderPath" "$artifactFolderPath" /zb /mir /mt
+                    & robocopy "$extractorArtifactsFolderPath" "$artifactFolderPath" /zb /mir /mt /XF *.wsdl
                     if ($LASTEXITCODE -gt 7) { throw "Setting $artifactFolderPath to contents of $extractorArtifactsFolderPath failed." }
                 }
                 else {
-                    & rsync --verbose --archive --delete --force --recursive "$extractorArtifactsFolderPath/" "$artifactFolderPath/"
+                    & rsync --verbose --archive --delete --force --recursive --exclude="*.wsdl" "$extractorArtifactsFolderPath/" "$artifactFolderPath/"
                     if ($LASTEXITCODE -ne 0) { throw "Setting $artifactFolderPath to contents of $extractorArtifactsFolderPath failed." }
                 }
 
