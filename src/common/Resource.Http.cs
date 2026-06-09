@@ -416,8 +416,11 @@ public static partial class ResourceModule
 
         return from content in await pipeline.GetContent(uri, cancellationToken)
                from json in JsonObjectModule.From(content, resource.SerializerOptions)
-               from formattedJson in resource.DeserializeToDtoJson(json)
-               select formattedJson;
+               // For OData API schemas, skip DTO normalization to preserve raw EDMX content
+               from dto in resource is ApiSchemaResource or WorkspaceApiSchemaResource && json.IsODataSchema()
+                   ? Result.Success(json)
+                   : resource.DeserializeToDtoJson(json)
+               select dto;
     }
 
     public static void ConfigureGetResourceDtoFromApim(IHostApplicationBuilder builder)

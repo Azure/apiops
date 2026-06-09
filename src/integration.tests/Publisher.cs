@@ -323,6 +323,7 @@ internal static class PublisherModule
                                                 ApiType.Wadl => ApiSpecification.Wadl.Instance,
                                                 ApiType.Wsdl => ApiSpecification.Wsdl.Instance,
                                                 ApiType.GraphQl => ApiSpecification.GraphQl.Instance,
+                                                ApiType.OData => ApiSpecification.OData.Instance,
                                                 var type => throw new InvalidOperationException($"Cannot find specification for '{type}'.")
                                             }
                                             select (specification, contents);

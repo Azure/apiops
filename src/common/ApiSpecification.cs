@@ -31,6 +31,12 @@ public abstract record ApiSpecification
         public static GraphQl Instance { get; } = new();
     }
 
+    public sealed record OData : ApiSpecification
+    {
+        private OData() { }
+        public static OData Instance { get; } = new();
+    }
+
     public sealed record Wadl : ApiSpecification
     {
         private Wadl() { }
@@ -90,6 +96,7 @@ public static partial class ResourceModule
 {
     private static readonly ImmutableArray<ApiSpecification> specifications = [
             ApiSpecification.GraphQl.Instance,
+            ApiSpecification.OData.Instance,
             ApiSpecification.Wsdl.Instance,
             ApiSpecification.Wadl.Instance,
             new ApiSpecification.OpenApi { Format = OpenApiFormat.Json.Instance, Version = OpenApiVersion.V2.Instance },
@@ -186,6 +193,7 @@ public static partial class ResourceModule
                 null => Option.Some(getDefaultSpecification()),
                 var value when "http".Equals(value, StringComparison.OrdinalIgnoreCase) => Option.Some(getDefaultSpecification()),
                 var value when "graphql".Equals(value, StringComparison.OrdinalIgnoreCase) => Option<ApiSpecification>.Some(ApiSpecification.GraphQl.Instance),
+                var value when "odata".Equals(value, StringComparison.OrdinalIgnoreCase) => Option<ApiSpecification>.Some(ApiSpecification.OData.Instance),
                 var value when "soap".Equals(value, StringComparison.OrdinalIgnoreCase) => Option<ApiSpecification>.Some(ApiSpecification.Wsdl.Instance),
                 _ => Option.None
             };
@@ -252,6 +260,8 @@ public static partial class ResourceModule
             {
                 case ApiSpecification.GraphQl:
                     return await getGraphQlSpecificationContents(resourceKey, cancellationToken);
+                case ApiSpecification.OData:
+                    return await getODataSpecificationContents(resourceKey, cancellationToken);
                 default:
                     // Get a link to download the specification
                     var exportUri = resource.GetUri(name, parents, serviceUri)
@@ -298,11 +308,21 @@ public static partial class ResourceModule
             }
         }
 
-        async ValueTask<Option<BinaryData>> getGraphQlSpecificationContents(ResourceKey resourceKey, CancellationToken cancellationToken)
+        ValueTask<Option<BinaryData>> getGraphQlSpecificationContents(ResourceKey resourceKey, CancellationToken cancellationToken) =>
+            getSchemaBasedSpecificationContents(resourceKey, schemaNameValue: "graphql", dto => dto.Properties.Document?.Value, cancellationToken);
+
+        ValueTask<Option<BinaryData>> getODataSpecificationContents(ResourceKey resourceKey, CancellationToken cancellationToken) =>
+            getSchemaBasedSpecificationContents(resourceKey, schemaNameValue: "default", dto => dto.Properties.Document?.OData, cancellationToken);
+
+        async ValueTask<Option<BinaryData>> getSchemaBasedSpecificationContents(
+            ResourceKey resourceKey,
+            string schemaNameValue,
+            Func<ApiSchemaDto, string?> documentSelector,
+            CancellationToken cancellationToken)
         {
             var (resource, name, parents) = (resourceKey.Resource, resourceKey.Name, resourceKey.Parents);
 
-            var schemaName = ResourceName.From("graphql").IfErrorThrow();
+            var schemaName = ResourceName.From(schemaNameValue).IfErrorThrow();
 
             IResourceWithDto schemaResource = resource switch
             {
@@ -312,12 +332,11 @@ public static partial class ResourceModule
             };
 
             var serializerOptions = schemaResource.SerializerOptions;
-
             var schemaAncestors = parents.Append(resource, name);
 
             return from dto in await getOptionalDto(schemaResource, schemaName, schemaAncestors, cancellationToken)
                    let result = from dtoObject in JsonNodeModule.To<ApiSchemaDto>(dto, serializerOptions)
-                                select dtoObject.Properties.Document?.Value
+                                select documentSelector(dtoObject)
                    from contents in result.ToOption()
                    where string.IsNullOrWhiteSpace(contents) is false
                    select BinaryData.FromString(contents);
@@ -404,6 +423,7 @@ public static partial class ResourceModule
                 ".json" or ".yaml" or ".yml" => from specification in await GetOpenApiSpecification(contents, file, cancellationToken)
                                                 select ((ApiSpecification)specification, contents),
                 ".graphql" => (ApiSpecification.GraphQl.Instance, contents),
+                ".edmx" => (ApiSpecification.OData.Instance, contents),
                 ".wadl" => (ApiSpecification.Wadl.Instance, contents),
                 ".wsdl" => (ApiSpecification.Wsdl.Instance, contents),
                 _ => Option.None,
@@ -436,6 +456,7 @@ public static partial class ResourceModule
         $"specification.{specification switch
         {
             ApiSpecification.GraphQl => "graphql",
+            ApiSpecification.OData => "edmx",
             ApiSpecification.Wsdl => "wsdl",
             ApiSpecification.Wadl => "wadl",
             ApiSpecification.OpenApi openApi when openApi.Format is OpenApiFormat.Json => "json",
@@ -560,6 +581,7 @@ public static partial class ResourceModule
                 ApiSpecification.Wadl wadlSpecification => putWadlSpecification(resourceKey, wadlSpecification, contents, cancellationToken),
                 ApiSpecification.Wsdl wsdlSpecification => putWsdlSpecification(resourceKey, wsdlSpecification, contents, cancellationToken),
                 ApiSpecification.GraphQl graphQlSpecification => putGraphQlSpecification(resourceKey, graphQlSpecification, contents, cancellationToken),
+                ApiSpecification.OData oDataSpecification => putODataSpecification(resourceKey, oDataSpecification, contents, cancellationToken),
                 _ => throw new InvalidOperationException($"Specification {specification} is not supported.")
             });
         };
@@ -691,6 +713,22 @@ public static partial class ResourceModule
             };
 
             await putResource(schemaResource, schemaName, schemaDto, schemaAncestors, cancellationToken);
+        }
+
+        async ValueTask putODataSpecification(ResourceKey resourceKey, ApiSpecification.OData specification, BinaryData contents, CancellationToken cancellationToken)
+        {
+            var dto = new JsonObject
+            {
+                ["properties"] = new JsonObject
+                {
+                    ["displayName"] = resourceKey.Name.ToString(),
+                    ["format"] = "odata",
+                    ["type"] = "odata",
+                    ["value"] = contents.ToString()
+                }
+            };
+
+            await putSpecificationDto(resourceKey, dto, useImportQueryParameter: true, cancellationToken);
         }
     }
 
