@@ -160,9 +160,24 @@ public sealed record BackendDto
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public ImmutableDictionary<string, ImmutableArray<string>>? Header { get; init; }
 
+        [JsonPropertyName("managedIdentity")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public BackendManagedIdentityCredential? ManagedIdentity { get; init; }
+
         [JsonPropertyName("query")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public ImmutableDictionary<string, ImmutableArray<string>>? Query { get; init; }
+    }
+
+    public sealed record BackendManagedIdentityCredential
+    {
+        [JsonPropertyName("clientId")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? ClientId { get; init; }
+
+        [JsonPropertyName("resource")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? Resource { get; init; }
     }
 
     public sealed record BackendAuthorizationHeaderCredentials
