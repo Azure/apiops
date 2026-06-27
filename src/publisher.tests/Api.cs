@@ -254,7 +254,7 @@ internal sealed class PutApiTests
                     await ValueTask.CompletedTask;
                     return specificationContents;
                 },
-                PutApiSpecificationInApim = async (_, _, _, _) =>
+                PutApiSpecificationInApim = async (_, _, _, _, _) =>
                 {
                     await ValueTask.CompletedTask;
                 }

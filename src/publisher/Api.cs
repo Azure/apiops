@@ -58,7 +58,7 @@ internal static partial class ResourceModule
 
             await putResourceInApim(resource, name, dto, parents, cancellationToken);
 
-            await putSpecification(name, cancellationToken);
+            await putSpecification(name, dto, cancellationToken);
         }
 
 
@@ -128,14 +128,14 @@ internal static partial class ResourceModule
             await deleteResourceFromApim(releaseResourceKey, ignoreNotFound: true, waitForCompletion: true, cancellationToken);
         }
 
-        async ValueTask putSpecification(ResourceName name, CancellationToken cancellationToken)
+        async ValueTask putSpecification(ResourceName name, JsonObject dto, CancellationToken cancellationToken)
         {
             var resourceKey = ResourceKey.From(resource, name, parents);
             var fileOperations = getCurrentFileOperations();
 
             var specificationOption = await getSpecification(resourceKey, fileOperations.ReadFile, cancellationToken);
 
-            await specificationOption.IterTask(async specification => await putSpecificationInApim(resourceKey, specification.Specification, specification.Contents, cancellationToken));
+            await specificationOption.IterTask(async specification => await putSpecificationInApim(resourceKey, dto, specification.Specification, specification.Contents, cancellationToken));
         }
     }
 
@@ -251,7 +251,7 @@ internal static partial class ResourceModule
 
             await putResourceInApim(resource, name, dto, parents, cancellationToken);
 
-            await putSpecification(resourceKey, cancellationToken);
+            await putSpecification(resourceKey, dto, cancellationToken);
         };
 
         async ValueTask setCurrentRevision(ResourceKey resourceKey, JsonObject dto, CancellationToken cancellationToken)
@@ -294,14 +294,14 @@ internal static partial class ResourceModule
             return GetWorkspaceApiRevisionFromDto(dtoJson);
         }
 
-        async ValueTask putSpecification(ResourceKey resourceKey, CancellationToken cancellationToken)
+        async ValueTask putSpecification(ResourceKey resourceKey, JsonObject dto, CancellationToken cancellationToken)
         {
             var fileOperations = getCurrentFileOperations();
 
             var specificationOption = await getSpecification(resourceKey, fileOperations.ReadFile, cancellationToken);
 
             await specificationOption.IterTask(async specification =>
-                await putSpecificationInApim(resourceKey, specification.Specification, specification.Contents, cancellationToken));
+                await putSpecificationInApim(resourceKey, dto, specification.Specification, specification.Contents, cancellationToken));
         }
 
         async ValueTask makeApiCurrent(ParentChain parents, ResourceName revisionedName, CancellationToken cancellationToken)
