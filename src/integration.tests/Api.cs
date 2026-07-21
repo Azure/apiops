@@ -16,7 +16,8 @@ internal enum ApiType
     Wadl,
     Wsdl,
     GraphQl,
-    WebSocket
+    WebSocket,
+    OData
 }
 
 internal static class ApiSpecificationModule
@@ -169,12 +170,7 @@ paths:
 
     public static string GetGraphQl(ResourceName apiName)
     {
-        var sanitizedName = new string([.. apiName.ToString() switch
-            {
-                [var first, .. var rest] when char.IsLetter(first) => ImmutableArray.Create([first, .. rest.Where(char.IsLetterOrDigit)]),
-                [var first, .. var rest] => [.. rest.Where(char.IsLetterOrDigit)],
-                _ => []
-            }]);
+        var sanitizedName = SanitizeNameForSchemaType(apiName);
 
         return $$"""
                 schema {
@@ -185,6 +181,41 @@ paths:
                 {{sanitizedName}}: String
                 }
                 """;
+    }
+
+    public static string GetOData(ResourceName apiName)
+    {
+        var sanitizedName = SanitizeNameForSchemaType(apiName);
+
+        return $$"""
+<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">
+  <edmx:DataServices>
+    <Schema Namespace="{{sanitizedName}}" xmlns="http://docs.oasis-open.org/odata/ns/edm">
+      <EntityType Name="{{sanitizedName}}Entity">
+        <Key>
+          <PropertyRef Name="Id" />
+        </Key>
+        <Property Name="Id" Type="Edm.Int32" Nullable="false" />
+        <Property Name="Name" Type="Edm.String" />
+      </EntityType>
+      <EntityContainer Name="{{sanitizedName}}Container">
+        <EntitySet Name="{{sanitizedName}}Entities" EntityType="{{sanitizedName}}.{{sanitizedName}}Entity" />
+      </EntityContainer>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>
+""";
+    }
+
+    private static string SanitizeNameForSchemaType(ResourceName name)
+    {
+        return new string([.. name.ToString() switch
+        {
+            [var first, .. var rest] when char.IsLetter(first) => ImmutableArray.Create([first, .. rest.Where(char.IsLetterOrDigit)]),
+            [var first, .. var rest] => [.. rest.Where(char.IsLetterOrDigit)],
+            _ => []
+        }]);
     }
 }
 
@@ -234,6 +265,7 @@ internal sealed record ApiModel : ITestModel<ApiModel>
         var typeOption = Type switch
         {
             ApiType.GraphQl => Option.Some("graphql"),
+            ApiType.OData => Option.Some("odata"),
             ApiType.WebSocket => Option.Some("websocket"),
             _ => Option.None
         };
@@ -344,7 +376,7 @@ internal sealed record ApiModel : ITestModel<ApiModel>
         where apiType != ApiType.WebSocket // Skip websocket generation for now, unsupported in certain APIM SKUs
         from serviceUrl in apiType switch
         {
-            ApiType.Wadl or ApiType.Wsdl or ApiType.WebSocket => Generator.AbsoluteUri.Select(Option.Some),
+            ApiType.Wadl or ApiType.Wsdl or ApiType.WebSocket or ApiType.OData => Generator.AbsoluteUri.Select(Option.Some),
             _ => Generator.AbsoluteUri.OptionOf()
         }
         from versionSetKey in Gen.OneOfConst([.. models.OfType<VersionSetModel>()
@@ -433,6 +465,19 @@ internal sealed record ApiModel : ITestModel<ApiModel>
         else if (apiType is ApiType.GraphQl)
         {
             var specification = ApiSpecificationModule.GetGraphQl(rootApiName);
+
+            return Gen.Const(Option.Some(specification));
+        }
+        else if (apiType is ApiType.OData)
+        {
+            // We cannot reliably publish specifications for non-current API revisions.
+            if (apiName != rootApiName)
+            {
+                return Gen.Const(Option<string>.None());
+            }
+
+            var serviceUrl = serviceUriOption.IfNone(() => throw new InvalidOperationException("Service URL cannot be None for API type OData."));
+            var specification = ApiSpecificationModule.GetOData(rootApiName);
 
             return Gen.Const(Option.Some(specification));
         }
