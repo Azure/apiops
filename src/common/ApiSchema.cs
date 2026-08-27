@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace common;
@@ -52,5 +53,18 @@ public sealed record ApiSchemaDto
         [JsonPropertyName("value")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public string? Value { get; init; }
+
+        [JsonPropertyName("odata")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public string? OData { get; init; }
     }
+}
+
+public static class ApiSchemaExtensions
+{
+    public static bool IsODataSchema(this JsonObject schemaJson) =>
+        schemaJson.TryGetPropertyValue("properties", out var properties)
+        && properties is JsonObject propsObj
+        && propsObj.TryGetPropertyValue("contentType", out var contentType)
+        && contentType?.GetValue<string>() is "application/vnd.ms-azure-apim.odata.schema";
 }
