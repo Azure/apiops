@@ -619,12 +619,19 @@ public static partial class ResourceModule
 
         async ValueTask putWsdlSpecification(ResourceKey resourceKey, ApiSpecification.Wsdl specification, BinaryData contents, CancellationToken cancellationToken)
         {
-            // WSDL specification import removes the original description. Save the description.            
+            // WSDL specification import causes APIM to re-derive certain properties (e.g. displayName and
+            // description) from the WSDL binding name, overwriting the original values. Save them so they
+            // can be re-applied after the import.
             var resource = (IResourceWithDto)resourceKey.Resource;
             var originalDto = await getDto(resource, resourceKey.Name, resourceKey.Parents, cancellationToken);
+
             var descriptionResult = from properties in originalDto.GetJsonObjectProperty("properties")
                                     from description in properties.GetStringProperty("description")
                                     select description;
+
+            var displayNameResult = from properties in originalDto.GetJsonObjectProperty("properties")
+                                    from displayName in properties.GetStringProperty("displayName")
+                                    select displayName;
 
             // Import the specification
             var dto = new JsonObject
@@ -639,21 +646,30 @@ public static partial class ResourceModule
 
             await putSpecificationDto(resourceKey, dto, useImportQueryParameter: true, cancellationToken);
 
-            // Re-apply the original description
-            await descriptionResult.IterTask(async description =>
+            // Re-apply the original displayName and description that APIM overwrote during the import.
+            if (ApiRevisionModule.IsRootName(resourceKey.Name) is false)
             {
-                if (ApiRevisionModule.IsRootName(resourceKey.Name) is false)
-                {
-                    return;
-                }
+                return;
+            }
 
-                var newDto = await getDto(resource, resourceKey.Name, resourceKey.Parents, cancellationToken);
+            var descriptionOption = descriptionResult.ToOption();
+            var displayNameOption = displayNameResult.ToOption();
 
-                newDto.GetJsonObjectProperty("properties")
-                      .Iter(propertiesJson => propertiesJson["description"] = description);
+            if (descriptionOption.IsNone && displayNameOption.IsNone)
+            {
+                return;
+            }
 
-                await putResource(resource, resourceKey.Name, newDto, resourceKey.Parents, cancellationToken);
-            });
+            var newDto = await getDto(resource, resourceKey.Name, resourceKey.Parents, cancellationToken);
+
+            newDto.GetJsonObjectProperty("properties")
+                  .Iter(propertiesJson =>
+                  {
+                      descriptionOption.Iter(description => propertiesJson["description"] = description);
+                      displayNameOption.Iter(displayName => propertiesJson["displayName"] = displayName);
+                  });
+
+            await putResource(resource, resourceKey.Name, newDto, resourceKey.Parents, cancellationToken);
         }
 
         async ValueTask putGraphQlSpecification(ResourceKey resourceKey, ApiSpecification.GraphQl specification, BinaryData contents, CancellationToken cancellationToken)
