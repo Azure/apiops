@@ -2,7 +2,7 @@
 > 
 > This repository is currently in the process of being **archived** and is no longer actively maintained. 
 > 
-> We have transitioned to a new tool managed directly by our Product Team: **[Apiops CLI]([https://link-to-your-new-tool.com](https://github.com/Azure/apiops-cli))**.
+> We have transitioned to a new tool managed directly by our Product Team: [Apiops CLI](https://github.com/Azure/apiops-cli)
 > 
 > Building on the core DNA of APIOps, the new tool features significant performance upgrades, enhanced stability, and new features designed to streamline your workflows. We strongly encourage all users to migrate to the new platform.
 
